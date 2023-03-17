@@ -127,12 +127,16 @@ executable client-test
                         , tahoe-lafs-storage-server
                         , text
                         , servant-client
+                        , http-client-tls
+                        , connection
                         , aeson
                         , http-client
                         , servant
                         , bytestring
                         , http-types
                         , containers
+                        , cborg
+                        , serialise
 
 executable tahoe-lafs-storage-server
   hs-source-dirs:   app

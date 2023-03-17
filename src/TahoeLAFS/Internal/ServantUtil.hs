@@ -30,7 +30,13 @@ import Servant (
     MimeUnrender (..),
  )
 
+import qualified Codec.CBOR.Encoding as CE
+import Codec.CBOR.Write (
+    toLazyByteString,
+ )
+import qualified Codec.Serialise as S
 import Data.Aeson (
+    Encoding,
     FromJSON (parseJSON),
     ToJSON (toJSON),
     withText,
@@ -40,10 +46,6 @@ import Data.Aeson.Types (
     Result (Error, Success),
     Value (String),
     fromJSON,
- )
-
-import Codec.CBOR.Write (
-    toLazyByteString,
  )
 
 import Codec.CBOR.Read (
@@ -61,18 +63,24 @@ instance Accept CBOR where
     -- https://tools.ietf.org/html/rfc7049#section-7.3
     contentType _ = "application" // "cbor"
 
-instance ToJSON a => MimeRender CBOR a where
-    mimeRender _ val = toLazyByteString $ encodeValue $ toJSON val
+-- instance ToJSON a => MimeRender CBOR a where
+--     mimeRender _ val = toLazyByteString $ encodeValue $ toJSON val
 
-instance FromJSON a => MimeUnrender CBOR a where
-    mimeUnrender _ bytes =
-        case deserialiseFromBytes (decodeValue False) bytes of
-            Right ("", val) ->
-                case fromJSON val of
-                    Error s -> Left s
-                    Success x -> Right x
-            Right (extra, _) -> Left "extra bytes at tail"
-            Left err -> Left $ show err
+instance S.Serialise a => MimeRender CBOR a where
+    mimeRender _ = S.serialise
+
+instance S.Serialise a => MimeUnrender CBOR a where
+    mimeUnrender _ bytes = S.deserialise bytes
+
+-- instance FromJSON a => MimeUnrender CBOR a where
+--     mimeUnrender _ bytes =
+--         case deserialiseFromBytes (decodeValue False) bytes of
+--             Right ("", val) ->
+--                 case fromJSON val of
+--                     Error s -> Left s
+--                     Success x -> Right x
+--             Right (extra, _) -> Left "extra bytes at tail"
+--             Left err -> Left $ show err
 
 instance ToJSON ByteString where
     toJSON bs = String $ decodeUtf8 $ encode bs

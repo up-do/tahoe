@@ -41,6 +41,7 @@ module TahoeLAFS.Storage.API (
     leaseCancelSecretLength,
 ) where
 
+import Codec.Serialise
 import Prelude hiding (
     toInteger,
  )
@@ -163,6 +164,8 @@ newtype ShareNumber = ShareNumber Integer
         , ToHttpApiData
         )
 
+instance Serialise ShareNumber
+
 instance FromHttpApiData ShareNumber where
     parseUrlPiece t =
         case readMaybe $ unpack t of
@@ -197,6 +200,8 @@ data Version1Parameters = Version1Parameters
     }
     deriving (Show, Eq, Generic)
 
+instance Serialise Version1Parameters
+
 instance ToJSON Version1Parameters where
     toJSON = genericToJSON tahoeJSONOptions
 
@@ -208,6 +213,8 @@ data Version = Version
     , parameters :: Version1Parameters
     }
     deriving (Show, Eq, Generic)
+
+instance Serialise Version
 
 instance ToJSON Version where
     toJSON = genericToJSON tahoeJSONOptions
@@ -223,6 +230,8 @@ data AllocateBuckets = AllocateBuckets
     }
     deriving (Show, Eq, Generic)
 
+instance Serialise AllocateBuckets
+
 instance ToJSON AllocateBuckets where
     toJSON = genericToJSON tahoeJSONOptions
 
@@ -234,6 +243,8 @@ data AllocationResult = AllocationResult
     , allocated :: [ShareNumber]
     }
     deriving (Show, Eq, Generic)
+
+instance Serialise AllocationResult
 
 instance ToJSON AllocationResult where
     toJSON = genericToJSON tahoeJSONOptions
@@ -250,6 +261,8 @@ data CorruptionDetails = CorruptionDetails
     { reason :: String
     }
     deriving (Show, Eq, Generic)
+
+instance Serialise CorruptionDetails
 
 instance ToJSON CorruptionDetails where
     toJSON = genericToJSON tahoeJSONOptions
@@ -345,6 +358,8 @@ data ReadTestWriteResult = ReadTestWriteResult
     }
     deriving (Show, Eq, Generic)
 
+instance Serialise ReadTestWriteResult
+
 instance ToJSON ReadTestWriteResult where
     toJSON = genericToJSON tahoeJSONOptions
 
@@ -358,6 +373,8 @@ data ReadTestWriteVectors = ReadTestWriteVectors
     }
     deriving (Show, Eq, Generic)
 
+instance Serialise ReadTestWriteVectors
+
 instance ToJSON ReadTestWriteVectors where
     toJSON = genericToJSON tahoeJSONOptions
 
@@ -369,6 +386,8 @@ data ReadVector = ReadVector
     , readSize :: Size
     }
     deriving (Show, Eq, Generic)
+
+instance Serialise ReadVector
 
 instance ToJSON ReadVector where
     toJSON = genericToJSON tahoeJSONOptions
@@ -382,6 +401,8 @@ data TestWriteVectors = TestWriteVectors
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+instance Serialise TestWriteVectors
+
 data TestOperator
     = Lt
     | Le
@@ -391,6 +412,8 @@ data TestOperator
     | Gt
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+instance Serialise TestOperator
+
 data TestVector = TestVector
     { testOffset :: Offset
     , testSize :: Size
@@ -399,11 +422,15 @@ data TestVector = TestVector
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+instance Serialise TestVector
+
 data WriteVector = WriteVector
     { writeOffset :: Offset
     , shareData :: ShareData
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
+
+instance Serialise WriteVector
 
 data SlotSecrets = SlotSecrets
     { writeEnabler :: WriteEnablerSecret
@@ -411,6 +438,8 @@ data SlotSecrets = SlotSecrets
     , leaseCancel :: LeaseCancelSecret
     }
     deriving (Show, Eq, Generic)
+
+instance Serialise SlotSecrets
 
 instance ToJSON SlotSecrets where
     toJSON = genericToJSON tahoeJSONOptions
