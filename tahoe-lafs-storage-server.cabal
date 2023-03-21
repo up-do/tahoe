@@ -101,7 +101,6 @@ library
     , servant-client
     , servant-docs
     , servant-server
-    , statvfs
     , utf8-string
     , wai
     , warp

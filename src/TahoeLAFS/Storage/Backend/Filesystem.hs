@@ -1,3 +1,4 @@
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module TahoeLAFS.Storage.Backend.Filesystem (
@@ -53,11 +54,6 @@ import System.FilePath (
     (</>),
  )
 
-import System.Posix.StatVFS (
-    StatVFS (statVFS_bavail, statVFS_bsize),
-    statVFS,
- )
-
 import System.Directory (
     createDirectoryIfMissing,
     doesPathExist,
@@ -110,8 +106,11 @@ maxMutableShareSize = 69105 * 1000 * 1000 * 1000 * 1000
 
 instance Backend FilesystemBackend where
     version (FilesystemBackend path) = do
-        vfs <- statVFS path
-        let available = toInteger (statVFS_bsize vfs) * toInteger (statVFS_bavail vfs)
+        -- Hard-code some arbitrary amount of space.  There is a statvfs
+        -- package that can inspect the system and tell us a more correct
+        -- answer but it is somewhat unmaintained and fails to build in some
+        -- important environments.
+        let available = 1_000_000_000
         return
             Version
                 { applicationVersion = versionString
