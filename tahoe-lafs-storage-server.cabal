@@ -1,16 +1,15 @@
 cabal-version:      2.4
-name:               tahoe-lafs-storage-server
+name:               tahoe-great-black-swamp
 version:            0.1.0.0
 build-type:         Simple
-
-synopsis:           A Tahoe-LAFS Storage Server
+synopsis:           An implementation of the "Great Black Swamp" LAFS protocol.
 description:
-  This package implements a storage server for Tahoe-LAFS.
-  It implements the recently proposed "Great Black Swamp"
-  protocol and not the original Foolscap-based protocol.
+  This package implements the recently proposed "Great Black Swamp" Least
+  Authority File Store protocol from the Tahoe-LAFS project.  It also includes
+  pieces of a storage server and client implementation based on that protocol.
 
 homepage:
-  https://github.com/LeastAuthority/tahoe-lafs-storage-server#readme
+  https://whetstone.private.storage/PrivateStorage/tahoe-great-black-swamp
 
 license:            BSD-3-Clause
 license-file:       LICENSE
@@ -31,7 +30,7 @@ category:
 extra-source-files: README.rst
 
 common executable-opts
-  ghc-options:        -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
 common common-opts
   default-extensions:
