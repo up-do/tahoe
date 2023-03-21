@@ -116,17 +116,17 @@ library
 --                      , pandoc
 --                      , data-default
 --                      , blaze-html
---                      , tahoe-lafs-storage-server
+--                      , tahoe-great-black-swamp
 --                      , text
 
-executable tahoe-lafs-storage-server
+executable tahoe-great-black-swamp
   hs-source-dirs:   app
   main-is:          Main.hs
   default-language: Haskell2010
   build-depends:
     , base
     , optparse-applicative
-    , tahoe-lafs-storage-server
+    , tahoe-great-black-swamp
     , warp
 
 executable gbs-generate-clients
@@ -137,7 +137,7 @@ executable gbs-generate-clients
     , base
     , filepath
     , servant-js
-    , tahoe-lafs-storage-server
+    , tahoe-great-black-swamp
 
 test-suite http-tests
   import:           common-opts
@@ -162,7 +162,7 @@ test-suite http-tests
     , hspec-wai
     , QuickCheck
     , quickcheck-instances
-    , tahoe-lafs-storage-server
+    , tahoe-great-black-swamp
     , temporary
     , vector
     , wai-extra

@@ -1,15 +1,12 @@
-Tahoe-LAFS Storage Server
-=========================
-
-.. image:: https://circleci.com/gh/LeastAuthority/haskell-tahoe-lafs-storage-server.svg?style=svg
-   :target: https://circleci.com/gh/LeastAuthority/haskell-tahoe-lafs-storage-server
+Great Black Swamp LAFS
+======================
 
 This is a preliminary implementation of the ``Great Black Swamp`` storage protocol.
 
 Requirements
 ------------
 
-haskell-tahoe-lafs-storage-server uses stack and GHC.
+tahoe-great-black-swamp uses stack and GHC.
 Most dependencies should be handled automatically by stack.
 If you have nix installed then you can use ``nix-shell`` to set up a build environment containing the non-Haskell dependencies.
 If you don't have nix then you should install these some other way:
@@ -54,7 +51,7 @@ Run
 
    mkdir some-storage-dir
    stack build
-   stack exec -- tahoe-lafs-storage-server --storage-path some-storage-dir
+   stack exec -- tahoe-great-black-swamp --storage-path some-storage-dir
 
 Inspect the version of your new GBS server::
 
