@@ -66,7 +66,11 @@ import TahoeLAFS.Storage.Server (
     app,
  )
 
-getJSON :: ByteString -> WaiSession st SResponse
+-- WaiSession changed incompatibly between hspec-wai 0.9.2 and 0.11.1.  We
+-- would like to work with both so just skip the explicit type signature here
+-- (and below).  ghc can figure it out.
+--
+-- getJSON :: ByteString -> WaiSession st SResponse
 getJSON path =
     request
         methodGet
@@ -74,7 +78,7 @@ getJSON path =
         [("Accept", "application/json")]
         ""
 
-postJSON :: ByteString -> L.ByteString -> WaiSession st SResponse
+-- postJSON :: ByteString -> L.ByteString -> WaiSession st SResponse
 postJSON path body =
     request
         methodPost
@@ -82,7 +86,7 @@ postJSON path body =
         [("Content-Type", "application/json"), ("Accept", "application/json")]
         body
 
-putShare :: ByteString -> Int64 -> WaiSession st SResponse
+-- putShare :: ByteString -> Int64 -> WaiSession st SResponse
 putShare path size =
     request
         methodPut
