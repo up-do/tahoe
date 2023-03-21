@@ -1,12 +1,41 @@
-cabal-version:      3.0
+cabal-version:      2.4
 name:               tahoe-lafs-storage-server
 version:            0.1.0.0
 build-type:         Simple
 
+synopsis:           A Tahoe-LAFS Storage Server
+description:
+  This package implements a storage server for Tahoe-LAFS.
+  It implements the recently proposed "Great Black Swamp"
+  protocol and not the original Foolscap-based protocol.
+
+homepage:
+  https://github.com/LeastAuthority/tahoe-lafs-storage-server#readme
+
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Least Authority TFA GmbH
+maintainer:         jean-paul@leastauthority.com
+copyright:          © 2023 Least Authority TFA GmbH
+category:
+  Cryptography
+  , Distributed Computing
+  , Filesystem
+  , Network
+  , Network APIs
+  , Security
+  , Service
+  , Storage
+  , Web
+
+extra-source-files: README.rst
+
+common executable-opts
+  ghc-options:        -threaded -rtsopts -with-rtsopts=-N
+
 common common-opts
   default-extensions:
     GADTs
-    ImportQualifiedPost
     InstanceSigs
     LambdaCase
     MultiWayIf
@@ -18,7 +47,7 @@ common common-opts
     TupleSections
     TypeApplications
 
-  ghc-options:        -Wall -threaded -rtsopts -with-rtsopts=-N
+  ghc-options:        -Wall
   build-depends:
     , aeson
     , async
@@ -46,33 +75,6 @@ common common-opts
   -- the actual app
 
   default-language:   Haskell2010
-
-synopsis:           A Tahoe-LAFS Storage Server
-description:
-  This package implements a storage server for Tahoe-LAFS.
-  It implements the recently proposed "Great Black Swamp"
-  protocol and not the original Foolscap-based protocol.
-
-homepage:
-  https://github.com/LeastAuthority/tahoe-lafs-storage-server#readme
-
-license:            BSD3
-license-file:       LICENSE
-author:             Least Authority TFA GmbH
-maintainer:         jean-paul@leastauthority.com
-copyright:          BSD3
-category:
-  Cryptography
-  , Distributed Computing
-  , Filesystem
-  , Network
-  , Network APIs
-  , Security
-  , Service
-  , Storage
-  , Web
-
-extra-source-files: README.rst
 
 library
   import:           common-opts
@@ -140,6 +142,7 @@ executable gbs-generate-clients
 
 test-suite http-tests
   import:           common-opts
+  import:           executable-opts
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
   main-is:          Main.hs
