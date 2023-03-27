@@ -88,13 +88,6 @@ instance Backend MemoryBackend where
                         { maximumImmutableShareSize = 1024 * 1024 * 64
                         , maximumMutableShareSize = 1024 * 1024 * 64
                         , availableSpace = (1024 * 1024 * 1024) - totalSize
-                        , toleratesImmutableReadOverrun = True
-                        , deleteMutableSharesWithZeroLengthWritev = True
-                        , fillsHolesWithZeroBytes = True
-                        , preventsReadPastEndOfShareData = True
-                        , -- TODO Doesn't really belong here.  Also we need more than a bool.
-                          -- We need to tell them *where* it is available or it is useless.
-                          httpProtocolAvailable = True
                         }
                 }
 

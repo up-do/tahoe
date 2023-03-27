@@ -9,6 +9,7 @@ module Main where
 -- import Data.Aeson hiding
 
 import Codec.CBOR.Encoding
+import Codec.CBOR.Pretty
 import Codec.Serialise
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -58,10 +59,13 @@ run = do
             print v
 
 -- make a value to write out
-foo :: Version
-foo = Version "1" v1params
+aVersion :: Version
+aVersion = Version testAV v1params
   where
-    v1params = Version1Parameters 1 1 1 False False False False False
+    v1params = Version1Parameters 266275472896 69105000000000000 266275472896
+
+testAV :: ApplicationVersion
+testAV = "tahoe-lafs/1.18.0.post908"
 
 swrite :: Serialise a => FilePath -> a -> IO ()
 swrite fname val = BSL.writeFile fname (serialise val)

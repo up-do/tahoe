@@ -34,13 +34,6 @@ instance Backend NullBackend where
                         { maximumImmutableShareSize = 0
                         , maximumMutableShareSize = 0
                         , availableSpace = 0
-                        , toleratesImmutableReadOverrun = False
-                        , deleteMutableSharesWithZeroLengthWritev = False
-                        , fillsHolesWithZeroBytes = False
-                        , preventsReadPastEndOfShareData = False
-                        , -- TODO Doesn't really belong here.  Also we need more than a bool.
-                          -- We need to tell them *where* it is available or it is useless.
-                          httpProtocolAvailable = True
                         }
                 }
 

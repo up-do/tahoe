@@ -122,13 +122,6 @@ instance Backend FilesystemBackend where
                         , -- TODO: Copy the "reserved space" feature of the Python
                           -- implementation.
                           availableSpace = available
-                        , toleratesImmutableReadOverrun = True
-                        , deleteMutableSharesWithZeroLengthWritev = True
-                        , fillsHolesWithZeroBytes = True
-                        , preventsReadPastEndOfShareData = True
-                        , -- TODO Doesn't really belong here.  Also we need more than a bool.
-                          -- We need to tell them *where* it is available or it is useless.
-                          httpProtocolAvailable = True
                         }
                 }
 

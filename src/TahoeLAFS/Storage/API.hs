@@ -42,11 +42,11 @@ module TahoeLAFS.Storage.API (
 ) where
 
 import Codec.Serialise
+import qualified Codec.Serialise.Decoding as CSD
+import qualified Codec.Serialise.Encoding as CSE
 import Prelude hiding (
     toInteger,
  )
-
-import Data.Word
 
 import Data.Text (
     pack,
@@ -56,17 +56,17 @@ import Data.Text.Encoding (
     decodeUtf8,
  )
 
-import Data.Bifunctor
 import Data.ByteString (
     ByteString,
  )
-
 import qualified Data.ByteString as BS
+
 import Data.Map.Strict (
     Map,
  )
 
 import Data.Aeson (
+    Encoding,
     FromJSON (..),
     FromJSONKey (..),
     ToJSON (..),
@@ -79,6 +79,7 @@ import Data.Aeson (
  )
 
 import Data.Aeson.Types (
+    Options,
     toJSONKeyText,
  )
 
@@ -117,15 +118,15 @@ import Network.HTTP.Types (
     renderByteRanges,
  )
 
+import Codec.CBOR.Encoding (encodeBytes, encodeInt)
+import Codec.Serialise.Decoding (decodeBool, decodeBytes, decodeInteger, decodeListLen, decodeMapLen)
 import TahoeLAFS.Internal.ServantUtil (
     CBOR,
  )
 
-import qualified Data.ByteString.Base64 as Base64
-import qualified Data.Text as B
-
 type PutCreated = Verb 'PUT 201
 
+tahoeJSONOptions :: Options
 tahoeJSONOptions =
     defaultOptions
         { fieldLabelModifier = camelTo2 '-'
@@ -142,7 +143,7 @@ leaseRenewSecretLength = 32
 leaseCancelSecretLength :: Num a => a
 leaseCancelSecretLength = 32
 
-type ApplicationVersion = String
+type ApplicationVersion = ByteString
 type Size = Integer
 type Offset = Integer
 
@@ -192,15 +193,37 @@ data Version1Parameters = Version1Parameters
     { maximumImmutableShareSize :: Size
     , maximumMutableShareSize :: Size
     , availableSpace :: Size
-    , toleratesImmutableReadOverrun :: Bool
-    , deleteMutableSharesWithZeroLengthWritev :: Bool
-    , fillsHolesWithZeroBytes :: Bool
-    , preventsReadPastEndOfShareData :: Bool
-    , httpProtocolAvailable :: Bool
     }
     deriving (Show, Eq, Generic)
 
-instance Serialise Version1Parameters
+encodeVersion1Parameters :: Version1Parameters -> CSE.Encoding
+encodeVersion1Parameters Version1Parameters{..} =
+    CSE.encodeMapLen 3 -- three rings for the elven kings
+        <> CSE.encodeBytes "maximum-immutable-share-size"
+        <> CSE.encodeInteger maximumImmutableShareSize
+        <> CSE.encodeBytes "maximum-mutable-share-size"
+        <> CSE.encodeInteger maximumMutableShareSize
+        <> CSE.encodeBytes "available-space"
+        <> CSE.encodeInteger availableSpace
+
+-- | XXX this will break if the order changes, and likely require a 'real' parser when/if that happens
+decodeVersion1Parameters :: CSD.Decoder s Version1Parameters
+decodeVersion1Parameters = do
+    len <- decodeMapLen
+    case len of
+        3 ->
+            Version1Parameters
+                <$ decodeBytes -- "maximum-immutable-share-size"
+                <*> decodeInteger
+                <* decodeBytes -- "maximum-mutable-share-size"
+                <*> decodeInteger
+                <* decodeBytes -- "available-space"
+                <*> decodeInteger
+        _ -> fail "invalid encoding of Version1Parameters"
+
+instance Serialise Version1Parameters where
+    encode = encodeVersion1Parameters
+    decode = decodeVersion1Parameters
 
 instance ToJSON Version1Parameters where
     toJSON = genericToJSON tahoeJSONOptions
@@ -214,7 +237,32 @@ data Version = Version
     }
     deriving (Show, Eq, Generic)
 
-instance Serialise Version
+encodeApplicationVersion :: ApplicationVersion -> CSE.Encoding
+encodeApplicationVersion = CSE.encodeBytes
+
+decodeApplicationVersion :: CSD.Decoder s ApplicationVersion
+decodeApplicationVersion = decodeBytes
+
+encodeVersion :: Version -> CSE.Encoding
+encodeVersion Version{..} =
+    CSE.encodeMapLen 2
+        <> encodeBytes "http://allmydata.org/tahoe/protocols/storage/v1"
+        <> encodeVersion1Parameters parameters
+        <> encodeBytes "application-version"
+        <> encodeApplicationVersion applicationVersion
+
+decodeVersion :: CSD.Decoder s Version
+decodeVersion = do
+    mapLen <- decodeMapLen -- hope it's 2
+    appVersionKey <- decodeBytes
+    appVersion <- decodeApplicationVersion
+    protoVersionKey <- decodeBytes
+    v1params <- decodeVersion1Parameters
+    pure $ Version appVersion v1params
+
+instance Serialise Version where
+    encode = encodeVersion
+    decode = decodeVersion
 
 instance ToJSON Version where
     toJSON = genericToJSON tahoeJSONOptions
