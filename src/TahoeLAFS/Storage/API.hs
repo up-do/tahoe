@@ -41,7 +41,7 @@ module TahoeLAFS.Storage.API (
     leaseCancelSecretLength,
 ) where
 
-import Codec.Serialise
+import Codec.Serialise (Serialise (decode, encode))
 import qualified Codec.Serialise.Decoding as CSD
 import qualified Codec.Serialise.Encoding as CSE
 import Prelude hiding (
@@ -213,12 +213,12 @@ decodeVersion1Parameters = do
     case len of
         3 ->
             Version1Parameters
-                <$ decodeBytes -- "maximum-immutable-share-size"
-                <*> decodeInteger
-                <* decodeBytes -- "maximum-mutable-share-size"
-                <*> decodeInteger
-                <* decodeBytes -- "available-space"
-                <*> decodeInteger
+                <$ CSD.decodeBytes -- "maximum-immutable-share-size"
+                <*> CSD.decodeInteger
+                <* CSD.decodeBytes -- "maximum-mutable-share-size"
+                <*> CSD.decodeInteger
+                <* CSD.decodeBytes -- "available-space"
+                <*> CSD.decodeInteger
         _ -> fail "invalid encoding of Version1Parameters"
 
 instance Serialise Version1Parameters where
@@ -247,18 +247,16 @@ encodeVersion :: Version -> CSE.Encoding
 encodeVersion Version{..} =
     CSE.encodeMapLen 2
         <> encodeBytes "http://allmydata.org/tahoe/protocols/storage/v1"
-        <> encodeVersion1Parameters parameters
         <> encodeBytes "application-version"
         <> encodeApplicationVersion applicationVersion
+        <> encodeVersion1Parameters parameters
 
 decodeVersion :: CSD.Decoder s Version
 decodeVersion = do
-    mapLen <- decodeMapLen -- hope it's 2
-    appVersionKey <- decodeBytes
-    appVersion <- decodeApplicationVersion
-    protoVersionKey <- decodeBytes
-    v1params <- decodeVersion1Parameters
-    pure $ Version appVersion v1params
+    mapLen <- CSD.decodeMapLen -- hope it's 2
+    case mapLen of
+        2 -> Version <$ CSD.decodeBytes <*> decodeApplicationVersion <* CSD.decodeBytes <*> decodeVersion1Parameters
+        _ -> fail "decodeVersion got bad input"
 
 instance Serialise Version where
     encode = encodeVersion

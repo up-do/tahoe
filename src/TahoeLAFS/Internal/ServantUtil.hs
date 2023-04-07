@@ -30,32 +30,17 @@ import Servant (
     MimeUnrender (..),
  )
 
-import qualified Codec.CBOR.Encoding as CE
-import Codec.CBOR.Write (
-    toLazyByteString,
- )
 import qualified Codec.Serialise as S
 import Data.Aeson (
-    Encoding,
     FromJSON (parseJSON),
     ToJSON (toJSON),
     withText,
  )
 import Data.Aeson.Types (
-    Parser,
-    Result (Error, Success),
     Value (String),
-    fromJSON,
  )
 
-import Codec.CBOR.Read (
-    deserialiseFromBytes,
- )
-
-import Codec.CBOR.JSON (
-    decodeValue,
-    encodeValue,
- )
+import Debug.Trace
 
 data CBOR
 
@@ -69,8 +54,8 @@ instance Accept CBOR where
 instance S.Serialise a => MimeRender CBOR a where
     mimeRender _ = S.serialise
 
-instance S.Serialise a => MimeUnrender CBOR a where
-    mimeUnrender _ bytes = S.deserialise bytes
+instance (S.Serialise a, Show a) => MimeUnrender CBOR a where
+    mimeUnrender _ bytes = traceShowId $ S.deserialise $ traceShowId bytes
 
 -- instance FromJSON a => MimeUnrender CBOR a where
 --     mimeUnrender _ bytes =

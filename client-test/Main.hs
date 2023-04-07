@@ -1,6 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -9,6 +7,7 @@ module Main where
 -- import Data.Aeson hiding
 
 import Codec.CBOR.Encoding
+import Codec.CBOR.FlatTerm
 import Codec.CBOR.Pretty
 import Codec.Serialise
 import Data.ByteString (ByteString)
@@ -61,8 +60,8 @@ run = do
 -- make a value to write out
 aVersion :: Version
 aVersion = Version testAV v1params
-  where
-    v1params = Version1Parameters 266275472896 69105000000000000 266275472896
+
+v1params = Version1Parameters 257892218368 69105000000000000 257892218368
 
 testAV :: ApplicationVersion
 testAV = "tahoe-lafs/1.18.0.post908"
@@ -72,3 +71,6 @@ swrite fname val = BSL.writeFile fname (serialise val)
 
 sread :: FilePath -> IO Version
 sread fname = deserialise <$> BSL.readFile fname
+
+tahoe :: BSL.ByteString
+tahoe = "\162X/http://allmydata.org/tahoe/protocols/storage/v1\163X\FSmaximum-immutable-share-size\ESC\NUL\NUL\NUL6+\167\230\NULX\SUBmaximum-mutable-share-size\ESC\NUL\245\130\161\161\&4\DLE\NULOavailable-space\ESC\NUL\NUL\NUL6+\167\230\NULSapplication-versionX\EMtahoe-lafs/1.18.0.post908"
