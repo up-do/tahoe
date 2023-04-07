@@ -241,7 +241,7 @@ encodeApplicationVersion :: ApplicationVersion -> CSE.Encoding
 encodeApplicationVersion = CSE.encodeBytes
 
 decodeApplicationVersion :: CSD.Decoder s ApplicationVersion
-decodeApplicationVersion = decodeBytes
+decodeApplicationVersion = CSD.decodeBytes
 
 encodeVersion :: Version -> CSE.Encoding
 encodeVersion Version{..} =
@@ -255,7 +255,7 @@ decodeVersion :: CSD.Decoder s Version
 decodeVersion = do
     mapLen <- CSD.decodeMapLen -- hope it's 2
     case mapLen of
-        2 -> Version <$ CSD.decodeBytes <*> decodeApplicationVersion <* CSD.decodeBytes <*> decodeVersion1Parameters
+        2 -> Version <$ decodeApplicationVersion <* CSD.decodeBytes <*> decodeApplicationVersion <*> decodeVersion1Parameters
         _ -> fail "decodeVersion got bad input"
 
 instance Serialise Version where

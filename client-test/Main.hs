@@ -42,7 +42,7 @@ getVersion = do
 
 fixAccept :: Applicative f => Request -> f Request
 fixAccept req =
-    pure $ req{requestHeaders = ("Authorization", "Tahoe-LAFS a2xwc2hmeTVqNmNyZzZnb3I0d2pyY2Fza3p0NzVncWQ=") : requestHeaders req}
+    pure $ req{requestHeaders = ("Accept", "application/cbor") : ("Authorization", "Tahoe-LAFS a2xwc2hmeTVqNmNyZzZnb3I0d2pyY2Fza3p0NzVncWQ=") : requestHeaders req}
 
 run :: IO ()
 run = do
