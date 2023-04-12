@@ -188,4 +188,5 @@ test-suite http-tests
     , vector
     , cborg
     , serialise
+    , servant
     , wai-extra

@@ -41,8 +41,7 @@ getVersion = do
     version
 
 fixAccept :: Applicative f => Request -> f Request
-fixAccept req =
-    pure $ req{requestHeaders = ("Accept", "application/cbor") : ("Authorization", "Tahoe-LAFS a2xwc2hmeTVqNmNyZzZnb3I0d2pyY2Fza3p0NzVncWQ=") : requestHeaders req}
+fixAccept req = pure req{requestHeaders = ("Authorization", "Tahoe-LAFS a2xwc2hmeTVqNmNyZzZnb3I0d2pyY2Fza3p0NzVncWQ=") : requestHeaders req}
 
 run :: IO ()
 run = do
@@ -59,7 +58,7 @@ run = do
 
 -- make a value to write out
 aVersion :: Version
-aVersion = Version testAV v1params
+aVersion = Version v1params testAV
 
 v1params = Version1Parameters 257892218368 69105000000000000 257892218368
 
@@ -74,3 +73,6 @@ sread fname = deserialise <$> BSL.readFile fname
 
 tahoe :: BSL.ByteString
 tahoe = "\162X/http://allmydata.org/tahoe/protocols/storage/v1\163X\FSmaximum-immutable-share-size\ESC\NUL\NUL\NUL6+\167\230\NULX\SUBmaximum-mutable-share-size\ESC\NUL\245\130\161\161\&4\DLE\NULOavailable-space\ESC\NUL\NUL\NUL6+\167\230\NULSapplication-versionX\EMtahoe-lafs/1.18.0.post908"
+
+cbor :: Proxy CBOR
+cbor = Proxy

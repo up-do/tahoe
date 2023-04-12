@@ -39,6 +39,7 @@ module TahoeLAFS.Storage.API (
     writeEnablerSecretLength,
     leaseRenewSecretLength,
     leaseCancelSecretLength,
+    CBOR,
 ) where
 
 import Codec.Serialise (Serialise (decode, encode))
@@ -232,8 +233,8 @@ instance FromJSON Version1Parameters where
     parseJSON = genericParseJSON tahoeJSONOptions
 
 data Version = Version
-    { applicationVersion :: ApplicationVersion
-    , parameters :: Version1Parameters
+    { parameters :: Version1Parameters
+    , applicationVersion :: ApplicationVersion
     }
     deriving (Show, Eq, Generic)
 
@@ -247,15 +248,15 @@ encodeVersion :: Version -> CSE.Encoding
 encodeVersion Version{..} =
     CSE.encodeMapLen 2
         <> encodeBytes "http://allmydata.org/tahoe/protocols/storage/v1"
+        <> encodeVersion1Parameters parameters
         <> encodeBytes "application-version"
         <> encodeApplicationVersion applicationVersion
-        <> encodeVersion1Parameters parameters
 
 decodeVersion :: CSD.Decoder s Version
 decodeVersion = do
     mapLen <- CSD.decodeMapLen -- hope it's 2
     case mapLen of
-        2 -> Version <$ decodeApplicationVersion <* CSD.decodeBytes <*> decodeApplicationVersion <*> decodeVersion1Parameters
+        2 -> Version <$ CSD.decodeBytes <*> decodeVersion1Parameters <* CSD.decodeBytes <*> decodeApplicationVersion
         _ -> fail "decodeVersion got bad input"
 
 instance Serialise Version where

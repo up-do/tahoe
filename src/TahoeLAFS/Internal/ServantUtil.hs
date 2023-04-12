@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module TahoeLAFS.Internal.ServantUtil (
     CBOR,
@@ -40,8 +41,6 @@ import Data.Aeson.Types (
     Value (String),
  )
 
-import Debug.Trace
-
 data CBOR
 
 instance Accept CBOR where
@@ -54,18 +53,8 @@ instance Accept CBOR where
 instance S.Serialise a => MimeRender CBOR a where
     mimeRender _ = S.serialise
 
-instance (S.Serialise a, Show a) => MimeUnrender CBOR a where
-    mimeUnrender _ bytes = traceShowId $ S.deserialise $ traceShowId bytes
-
--- instance FromJSON a => MimeUnrender CBOR a where
---     mimeUnrender _ bytes =
---         case deserialiseFromBytes (decodeValue False) bytes of
---             Right ("", val) ->
---                 case fromJSON val of
---                     Error s -> Left s
---                     Success x -> Right x
---             Right (extra, _) -> Left "extra bytes at tail"
---             Left err -> Left $ show err
+instance S.Serialise a => MimeUnrender CBOR a where
+    mimeUnrender _ bytes = Right $ S.deserialise bytes
 
 instance ToJSON ByteString where
     toJSON bs = String $ decodeUtf8 $ encode bs

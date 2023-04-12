@@ -81,7 +81,7 @@ instance ToSample ReadResult where
 instance ToSample Version where
     toSamples _ =
         singleSample $
-            Version "blub version??" (Version1Parameters (1 `shiftL` 16) (2 `shiftL` 32) (2 `shiftL` 64))
+            Version (Version1Parameters (1 `shiftL` 16) (2 `shiftL` 32) (2 `shiftL` 64)) "blub version??"
 
 instance ToSample AllocateBuckets where
     toSamples _ =
