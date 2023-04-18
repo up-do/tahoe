@@ -37,11 +37,6 @@ import Data.Map.Strict (
     toList,
  )
 
--- import System.Posix.StatVFS
---   ( StatVFS(statVFS_bsize, statVFS_bavail)
---   , statVFS
---   )
-
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult (..),

@@ -3,10 +3,9 @@
 
   inputs = {
     # Nix Inputs
-    nixpkgs.url = github:nixos/nixpkgs/?ref=nixos-22.11;
+    nixpkgs.follows = "hs-flake-utils/nixpkgs";
     flake-utils.url = github:numtide/flake-utils;
     hs-flake-utils.url = "git+https://whetstone.private.storage/jcalderone/hs-flake-utils.git?ref=main";
-    hs-flake-utils.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = {
@@ -22,6 +21,14 @@
       # Get a nixpkgs customized for this system
       pkgs = import nixpkgs {
         inherit system;
+
+        # language-ecmascript is marked as broken but it isn't broken, let it
+        # through.  Remove this as soon as we can mark it more specifically.
+        # It would be nice if we could give hs-flake-utils a package override
+        # to use.
+        config = {
+          allowBroken = true;
+        };
       };
       hslib = hs-flake-utils.lib {
         inherit pkgs;

@@ -1,7 +1,36 @@
-cabal-version:      3.0
-name:               tahoe-lafs-storage-server
+cabal-version:      2.4
+name:               tahoe-great-black-swamp
 version:            0.1.0.0
 build-type:         Simple
+synopsis:           An implementation of the "Great Black Swamp" LAFS protocol.
+description:
+  This package implements the recently proposed "Great Black Swamp" Least
+  Authority File Store protocol from the Tahoe-LAFS project.  It also includes
+  pieces of a storage server and client implementation based on that protocol.
+
+homepage:
+  https://whetstone.private.storage/PrivateStorage/tahoe-great-black-swamp
+
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Least Authority TFA GmbH
+maintainer:         jean-paul@leastauthority.com
+copyright:          © 2023 Least Authority TFA GmbH
+category:
+  Cryptography
+  , Distributed Computing
+  , Filesystem
+  , Network
+  , Network APIs
+  , Security
+  , Service
+  , Storage
+  , Web
+
+extra-source-files: README.rst
+
+common executable-opts
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
 synopsis:           A Tahoe-LAFS Storage Server
 description:
@@ -30,11 +59,9 @@ category:
 
 extra-source-files: README.rst
 
-
 common common-opts
   default-extensions:
     GADTs
-    ImportQualifiedPost
     InstanceSigs
     LambdaCase
     MultiWayIf
@@ -46,7 +73,7 @@ common common-opts
     TupleSections
     TypeApplications
 
-  ghc-options:        -Wall -threaded -rtsopts -with-rtsopts=-N
+  ghc-options:        -Wall
   build-depends:
     , aeson
     , async
@@ -75,7 +102,6 @@ common common-opts
 
   default-language:   Haskell2010
 
-
 library
   import:           common-opts
   hs-source-dirs:   src
@@ -103,7 +129,6 @@ library
     , servant-client
     , servant-docs
     , servant-server
-    , statvfs
     , utf8-string
     , wai
     , warp
@@ -118,27 +143,28 @@ library
 --                      , pandoc
 --                      , data-default
 --                      , blaze-html
---                      , tahoe-lafs-storage-server
+--                      , tahoe-great-black-swamp
 --                      , text
 
 executable client-test
-           hs-source-dirs: client-test
-           main-is: Main.hs
-           default-language: Haskell2010
-           build-depends: base
-                        , tahoe-lafs-storage-server
-                        , text
-                        , servant-client
-                        , http-client-tls
-                        , connection
-                        , aeson
-                        , http-client
-                        , servant
-                        , bytestring
-                        , http-types
-                        , containers
-                        , cborg
-                        , serialise
+  hs-source-dirs:   client-test
+  main-is:          Main.hs
+  default-language: Haskell2010
+  build-depends:
+    , aeson
+    , base
+    , bytestring
+    , cborg
+    , connection
+    , containers
+    , http-client
+    , http-client-tls
+    , http-types
+    , serialise
+    , servant
+    , servant-client
+    , tahoe-lafs-storage-server
+    , text
 
 executable tahoe-lafs-storage-server
   hs-source-dirs:   app
@@ -147,7 +173,7 @@ executable tahoe-lafs-storage-server
   build-depends:
     , base
     , optparse-applicative
-    , tahoe-lafs-storage-server
+    , tahoe-great-black-swamp
     , warp
 
 executable gbs-generate-clients
@@ -158,35 +184,36 @@ executable gbs-generate-clients
     , base
     , filepath
     , servant-js
-    , tahoe-lafs-storage-server
+    , tahoe-great-black-swamp
 
 test-suite http-tests
   import:           common-opts
+  import:           executable-opts
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
   main-is:          Main.hs
   other-modules:
+    CBORSpec
     HTTPSpec
     Lib
     MiscSpec
     SemanticSpec
     Spec
-    CBORSpec
 
   default-language: Haskell2010
   ghc-options:      -Wall
   build-depends:
     , base
     , base32string
+    , cborg
     , hspec
     , hspec-expectations
     , hspec-wai
     , QuickCheck
     , quickcheck-instances
-    , tahoe-lafs-storage-server
-    , temporary
-    , vector
-    , cborg
     , serialise
     , servant
+    , tahoe-great-black-swamp
+    , temporary
+    , vector
     , wai-extra
