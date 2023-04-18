@@ -15,6 +15,7 @@ import Network.HTTP.Types (
 import Control.Exception (
     throwIO,
  )
+import Data.Maybe (fromMaybe)
 
 import Data.IORef (
     IORef,
@@ -46,6 +47,7 @@ import TahoeLAFS.Storage.API (
     AllocationResult (..),
     CorruptionDetails,
     Offset,
+    QueryRange,
     ReadResult,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
@@ -161,18 +163,13 @@ instance Backend MemoryBackend where
         shares' <- readIORef $ immutableShares backend
         return $ maybe [] keys $ lookup storageIndex shares'
 
-    readImmutableShares :: MemoryBackend -> StorageIndex -> [ShareNumber] -> [Offset] -> [Size] -> IO ReadResult
-    readImmutableShares backend storageIndex shareNumbers [] [] = do
+    readImmutableShare :: MemoryBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readImmutableShare backend storageIndex shareNum _qr = do
         shares' <- readIORef $ immutableShares backend
         let result = case lookup storageIndex shares' of
                 Nothing -> mempty
-                Just shares'' ->
-                    let matchingShares = filterWithKey matches shares''
-                     in map (replicate 1) matchingShares
-              where
-                matches k _v = k `elem` shareNumbers
-        return result
-    readImmutableShares _ _ _ _ _ = error "readImmutableShares got bad input"
+                Just shares'' -> lookup shareNum shares''
+        pure $ fromMaybe mempty result
 
 totalShareSize :: MemoryBackend -> IO Size
 totalShareSize backend = do

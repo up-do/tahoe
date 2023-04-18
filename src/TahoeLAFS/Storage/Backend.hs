@@ -10,18 +10,19 @@ import Control.Exception (
  )
 
 import Data.Map.Strict (
+    Map,
     fromList,
  )
 
 import Network.HTTP.Types (
     ByteRanges,
  )
-
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult,
     CorruptionDetails,
     Offset,
+    QueryRange,
     ReadResult,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
@@ -50,15 +51,7 @@ class Backend b where
     getImmutableShareNumbers :: b -> StorageIndex -> IO [ShareNumber]
 
     -- Provide a default for requesting all shares.
-    readImmutableShares :: b -> StorageIndex -> [ShareNumber] -> [Offset] -> [Size] -> IO ReadResult
-    readImmutableShares backend storageIndex [] offsets sizes = do
-        shareNumbers <- getImmutableShareNumbers backend storageIndex
-        case shareNumbers of
-            [] ->
-                return mempty
-            _ ->
-                readImmutableShares backend storageIndex shareNumbers offsets sizes
-    readImmutableShares _ _ _ _ _ = error "readImmutableShares got bad input"
+    readImmutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
 
     createMutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
     readvAndTestvAndWritev :: b -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult

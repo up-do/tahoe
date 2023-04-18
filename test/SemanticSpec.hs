@@ -102,7 +102,7 @@ import TahoeLAFS.Storage.Backend (
         createMutableStorageIndex,
         getImmutableShareNumbers,
         getMutableShareNumbers,
-        readImmutableShares,
+        readImmutableShare,
         writeImmutableShare
     ),
     ImmutableShareAlreadyWritten,
@@ -255,18 +255,9 @@ immutableWriteAndReadShare backend storageIndex shareNumbers shareSeed = monadic
     let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
     _result <- run $ createImmutableStorageIndex backend storageIndex allocate
     run $ writeShares (writeImmutableShare backend storageIndex) (zip shareNumbers permutedShares)
-    readShares' <- run $ readShares backend storageIndex shareNumbers
+    readShares' <- run $ mapM (\sn -> readImmutableShare backend storageIndex sn Nothing) shareNumbers
     when (permutedShares /= readShares') $
         fail (show permutedShares ++ " /= " ++ show readShares')
-  where
-    readShares :: Backend b => b -> StorageIndex -> [ShareNumber] -> IO [ShareData]
-    readShares b storageIndex shareNumbers = do
-        -- Map ShareNumber [ShareData]
-        shares <- readImmutableShares b storageIndex shareNumbers [] []
-        let maybeShares = Prelude.map (`lookup` shares) shareNumbers
-        let orderedShares = catMaybes maybeShares
-        let shareData = Prelude.map Data.ByteString.concat orderedShares :: [ShareData]
-        return shareData
 
 -- The share numbers of mutable share data written to the shares of a given
 -- storage index can be retrieved.

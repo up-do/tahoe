@@ -69,6 +69,7 @@ import TahoeLAFS.Storage.API (
     AllocateBuckets (..),
     AllocationResult (..),
     Offset,
+    QueryRange,
     ReadTestWriteResult (ReadTestWriteResult, readData, success),
     ReadTestWriteVectors (ReadTestWriteVectors),
     ShareData,
@@ -166,13 +167,11 @@ instance Backend FilesystemBackend where
 
     -- TODO Handle ranges.
     -- TODO Make sure the share storage was allocated.
-    readImmutableShares :: FilesystemBackend -> StorageIndex -> [ShareNumber] -> [Offset] -> [Storage.Size] -> IO Storage.ReadResult
-    readImmutableShares (FilesystemBackend root) storageIndex shareNumbers [] [] =
+    readImmutableShare :: FilesystemBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO Storage.ShareData
+    readImmutableShare (FilesystemBackend root) storageIndex shareNum _qr =
         let _storageIndexPath = pathOfStorageIndex root storageIndex
-            only x = [x]
             readShare = readFile . pathOfShare root storageIndex
-         in fromList . zip shareNumbers . map only <$> mapM readShare shareNumbers
-    readImmutableShares _ _ _ _ _ = error "readImmutableShares got bad input"
+         in readShare shareNum
 
     createMutableStorageIndex = createImmutableStorageIndex
 

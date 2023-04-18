@@ -28,6 +28,7 @@ module TahoeLAFS.Storage.API (
     ReadTestWriteResult (..),
     ReadVectors,
     ReadVector,
+    QueryRange,
     TestVector (TestVector),
     ReadResult,
     CorruptionDetails (CorruptionDetails),
@@ -147,6 +148,7 @@ leaseCancelSecretLength = 32
 type ApplicationVersion = ByteString
 type Size = Integer
 type Offset = Integer
+type QueryRange = Maybe ByteRanges
 
 -- TODO These should probably all be byte strings instead.
 type RenewSecret = String
@@ -349,7 +351,7 @@ type StorageAPI =
         -- is total nonsense and supplying JSON here will almost certainly break.
         -- At some point hopefully we'll fix servant-py to not need this and then
         -- fix the signature here.
-        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> ReqBody '[OctetStream, JSON] ShareData :> Header "Content-Range" ByteRanges :> PutCreated '[CBOR, JSON] ()
+        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> ReqBody '[OctetStream] ShareData :> Header "Content-Range" ByteRanges :> PutCreated '[CBOR, JSON] ()
         --
         -- POST /v1/immutable/:storage_index/:share_number/corrupt
         -- Advise the server of a corrupt share data
@@ -361,7 +363,7 @@ type StorageAPI =
         --
         -- GET /v1/immutable/:storage_index?[share=s0&share=s1&...]
         -- Read from an immutable storage index, possibly from multiple shares, possibly limited to certain ranges
-        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> QueryParams "share_number" ShareNumber :> QueryParams "offset" Offset :> QueryParams "size" Size :> Get '[CBOR, JSON] ReadResult
+        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Header "Content-Range" ByteRanges :> Get '[CBOR, JSON] ShareData
         -- Mutable share interactions
 
         --

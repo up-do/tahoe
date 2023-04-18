@@ -18,6 +18,7 @@ import TahoeLAFS.Storage.API (
     AllocationResult (..),
     CorruptionDetails,
     Offset,
+    QueryRange,
     ReadResult,
     ReadTestWriteResult (..),
     ReadTestWriteVectors,
@@ -43,6 +44,7 @@ import Servant (
  )
 
 import Network.HTTP.Types (
+    ByteRange,
     ByteRanges,
  )
 
@@ -82,9 +84,9 @@ getImmutableShareNumbers :: Backend.Backend b => b -> StorageIndex -> Handler [S
 getImmutableShareNumbers backend storage_index =
     liftIO (Backend.getImmutableShareNumbers backend storage_index)
 
-readImmutableShares :: Backend.Backend b => b -> StorageIndex -> [ShareNumber] -> [Offset] -> [Size] -> Handler ReadResult
-readImmutableShares backend storage_index share_numbers offsets sizes =
-    liftIO (Backend.readImmutableShares backend storage_index share_numbers offsets sizes)
+readImmutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> QueryRange -> Handler ShareData
+readImmutableShare backend storage_index share_number qr =
+    liftIO (Backend.readImmutableShare backend storage_index share_number qr)
 
 createMutableStorageIndex :: Backend.Backend b => b -> StorageIndex -> AllocateBuckets -> Handler AllocationResult
 createMutableStorageIndex backend storage_index params =
@@ -129,7 +131,7 @@ app backend =
             :<|> writeImmutableShare backend
             :<|> adviseCorruptImmutableShare backend
             :<|> getImmutableShareNumbers backend
-            :<|> readImmutableShares backend
+            :<|> readImmutableShare backend
             :<|> createMutableStorageIndex backend
             :<|> readvAndTestvAndWritev backend
             :<|> readMutableShares backend

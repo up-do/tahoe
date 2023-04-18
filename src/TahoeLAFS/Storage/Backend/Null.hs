@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module TahoeLAFS.Storage.Backend.Null (
     NullBackend (NullBackend),
 ) where
@@ -8,6 +10,7 @@ import TahoeLAFS.Storage.API (
     ApplicationVersion,
     CorruptionDetails,
     Offset,
+    QueryRange,
     ReadResult,
     ShareData,
     ShareNumber,
@@ -56,6 +59,5 @@ instance Backend NullBackend where
     getImmutableShareNumbers NullBackend _ =
         return []
 
-    readImmutableShares :: NullBackend -> StorageIndex -> [ShareNumber] -> [Offset] -> [Size] -> IO ReadResult
-    readImmutableShares NullBackend _ _ _ _ =
-        return mempty
+    readImmutableShare :: NullBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readImmutableShare NullBackend _ _ _ = mempty
