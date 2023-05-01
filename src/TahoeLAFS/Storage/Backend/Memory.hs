@@ -24,7 +24,6 @@ import Data.IORef (
     newIORef,
     readIORef,
  )
-
 import Data.Map.Strict (
     Map,
     adjust,
@@ -36,10 +35,12 @@ import Data.Map.Strict (
     map,
     toList,
  )
+import qualified Data.Set as Set
 
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult (..),
+    CBORSet (..),
     CorruptionDetails,
     Offset,
     QueryRange,
@@ -153,10 +154,10 @@ instance Backend MemoryBackend where
     adviseCorruptImmutableShare _backend _ _ _ =
         return mempty
 
-    getImmutableShareNumbers :: MemoryBackend -> StorageIndex -> IO [ShareNumber]
+    getImmutableShareNumbers :: MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getImmutableShareNumbers backend storageIndex = do
         shares' <- readIORef $ immutableShares backend
-        return $ maybe [] keys $ lookup storageIndex shares'
+        return $ CBORSet . Set.fromList $ maybe [] keys $ lookup storageIndex shares'
 
     readImmutableShare :: MemoryBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     readImmutableShare backend storageIndex shareNum _qr = do

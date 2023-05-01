@@ -11,10 +11,6 @@ import Control.Monad (
     when,
  )
 
-import Data.Maybe (
-    catMaybes,
- )
-
 import Data.Bits (
     xor,
  )
@@ -39,24 +35,19 @@ import Test.Hspec (
     SpecWith,
     around,
     before,
-    beforeWith,
     context,
     describe,
     it,
-    shouldBe,
     shouldThrow,
  )
 import Test.Hspec.Expectations (
     Selector,
  )
+
 import Test.QuickCheck (
-    Arbitrary (arbitrary),
-    Gen,
     Property,
     forAll,
     property,
-    suchThatMap,
-    vectorOf,
  )
 
 import Test.QuickCheck.Monadic (
@@ -65,8 +56,6 @@ import Test.QuickCheck.Monadic (
     pre,
     run,
  )
-
-import qualified Test.QuickCheck.Instances.ByteString
 
 import Data.ByteString (
     ByteString,
@@ -79,12 +68,9 @@ import Data.List (
     sort,
  )
 
-import Data.Map.Strict (
-    lookup,
- )
-
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets),
+    CBORSet (..),
     ShareData,
     ShareNumber,
     Size,
@@ -92,7 +78,6 @@ import TahoeLAFS.Storage.API (
     StorageIndex,
     allocated,
     alreadyHave,
-    shareNumber,
     toInteger,
  )
 
@@ -209,10 +194,8 @@ immutableWriteAndEnumerateShares backend storageIndex shareNumbers shareSeed = m
     _result <- run $ createImmutableStorageIndex backend storageIndex allocate
     run $ writeShares (writeImmutableShare backend storageIndex) (zip shareNumbers permutedShares)
     readShareNumbers <- run $ getImmutableShareNumbers backend storageIndex
-    let sreadShareNumbers = sort readShareNumbers
-    let sshareNumbers = sort shareNumbers
-    when (sreadShareNumbers /= sshareNumbers) $
-        fail (show sreadShareNumbers ++ " /= " ++ show sshareNumbers)
+    when (readShareNumbers /= (CBORSet . Set.fromList $ shareNumbers)) $
+        fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
 
 -- Immutable share data written to the shares of a given storage index cannot
 -- be rewritten by a subsequent writeImmutableShare operation.

@@ -16,6 +16,7 @@ import Control.Exception (
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult (..),
+    CBORSet (..),
     CorruptionDetails,
     Offset,
     QueryRange,
@@ -80,7 +81,7 @@ adviseCorruptImmutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNu
 adviseCorruptImmutableShare backend storage_index share_number details =
     liftIO (Backend.adviseCorruptImmutableShare backend storage_index share_number details)
 
-getImmutableShareNumbers :: Backend.Backend b => b -> StorageIndex -> Handler [ShareNumber]
+getImmutableShareNumbers :: Backend.Backend b => b -> StorageIndex -> Handler (CBORSet ShareNumber)
 getImmutableShareNumbers backend storage_index =
     liftIO (Backend.getImmutableShareNumbers backend storage_index)
 

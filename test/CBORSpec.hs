@@ -7,13 +7,9 @@ module CBORSpec (
 import Codec.Serialise
 import Data.Proxy
 
-import Prelude hiding (
-    toInteger,
- )
-
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import qualified Data.Map as Map
+import qualified Data.Set as Set
 import Servant.API
 import TahoeLAFS.Storage.API
 import Test.Hspec (
@@ -21,6 +17,9 @@ import Test.Hspec (
     describe,
     it,
     shouldBe,
+ )
+import Prelude hiding (
+    toInteger,
  )
 
 spec :: Spec
@@ -48,8 +47,12 @@ spec = do
             deserialise (serialise (ShareNumber 5)) `shouldBe` ShareNumber 5
         it "works for ReadResult" $
             deserialise (serialise readRes) `shouldBe` readRes
-  where
-    readRes = "strict bytestring" :: BS.ByteString
+        it "works for CBORSet" $
+            deserialise (serialise cborSet) `shouldBe` cborSet
+
+readRes = "strict bytestring" :: BS.ByteString
+
+cborSet = CBORSet (Set.fromList $ ShareNumber <$> [1, 2, 3])
 
 testAV :: ApplicationVersion
 testAV = "tahoe-lafs/1.18.0.post908"

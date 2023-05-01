@@ -15,6 +15,8 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Map
 import Data.Proxy
+import qualified Data.Set as Set
+import Data.Text
 import GHC.Generics
 import Network.Connection
 import Network.HTTP.Client hiding (Proxy)
@@ -24,21 +26,14 @@ import Servant.API
 import Servant.Client
 import qualified Servant.Client.Streaming as S
 import Servant.Types.SourceT
+import Tahoe.CHK.Capability
 import TahoeLAFS.Storage.API
-
-type NewApi = "storage" :> StorageAPI
-
-newApi :: Proxy NewApi
-newApi = Proxy
-version :<|> immutableStorage :<|> immutableStorageIndex :<|> immutableStorageIndexCorrupt :<|> immutableStorageIndexShares :<|> immutableStorageIndexShareNumber :<|> mutableStorageIndex :<|> mutableStorageIndexRTW :<|> mutableStorageIndexShareNumber :<|> mutableStorageIndexShareNumberShares :<|> mutableStorageIndexShareNumberCorrupt = client newApi
+import TahoeLAFS.Storage.Client
+import Text.Megaparsec
 
 main :: IO ()
 main = do
     run
-
-getVersion :: ClientM Version
-getVersion = do
-    version
 
 fixAccept :: Applicative f => Request -> f Request
 fixAccept req = pure req{requestHeaders = ("Authorization", "Tahoe-LAFS a2xwc2hmeTVqNmNyZzZnb3I0d2pyY2Fza3p0NzVncWQ=") : requestHeaders req}
@@ -50,11 +45,20 @@ run = do
         managerSettings = (mkManagerSettings tlsSettings sockSettings){managerModifyRequest = fixAccept}
     manager' <- newTlsManagerWith managerSettings
     let manager'' = manager'
-    res <- runClientM getVersion (mkClientEnv manager' (BaseUrl Https "localhost" 33337 ""))
-    case res of
-        Left err -> putStrLn $ "Error: " <> show err
-        Right v -> do
-            print v
+        callIt = flip runClientM (mkClientEnv manager' (BaseUrl Https "localhost" 33337 ""))
+    print "getImmutableShareNumbers - succeeds!"
+    sharez <- callIt $ getImmutableShareNumbers "p6edaziufni6ajhw6x4zoq24ni"
+    showIt sharez
+    print "readImmutableShares still gives <<loop>> ?"
+    chk <- callIt $ readImmutableShares "p6edaziufni6ajhw6x4zoq24ni" (ShareNumber 0) Nothing
+    showIt chk
+
+flomp bip = showBase32 . storageIndex . verifier <$> parse pReader "" bip
+
+showIt :: (Show a1, Show a2) => Either a1 a2 -> IO ()
+showIt what = case what of
+    Left err -> putStrLn $ "Error: " <> show err
+    Right it -> print it
 
 -- make a value to write out
 aVersion :: Version
@@ -73,6 +77,3 @@ sread fname = deserialise <$> BSL.readFile fname
 
 tahoe :: BSL.ByteString
 tahoe = "\162X/http://allmydata.org/tahoe/protocols/storage/v1\163X\FSmaximum-immutable-share-size\ESC\NUL\NUL\NUL6+\167\230\NULX\SUBmaximum-mutable-share-size\ESC\NUL\245\130\161\161\&4\DLE\NULOavailable-space\ESC\NUL\NUL\NUL6+\167\230\NULSapplication-versionX\EMtahoe-lafs/1.18.0.post908"
-
-cbor :: Proxy CBOR
-cbor = Proxy

@@ -8,6 +8,7 @@ import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult (..),
     ApplicationVersion,
+    CBORSet (..),
     CorruptionDetails,
     Offset,
     QueryRange,
@@ -20,6 +21,7 @@ import TahoeLAFS.Storage.API (
     Version1Parameters (..),
  )
 
+import qualified Data.Set as Set
 import TahoeLAFS.Storage.Backend (
     Backend (..),
  )
@@ -55,9 +57,9 @@ instance Backend NullBackend where
     adviseCorruptImmutableShare NullBackend _ _ _ =
         return mempty
 
-    getImmutableShareNumbers :: NullBackend -> StorageIndex -> IO [ShareNumber]
+    getImmutableShareNumbers :: NullBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getImmutableShareNumbers NullBackend _ =
-        return []
+        return (CBORSet $ Set.fromList [])
 
     readImmutableShare :: NullBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     readImmutableShare NullBackend _ _ _ = mempty

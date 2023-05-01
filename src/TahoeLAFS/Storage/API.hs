@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 -- https://artyom.me/aeson#records-and-json-generics
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 -- Supports derivations for ShareNumber
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -41,15 +42,17 @@ module TahoeLAFS.Storage.API (
     leaseRenewSecretLength,
     leaseCancelSecretLength,
     CBOR,
+    CBORSet (..),
 ) where
 
+import Debug.Trace
+
 import Codec.Serialise (Serialise (decode, encode))
+import Codec.Serialise.Class
 import qualified Codec.Serialise.Decoding as CSD
 import qualified Codec.Serialise.Encoding as CSE
-import Prelude hiding (
-    toInteger,
- )
-
+import Control.Monad
+import qualified Data.Set as Set
 import Data.Text (
     pack,
     unpack,
@@ -57,18 +60,19 @@ import Data.Text (
 import Data.Text.Encoding (
     decodeUtf8,
  )
+import Prelude hiding (
+    toInteger,
+ )
 
 import Data.ByteString (
     ByteString,
  )
-import qualified Data.ByteString as BS
 
 import Data.Map.Strict (
     Map,
  )
 
 import Data.Aeson (
-    Encoding,
     FromJSON (..),
     FromJSONKey (..),
     ToJSON (..),
@@ -159,16 +163,45 @@ type ShareData = ByteString
 newtype ShareNumber = ShareNumber Integer
     deriving
         ( Show
-        , Generic
         , Eq
         , Ord
         , ToJSON
         , FromJSON
         , FromJSONKey
         , ToHttpApiData
+        , Generic
         )
 
-instance Serialise ShareNumber
+newtype CBORSet a = CBORSet
+    { getCBORSet :: (Set.Set a)
+    }
+    deriving newtype (ToJSON, FromJSON, Show, Eq)
+
+encodeCBORSet :: (Serialise a) => CBORSet a -> CSE.Encoding
+encodeCBORSet (CBORSet theSet) =
+    CSE.encodeTag 258
+        <> CSE.encodeListLen (fromIntegral $ Set.size theSet) -- XXX don't trust fromIntegral
+        <> Set.foldr (\x r -> encode x <> r) mempty theSet
+
+decodeCBORSet :: (Serialise a, Ord a) => CSD.Decoder s (CBORSet a)
+decodeCBORSet = do
+    _ <- CSD.decodeTag -- probly fine
+    listLength <- decodeListLen
+    CBORSet . Set.fromList <$> replicateM listLength decode
+
+instance (Serialise a, Ord a) => Serialise (CBORSet a) where
+    encode = encodeCBORSet
+    decode = decodeCBORSet
+
+instance Serialise ShareNumber where
+    decode = decodeShareNumber
+    encode = encodeShareNumber
+
+encodeShareNumber :: ShareNumber -> CSE.Encoding
+encodeShareNumber (ShareNumber i) = CSE.encodeInteger i
+
+decodeShareNumber :: CSD.Decoder s ShareNumber
+decodeShareNumber = ShareNumber <$> CSD.decodeInteger
 
 instance FromHttpApiData ShareNumber where
     parseUrlPiece t =
@@ -359,7 +392,7 @@ type StorageAPI =
         --
         -- GET /v1/immutable/storage_index/shares
         -- Retrieve the share numbers available for a storage index
-        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> "shares" :> Get '[CBOR, JSON] [ShareNumber]
+        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> "shares" :> Get '[CBOR, JSON] (CBORSet ShareNumber)
         --
         -- GET /v1/immutable/:storage_index?[share=s0&share=s1&...]
         -- Read from an immutable storage index, possibly from multiple shares, possibly limited to certain ranges

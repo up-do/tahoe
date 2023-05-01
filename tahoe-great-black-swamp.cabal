@@ -123,6 +123,7 @@ executable client-test
   hs-source-dirs:   client-test
   main-is:          Main.hs
   default-language: Haskell2010
+  import:           common-opts
   build-depends:
     , aeson
     , base
@@ -137,6 +138,8 @@ executable client-test
     , servant
     , servant-client
     , tahoe-great-black-swamp
+    , megaparsec
+    , tahoe-chk
     , text
 
 executable gbs-lafs-storage-server

@@ -14,12 +14,14 @@ import Data.Map.Strict (
     fromList,
  )
 
+import qualified Data.Set as Set
 import Network.HTTP.Types (
     ByteRanges,
  )
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult,
+    CBORSet (..),
     CorruptionDetails,
     Offset,
     QueryRange,
@@ -48,7 +50,7 @@ class Backend b where
     -- May throw ImmutableShareAlreadyWritten
     writeImmutableShare :: b -> StorageIndex -> ShareNumber -> ShareData -> Maybe ByteRanges -> IO ()
     adviseCorruptImmutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
-    getImmutableShareNumbers :: b -> StorageIndex -> IO [ShareNumber]
+    getImmutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
 
     -- Provide a default for requesting all shares.
     readImmutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData

@@ -1,3 +1,6 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
+
 module TahoeLAFS.Storage.Client (
     version,
     createImmutableStorageIndex,
@@ -12,17 +15,19 @@ module TahoeLAFS.Storage.Client (
     adviseCorruptMutableShare,
 ) where
 
-import Servant (
-    (:<|>) (..),
- )
+import Data.Proxy
+import Servant
 import Servant.Client (
     client,
  )
-
 import TahoeLAFS.Storage.API (
-    api,
+    StorageAPI,
  )
 
+type NewApi = "storage" :> StorageAPI
+
+newApi :: Proxy NewApi
+newApi = Proxy
 ( version
         :<|> createImmutableStorageIndex
         :<|> writeImmutableShare
@@ -34,4 +39,4 @@ import TahoeLAFS.Storage.API (
         :<|> readMutableShares
         :<|> getMutableShareNumbers
         :<|> adviseCorruptMutableShare
-    ) = client api
+    ) = client newApi

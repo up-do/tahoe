@@ -14,14 +14,14 @@ import Prelude hiding (
     writeFile,
  )
 
-import Network.HTTP.Types (
-    ByteRanges,
- )
-
 import Data.ByteString (
     hPut,
     readFile,
     writeFile,
+ )
+import qualified Data.Set as Set
+import Network.HTTP.Types (
+    ByteRanges,
  )
 
 import Control.Exception (
@@ -64,6 +64,7 @@ import System.Directory (
 import TahoeLAFS.Storage.API (
     AllocateBuckets (..),
     AllocationResult (..),
+    CBORSet (..),
     Offset,
     QueryRange,
     ReadTestWriteResult (ReadTestWriteResult, readData, success),
@@ -153,7 +154,7 @@ instance Backend FilesystemBackend where
                 createDirectoryIfMissing createParents $ takeDirectory finalSharePath
                 renameFile incomingSharePath finalSharePath
 
-    getImmutableShareNumbers :: FilesystemBackend -> StorageIndex -> IO [ShareNumber]
+    getImmutableShareNumbers :: FilesystemBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getImmutableShareNumbers (FilesystemBackend root) storageIndex = do
         let storageIndexPath = pathOfStorageIndex root storageIndex
         storageIndexChildren <-
@@ -162,7 +163,7 @@ instance Backend FilesystemBackend where
                 case storageIndexChildren of
                     Left _ -> []
                     Right children -> children
-        return $ mapMaybe (shareNumber . read) sharePaths
+        return $ CBORSet . Set.fromList $ mapMaybe (shareNumber . read) sharePaths
 
     -- TODO Handle ranges.
     -- TODO Make sure the share storage was allocated.
@@ -174,7 +175,7 @@ instance Backend FilesystemBackend where
 
     createMutableStorageIndex = createImmutableStorageIndex
 
-    getMutableShareNumbers = getImmutableShareNumbers
+    getMutableShareNumbers backend storageindex = Set.toList . getCBORSet <$> getImmutableShareNumbers backend storageindex
 
     readvAndTestvAndWritev
         (FilesystemBackend root)
