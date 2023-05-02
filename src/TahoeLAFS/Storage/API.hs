@@ -398,7 +398,7 @@ type StorageAPI =
         --
         -- GET /storage/v1/immutable/<storage_index:storage_index>/<int(signed=False):share_number>"
         -- Read from an immutable storage index, possibly from multiple shares, possibly limited to certain ranges
-        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Header "Content-Range" ByteRanges :> Get '[CBOR, JSON] ShareData
+        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Header "Content-Range" ByteRanges :> Get '[OctetStream] ShareData
         -- Mutable share interactions
 
         --

@@ -38,11 +38,17 @@ main = do
 fixAccept :: Applicative f => Request -> f Request
 fixAccept req = pure req{requestHeaders = ("Authorization", "Tahoe-LAFS a2xwc2hmeTVqNmNyZzZnb3I0d2pyY2Fza3p0NzVncWQ=") : requestHeaders req}
 
+fixAcceptPrint req = do
+    print req
+    pure req{requestHeaders = ("Authorization", "Tahoe-LAFS a2xwc2hmeTVqNmNyZzZnb3I0d2pyY2Fza3p0NzVncWQ=") : requestHeaders req}
+
+-- XXX turn this into a demo program that takes cmdline params to do this same thing
+
 run :: IO ()
 run = do
     let tlsSettings = TLSSettingsSimple True True True
         sockSettings = Nothing
-        managerSettings = (mkManagerSettings tlsSettings sockSettings){managerModifyRequest = fixAccept}
+        managerSettings = (mkManagerSettings tlsSettings sockSettings){managerModifyRequest = fixAcceptPrint}
     manager' <- newTlsManagerWith managerSettings
     let manager'' = manager'
         callIt = flip runClientM (mkClientEnv manager' (BaseUrl Https "localhost" 33337 ""))
