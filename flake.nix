@@ -6,6 +6,11 @@
     nixpkgs.follows = "hs-flake-utils/nixpkgs";
     flake-utils.url = github:numtide/flake-utils;
     hs-flake-utils.url = "git+https://whetstone.private.storage/jcalderone/hs-flake-utils.git?ref=main";
+
+    tahoe-chk = {
+      url = "git+https://whetstone.private.storage/PrivateStorage/tahoe-chk?ref=refs/tags/0.1.0.0";
+      inputs.nixpkgs.follows = "hs-flake-utils/nixpkgs";
+    };
   };
 
   outputs = {
@@ -13,6 +18,7 @@
     nixpkgs,
     flake-utils,
     hs-flake-utils,
+    tahoe-chk,
   }: let
     ulib = flake-utils.lib;
     ghcVersion = "ghc8107";
@@ -35,6 +41,9 @@
         src = ./.;
         compilerVersion = ghcVersion;
         packageName = "haskell-tahoe-lafs-storage-server";
+        hsPkgsOverrides = hfinal: hprev: {
+          tahoe-chk = tahoe-chk.outputs.packages.${system}.default;
+        };
       };
     in {
       checks = hslib.checks {};
