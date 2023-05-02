@@ -168,7 +168,6 @@ newtype ShareNumber = ShareNumber Integer
         , ToJSON
         , FromJSON
         , FromJSONKey
-        , ToHttpApiData
         , Generic
         )
 
@@ -202,6 +201,9 @@ encodeShareNumber (ShareNumber i) = CSE.encodeInteger i
 
 decodeShareNumber :: CSD.Decoder s ShareNumber
 decodeShareNumber = ShareNumber <$> CSD.decodeInteger
+
+instance ToHttpApiData ShareNumber where
+    toQueryParam = pack . show . toInteger
 
 instance FromHttpApiData ShareNumber where
     parseUrlPiece t =
@@ -394,7 +396,7 @@ type StorageAPI =
         -- Retrieve the share numbers available for a storage index
         :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> "shares" :> Get '[CBOR, JSON] (CBORSet ShareNumber)
         --
-        -- GET /v1/immutable/:storage_index?[share=s0&share=s1&...]
+        -- GET /storage/v1/immutable/<storage_index:storage_index>/<int(signed=False):share_number>"
         -- Read from an immutable storage index, possibly from multiple shares, possibly limited to certain ranges
         :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Header "Content-Range" ByteRanges :> Get '[CBOR, JSON] ShareData
         -- Mutable share interactions

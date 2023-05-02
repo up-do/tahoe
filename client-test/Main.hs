@@ -49,8 +49,8 @@ run = do
     print "getImmutableShareNumbers - succeeds!"
     sharez <- callIt $ getImmutableShareNumbers "p6edaziufni6ajhw6x4zoq24ni"
     showIt sharez
-    print "readImmutableShares still gives <<loop>> ?"
-    chk <- callIt $ readImmutableShares "p6edaziufni6ajhw6x4zoq24ni" (ShareNumber 0) Nothing
+    print "readImmutableShares - succeeds! but returns a CHK with the wrong MIME type"
+    chk <- callIt $ readImmutableShares "p6edaziufni6ajhw6x4zoq24ni" (ShareNumber 0) Nothing -- (Just [ByteRangeFrom 1])
     showIt chk
 
 flomp bip = showBase32 . storageIndex . verifier <$> parse pReader "" bip
