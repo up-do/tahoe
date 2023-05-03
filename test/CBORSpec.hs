@@ -24,14 +24,12 @@ import Prelude hiding (
 
 spec :: Spec
 spec = do
-    describe "encode decode" $
+    describe "encode decode" $ do
         it "round trips Version1Parameters" $
             deserialise (serialise testAV)
                 `shouldBe` testAV
-    describe "encode decode" $
         it "round trips ApplicationVersion" $
             deserialise (serialise v1params) `shouldBe` v1params
-    describe "encode decode" $
         it "round trips Version" $
             deserialise (serialise aVersion) `shouldBe` aVersion
     describe "deserialise CBOR" $
