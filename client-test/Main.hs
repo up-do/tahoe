@@ -59,7 +59,7 @@ run = do
     chk <- callIt $ readImmutableShares "p6edaziufni6ajhw6x4zoq24ni" (ShareNumber 0) Nothing -- (Just [ByteRangeFrom 1])
     showIt chk
 
-flomp bip = showBase32 . storageIndex . verifier <$> parse pReader "" bip
+flomp bip = dangerRealShow . CHKVerifier . verifier <$> parse pReader "" bip
 
 showIt :: (Show a1, Show a2) => Either a1 a2 -> IO ()
 showIt what = case what of
