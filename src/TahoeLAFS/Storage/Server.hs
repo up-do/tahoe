@@ -87,6 +87,8 @@ getImmutableShareNumbers backend storage_index =
 
 readImmutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> QueryRange -> Handler ShareData
 readImmutableShare backend storage_index share_number qr =
+    -- TODO Need to return NO CONTENT if the result is empty.
+    -- TODO Need to make sure content-range is set in the header otherwise
     liftIO (Backend.readImmutableShare backend storage_index share_number qr)
 
 createMutableStorageIndex :: Backend.Backend b => b -> StorageIndex -> AllocateBuckets -> Handler AllocationResult
