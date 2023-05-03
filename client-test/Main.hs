@@ -2,38 +2,68 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
+{- | Demonstrate the use of some GBS client APIs.
+
+ Usage:
+
+  client-test <storage-furl> <chk-read-cap> <share-num>
+-}
 module Main where
 
-import Codec.CBOR.Encoding
-import Codec.CBOR.FlatTerm
-import Codec.CBOR.Pretty
-import Codec.Serialise
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Base32 (encodeBase32Unpadded)
 import Data.ByteString.Base64 (encodeBase64)
 import qualified Data.ByteString.Lazy as BSL
-import Data.Map
-import Data.Proxy
+import qualified Data.Sequence.Internal.Sorting as APIs
 import qualified Data.Set as Set
-import Data.Text
-import Data.Text.Encoding
-import GHC.Generics
-import Network.Connection
-import Network.HTTP.Client hiding (Proxy)
-import Network.HTTP.Client.TLS
-import Network.HTTP.Types
-import Network.URI
-import Servant.API
-import Servant.Client
-import qualified Servant.Client.Streaming as S
-import Servant.Types.SourceT
+import Data.Text (pack, replace, toLower, unpack)
+import Data.Text.Encoding (encodeUtf8)
+import Network.Connection (TLSSettings (TLSSettingsSimple))
+import Network.HTTP.Client (
+    ManagerSettings (managerModifyRequest),
+    Request (requestHeaders),
+ )
+import Network.HTTP.Client.TLS (
+    mkManagerSettings,
+    newTlsManagerWith,
+ )
+import Network.HTTP.Types ()
+import Network.URI (
+    URI (URI, uriAuthority, uriPath),
+    URIAuth (URIAuth, uriPort, uriRegName),
+    parseURI,
+ )
+import Servant.Client (
+    BaseUrl (BaseUrl),
+    Scheme (Https),
+    mkClientEnv,
+    runClientM,
+ )
 import System.Environment (getArgs)
-import Tahoe.CHK.Capability
+import Tahoe.CHK.Capability (
+    CHK (CHKReader, CHKVerifier),
+    Reader (Reader, verifier),
+    Verifier (
+        Verifier,
+        fingerprint,
+        required,
+        size,
+        storageIndex,
+        total
+    ),
+    dangerRealShow,
+    pCapability,
+    pReader,
+ )
 import Tahoe.CHK.Share (getVersion)
-import TahoeLAFS.Storage.API
-import TahoeLAFS.Storage.Client
-import Text.Megaparsec
+import TahoeLAFS.Storage.API (ShareNumber (..))
+import TahoeLAFS.Storage.Client (
+    getImmutableShareNumbers,
+    readImmutableShares,
+    version,
+ )
+import Text.Megaparsec (parse)
 
 main :: IO ()
 main = do
@@ -92,18 +122,3 @@ showIt :: (Show a1, Show a2) => Either a1 a2 -> IO ()
 showIt what = case what of
     Left err -> putStrLn $ "Error: " <> show err
     Right it -> print it
-
--- make a value to write out
-aVersion :: Version
-aVersion = Version v1params testAV
-
-v1params = Version1Parameters 257892218368 69105000000000000 257892218368
-
-testAV :: ApplicationVersion
-testAV = "tahoe-lafs/1.18.0.post908"
-
-swrite :: Serialise a => FilePath -> a -> IO ()
-swrite fname val = BSL.writeFile fname (serialise val)
-
-sread :: FilePath -> IO Version
-sread fname = deserialise <$> BSL.readFile fname
