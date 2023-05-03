@@ -164,9 +164,15 @@ spec = with (return $ app NullBackend) $
                         { matchBody = bodyEquals sharesResultJSON
                         }
 
-        describe "GET /v1/immutable/abcdefgh" $ do
-            it "responds with OK and a JSON object" $
-                getJSON "/v1/immutable/abcdefgh"
+        describe "GET /v1/immutable/abcdefgh/1" $ do
+            it "responds with OK and an application/octet-stream of the share" $ do
+                let req =
+                        request
+                            methodGet
+                            "/v1/immutable/abcdefgh/1"
+                            [("Accept", "application/octet-stream")]
+                            ""
+                req
                     `shouldRespondWith` 200
-                        { matchBody = bodyEquals readResultJSON
+                        { matchBody = bodyEquals ""
                         }
