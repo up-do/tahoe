@@ -127,6 +127,8 @@ executable client-test
   build-depends:
     , aeson
     , base
+    , base32
+    , base64
     , bytestring
     , cborg
     , connection
@@ -134,12 +136,13 @@ executable client-test
     , http-client
     , http-client-tls
     , http-types
+    , megaparsec
+    , network-uri
     , serialise
     , servant
     , servant-client
-    , tahoe-great-black-swamp
-    , megaparsec
     , tahoe-chk
+    , tahoe-great-black-swamp
     , text
 
 executable gbs-lafs-storage-server
