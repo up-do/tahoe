@@ -342,6 +342,7 @@ instance ToJSON Version where
 instance FromJSON Version where
     parseJSON = genericParseJSON tahoeJSONOptions
 
+-- XXX Remove the secret fields from this record.
 data AllocateBuckets = AllocateBuckets
     { renewSecret :: RenewSecret
     , cancelSecret :: CancelSecret
@@ -350,6 +351,7 @@ data AllocateBuckets = AllocateBuckets
     }
     deriving (Show, Eq, Generic)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise AllocateBuckets
 
 instance ToJSON AllocateBuckets where
@@ -364,6 +366,7 @@ data AllocationResult = AllocationResult
     }
     deriving (Show, Eq, Generic)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise AllocationResult
 
 instance ToJSON AllocationResult where
@@ -377,6 +380,7 @@ newtype CorruptionDetails = CorruptionDetails
     }
     deriving (Show, Eq, Generic)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise CorruptionDetails
 
 instance ToJSON CorruptionDetails where
@@ -417,6 +421,7 @@ instance FromHttpApiData LeaseSecret where
     parseQueryParam _ = Left "Cannot parse LeaseSecret from query params"
 
 instance FromHttpApiData [LeaseSecret] where
+    -- XXX Consider whitespace?
     parseHeader =
         mapM parseHeader . B.split (fromIntegral $ fromEnum ',')
 
@@ -517,6 +522,7 @@ data ReadTestWriteResult = ReadTestWriteResult
     }
     deriving (Show, Eq, Generic)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise ReadTestWriteResult
 
 instance ToJSON ReadTestWriteResult where
@@ -532,6 +538,7 @@ data ReadTestWriteVectors = ReadTestWriteVectors
     }
     deriving (Show, Eq, Generic)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise ReadTestWriteVectors
 
 instance ToJSON ReadTestWriteVectors where
@@ -546,6 +553,7 @@ data ReadVector = ReadVector
     }
     deriving (Show, Eq, Generic)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise ReadVector
 
 instance ToJSON ReadVector where
@@ -560,8 +568,10 @@ data TestWriteVectors = TestWriteVectors
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise TestWriteVectors
 
+-- XXX Most of these operators have been removed from the spec.
 data TestOperator
     = Lt
     | Le
@@ -571,6 +581,7 @@ data TestOperator
     | Gt
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise TestOperator
 
 data TestVector = TestVector
@@ -581,6 +592,7 @@ data TestVector = TestVector
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise TestVector
 
 data WriteVector = WriteVector
@@ -589,8 +601,11 @@ data WriteVector = WriteVector
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise WriteVector
 
+-- XXX These fields moved to an HTTP Header, this type is probably not useful
+-- anymore?
 data SlotSecrets = SlotSecrets
     { writeEnabler :: WriteEnablerSecret
     , leaseRenew :: LeaseRenewSecret
@@ -598,6 +613,7 @@ data SlotSecrets = SlotSecrets
     }
     deriving (Show, Eq, Generic)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise SlotSecrets
 
 instance ToJSON SlotSecrets where
