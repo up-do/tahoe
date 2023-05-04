@@ -160,23 +160,33 @@ newtype ShareNumber = ShareNumber Integer
         , FromJSONKey
         )
 
+{- | A new type for which we can define our own CBOR serialisation rules.  The
+ cborg library provides a Serialise instance for Set which is not compatible
+ with the representation required by Tahoe-LAFS.
+-}
 newtype CBORSet a = CBORSet
     { getCBORSet :: Set.Set a
     }
     deriving newtype (ToJSON, FromJSON, Show, Eq)
 
+-- | Encode a CBORSet using a CBOR "set" tag and a determinate length list.
 encodeCBORSet :: (Serialise a) => CBORSet a -> CSE.Encoding
 encodeCBORSet (CBORSet theSet) =
     CSE.encodeTag 258
         <> CSE.encodeListLen (fromIntegral $ Set.size theSet) -- XXX don't trust fromIntegral
         <> Set.foldr (\x r -> encode x <> r) mempty theSet
 
+-- | Decode a determinate length list with a CBOR "set" tag.
 decodeCBORSet :: (Serialise a, Ord a) => CSD.Decoder s (CBORSet a)
 decodeCBORSet = do
-    _ <- CSD.decodeTag -- probly fine
-    listLength <- decodeListLen
-    CBORSet . Set.fromList <$> replicateM listLength decode
+    tag <- CSD.decodeTag
+    if tag /= 258
+        then fail $ "expected set tag (258), found " <> show tag
+        else do
+            listLength <- decodeListLen
+            CBORSet . Set.fromList <$> replicateM listLength decode
 
+-- | Define serialisation for CBORSets in a way that is compatible with GBS.
 instance (Serialise a, Ord a) => Serialise (CBORSet a) where
     encode = encodeCBORSet
     decode = decodeCBORSet
@@ -233,20 +243,37 @@ encodeVersion1Parameters Version1Parameters{..} =
         <> CSE.encodeBytes "available-space"
         <> CSE.encodeInteger availableSpace
 
--- | XXX this will break if the order changes, and likely require a 'real' parser when/if that happens
+decodeMap :: (Ord k, Serialise k, Serialise v) => CSD.Decoder s (Map k v)
+decodeMap = do
+    lenM <- CSD.decodeMapLenOrIndef
+    case lenM of
+        Nothing -> Map.fromList <$> decodeMapIndef
+        Just len -> Map.fromList <$> decodeMapOfLen len
+  where
+    decodeMapIndef = do
+        atTheEnd <- CSD.decodeBreakOr
+        if atTheEnd
+            then pure []
+            else do
+                k <- decode
+                v <- decode
+                ((k, v) :) <$> decodeMapIndef
+
+    decodeMapOfLen 0 = pure []
+    decodeMapOfLen n = do
+        k <- decode
+        v <- decode
+        ((k, v) :) <$> decodeMapOfLen (n - 1)
+
 decodeVersion1Parameters :: CSD.Decoder s Version1Parameters
 decodeVersion1Parameters = do
-    len <- decodeMapLen
-    case len of
-        3 ->
-            Version1Parameters
-                <$ CSD.decodeBytes -- "maximum-immutable-share-size"
-                <*> CSD.decodeInteger
-                <* CSD.decodeBytes -- "maximum-mutable-share-size"
-                <*> CSD.decodeInteger
-                <* CSD.decodeBytes -- "available-space"
-                <*> CSD.decodeInteger
+    m <- decodeMap
+    case (Map.size m, map (`Map.lookup` m) keys) of
+        (3, [Just availableSpace, Just maximumImmutableShareSize, Just maximumMutableShareSize]) ->
+            pure Version1Parameters{..}
         _ -> fail "invalid encoding of Version1Parameters"
+  where
+    keys = ["available-space", "maximum-immutable-share-size", "maximum-mutable-share-size"] :: [B.ByteString]
 
 instance Serialise Version1Parameters where
     encode = encodeVersion1Parameters
