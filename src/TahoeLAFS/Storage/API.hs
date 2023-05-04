@@ -310,6 +310,7 @@ decodeVersion = do
     mapLen <- CSD.decodeMapLen
     case mapLen of
         2 -> do
+            -- Take care to handle either order of fields in the map.
             k1 <- CSD.decodeBytes
             case k1 of
                 "http://allmydata.org/tahoe/protocols/storage/v1" -> do
