@@ -335,7 +335,7 @@ instance ToJSON AllocationResult where
 instance FromJSON AllocationResult where
     parseJSON = genericParseJSON tahoeJSONOptions
 
-data CorruptionDetails = CorruptionDetails
+newtype CorruptionDetails = CorruptionDetails
     { reason :: String
     }
     deriving (Show, Eq, Generic)
