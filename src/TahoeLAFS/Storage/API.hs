@@ -354,8 +354,14 @@ instance FromHttpApiData ByteRanges where
             Nothing -> Left "parse failed"
             Just br -> Right br
 
+    parseUrlPiece _ = Left "Cannot parse ByteRanges from URL piece"
+    parseQueryParam _ = Left "Cannot parse ByteRanges from query params"
+
 instance ToHttpApiData ByteRanges where
     toHeader = renderByteRanges
+
+    toUrlPiece _ = error "Cannot serialize ByteRanges to URL piece"
+    toQueryParam _ = error "Cannot serialize ByteRanges to query params"
 
 type StorageAPI =
     -- General server information
