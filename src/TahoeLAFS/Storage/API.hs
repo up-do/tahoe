@@ -335,11 +335,6 @@ instance ToJSON AllocationResult where
 instance FromJSON AllocationResult where
     parseJSON = genericParseJSON tahoeJSONOptions
 
-data ShareType
-    = Mutable
-    | Immutable
-    deriving (Show, Eq, Generic, ToJSON, FromJSON)
-
 data CorruptionDetails = CorruptionDetails
     { reason :: String
     }
