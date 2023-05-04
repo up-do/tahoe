@@ -307,9 +307,28 @@ encodeVersion Version{..} =
 
 decodeVersion :: CSD.Decoder s Version
 decodeVersion = do
-    mapLen <- CSD.decodeMapLen -- hope it's 2
+    mapLen <- CSD.decodeMapLen
     case mapLen of
-        2 -> Version <$ CSD.decodeBytes <*> decodeVersion1Parameters <* CSD.decodeBytes <*> decodeApplicationVersion
+        2 -> do
+            k1 <- CSD.decodeBytes
+            case k1 of
+                "http://allmydata.org/tahoe/protocols/storage/v1" -> do
+                    parameters <- decodeVersion1Parameters
+                    k2 <- CSD.decodeBytes
+                    case k2 of
+                        "application-version" -> do
+                            applicationVersion <- decodeApplicationVersion
+                            pure Version{..}
+                        _ -> fail "decodeVersion got bad input"
+                "application-version" -> do
+                    applicationVersion <- decodeApplicationVersion
+                    k2 <- CSD.decodeBytes
+                    case k2 of
+                        "http://allmydata.org/tahoe/protocols/storage/v1" -> do
+                            parameters <- decodeVersion1Parameters
+                            pure Version{..}
+                        _ -> fail "decodeVersion got bad input"
+                _ -> fail "decodeVersion got bad input"
         _ -> fail "decodeVersion got bad input"
 
 instance Serialise Version where
