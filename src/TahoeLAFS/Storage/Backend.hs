@@ -48,6 +48,8 @@ instance Exception ImmutableShareAlreadyWritten
 class Backend b where
     version :: b -> IO Version
 
+    -- | Update the lease expiration time on the shares associated with the
+    -- given storage index.
     renewLease :: b -> StorageIndex -> [LeaseSecret] -> IO ()
 
     createImmutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
@@ -56,8 +58,6 @@ class Backend b where
     writeImmutableShare :: b -> StorageIndex -> ShareNumber -> ShareData -> Maybe ByteRanges -> IO ()
     adviseCorruptImmutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
     getImmutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
-
-    -- Provide a default for requesting all shares.
     readImmutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
 
     createMutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
