@@ -171,7 +171,7 @@ newtype ShareNumber = ShareNumber Integer
         )
 
 newtype CBORSet a = CBORSet
-    { getCBORSet :: (Set.Set a)
+    { getCBORSet :: Set.Set a
     }
     deriving newtype (ToJSON, FromJSON, Show, Eq)
 
