@@ -162,10 +162,12 @@ newtype ShareNumber = ShareNumber Integer
         ( Show
         , Eq
         , Ord
-        , ToJSON
+        , Generic
+        )
+    deriving newtype
+        ( ToJSON
         , FromJSON
         , FromJSONKey
-        , Generic
         )
 
 newtype CBORSet a = CBORSet
