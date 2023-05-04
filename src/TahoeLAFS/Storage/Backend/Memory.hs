@@ -97,10 +97,13 @@ instance Backend MemoryBackend where
                 , allocated = shareNumbers params
                 }
 
-    getMutableShareNumbers :: MemoryBackend -> StorageIndex -> IO [ShareNumber]
+    getMutableShareNumbers :: MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getMutableShareNumbers backend storageIndex = do
         shares' <- readIORef $ mutableShares backend
-        return $ maybe [] keys $ lookup storageIndex shares'
+        return $
+            CBORSet . Set.fromList $
+                maybe [] keys $
+                    lookup storageIndex shares'
 
     readvAndTestvAndWritev :: MemoryBackend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev

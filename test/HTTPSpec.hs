@@ -130,14 +130,14 @@ readResultJSON = "{}"
 spec :: Spec
 spec = with (return $ app NullBackend) $
     describe "v1" $ do
-        describe "GET /v1/version" $ do
+        describe "GET /storage/v1/version" $ do
             it "responds with OK" $
-                getJSON "/v1/version" `shouldRespondWith` 200
+                getJSON "/storage/v1/version" `shouldRespondWith` 200
 
-        describe "POST /v1/immutable/abcdefgh" $ do
+        describe "POST /storage/v1/immutable/abcdefgh" $ do
             it "responds with CREATED" $
                 postJSON
-                    "/v1/immutable/abcdefgh"
+                    "/storage/v1/immutable/abcdefgh"
                     allocateBucketsJSON
                     `shouldRespondWith` 201
                         { -- TODO: ;charset=utf-8 is just an artifact of Servant, would be
@@ -146,30 +146,30 @@ spec = with (return $ app NullBackend) $
                         , matchBody = bodyEquals allocateResultJSON
                         }
 
-        describe "PUT /v1/immutable/abcdefgh/1" $ do
+        describe "PUT /storage/v1/immutable/abcdefgh/1" $ do
             it "responds with CREATED" $
-                putShare "/v1/immutable/abcdefgh/1" 512 `shouldRespondWith` 201
+                putShare "/storage/v1/immutable/abcdefgh/1" 512 `shouldRespondWith` 201
 
-        describe "POST /v1/immutable/abcdefgh/1/corrupt" $ do
+        describe "POST /storage/v1/immutable/abcdefgh/1/corrupt" $ do
             it "responds with OK" $
                 postJSON
-                    "/v1/immutable/abcdefgh/1/corrupt"
+                    "/storage/v1/immutable/abcdefgh/1/corrupt"
                     corruptionJSON
                     `shouldRespondWith` 200
 
-        describe "GET /v1/immutable/abcdefgh/shares" $ do
+        describe "GET /storage/v1/immutable/abcdefgh/shares" $ do
             it "responds with OK and a JSON list" $
-                getJSON "/v1/immutable/abcdefgh/shares"
+                getJSON "/storage/v1/immutable/abcdefgh/shares"
                     `shouldRespondWith` 200
                         { matchBody = bodyEquals sharesResultJSON
                         }
 
-        describe "GET /v1/immutable/abcdefgh/1" $ do
+        describe "GET /storage/v1/immutable/abcdefgh/1" $ do
             it "responds with OK and an application/octet-stream of the share" $ do
                 let req =
                         request
                             methodGet
-                            "/v1/immutable/abcdefgh/1"
+                            "/storage/v1/immutable/abcdefgh/1"
                             [("Accept", "application/octet-stream")]
                             ""
                 req

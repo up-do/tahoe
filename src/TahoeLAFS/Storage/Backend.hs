@@ -1,3 +1,5 @@
+{-# LANGUAGE DataKinds #-}
+
 module TahoeLAFS.Storage.Backend (
     Backend (..),
     ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten),
@@ -10,7 +12,6 @@ import Control.Exception (
  )
 
 import Data.Map.Strict (
-    Map,
     fromList,
  )
 
@@ -21,8 +22,10 @@ import Network.HTTP.Types (
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult,
+    CBOR,
     CBORSet (..),
     CorruptionDetails,
+    LeaseSecret,
     Offset,
     QueryRange,
     ReadResult,
@@ -45,6 +48,8 @@ instance Exception ImmutableShareAlreadyWritten
 class Backend b where
     version :: b -> IO Version
 
+    renewLease :: b -> StorageIndex -> [LeaseSecret] -> IO ()
+
     createImmutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
 
     -- May throw ImmutableShareAlreadyWritten
@@ -58,7 +63,7 @@ class Backend b where
     createMutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
     readvAndTestvAndWritev :: b -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readMutableShares :: b -> StorageIndex -> [ShareNumber] -> [Offset] -> [Size] -> IO ReadResult
-    getMutableShareNumbers :: b -> StorageIndex -> IO [ShareNumber]
+    getMutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     adviseCorruptMutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
 
 writeMutableShare ::

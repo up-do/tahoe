@@ -175,7 +175,7 @@ instance Backend FilesystemBackend where
 
     createMutableStorageIndex = createImmutableStorageIndex
 
-    getMutableShareNumbers backend storageindex = Set.toList . getCBORSet <$> getImmutableShareNumbers backend storageindex
+    getMutableShareNumbers = getImmutableShareNumbers
 
     readvAndTestvAndWritev
         (FilesystemBackend root)

@@ -265,11 +265,9 @@ mutableWriteAndEnumerateShares backend storageIndex shareNumbers shareSeed = mon
                 }
     _result <- run $ createMutableStorageIndex backend storageIndex allocate
     run $ writeShares (writeMutableShare backend nullSecrets storageIndex) (zip shareNumbers permutedShares)
-    readShareNumbers <- run $ getMutableShareNumbers backend storageIndex
-    let sreadShareNumbers = sort readShareNumbers
-    let sshareNumbers = sort shareNumbers
-    when (sreadShareNumbers /= sshareNumbers) $
-        fail (show sreadShareNumbers ++ " /= " ++ show sshareNumbers)
+    (CBORSet readShareNumbers) <- run $ getMutableShareNumbers backend storageIndex
+    when (readShareNumbers /= Set.fromList shareNumbers) $
+        fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
 
 -- The specification for a storage backend.
 storageSpec :: Backend b => SpecWith b

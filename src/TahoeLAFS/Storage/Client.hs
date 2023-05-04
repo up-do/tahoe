@@ -1,15 +1,18 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeOperators #-}
 
 module TahoeLAFS.Storage.Client (
+    -- General server info
     version,
+    -- Mutable or immutable
+    renewLease,
+    -- Immutable operations
     createImmutableStorageIndex,
     writeImmutableShare,
-    adviseCorruptImmutableShare,
+    readImmutableShare,
     getImmutableShareNumbers,
-    readImmutableShares,
-    createMutableStorageIndex,
-    readvAndTestvAndWritev,
+    adviseCorruptImmutableShare,
+    -- Mutable operations
+    readTestWrite,
     readMutableShares,
     getMutableShareNumbers,
     adviseCorruptMutableShare,
@@ -24,18 +27,16 @@ import TahoeLAFS.Storage.API (
     StorageAPI,
  )
 
-type NewApi = "storage" :> StorageAPI
-
-newApi :: Proxy NewApi
+newApi :: Proxy StorageAPI
 newApi = Proxy
 ( version
+        :<|> renewLease
         :<|> createImmutableStorageIndex
         :<|> writeImmutableShare
-        :<|> adviseCorruptImmutableShare
+        :<|> readImmutableShare
         :<|> getImmutableShareNumbers
-        :<|> readImmutableShares
-        :<|> createMutableStorageIndex
-        :<|> readvAndTestvAndWritev
+        :<|> adviseCorruptImmutableShare
+        :<|> readTestWrite
         :<|> readMutableShares
         :<|> getMutableShareNumbers
         :<|> adviseCorruptMutableShare

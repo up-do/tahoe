@@ -4,20 +4,22 @@ module TahoeLAFS.Storage.Server (
     main,
 ) where
 
-import Control.Monad.IO.Class (
-    liftIO,
- )
-
 import Control.Exception (
     Exception,
     throw,
  )
+import Control.Monad.IO.Class (
+    MonadIO,
+    liftIO,
+ )
+import Data.Maybe (fromMaybe)
 
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult (..),
     CBORSet (..),
     CorruptionDetails,
+    LeaseSecret,
     Offset,
     QueryRange,
     ReadResult,
@@ -69,6 +71,9 @@ version :: Backend.Backend b => b -> Handler Version
 version backend =
     liftIO (Backend.version backend)
 
+renewLease :: (MonadIO m, Backend.Backend b) => b -> StorageIndex -> Maybe [LeaseSecret] -> m ()
+renewLease backend storageIndex secrets = liftIO (Backend.renewLease backend storageIndex (fromMaybe [] secrets))
+
 createImmutableStorageIndex :: Backend.Backend b => b -> StorageIndex -> AllocateBuckets -> Handler AllocationResult
 createImmutableStorageIndex backend storage_index params =
     liftIO (Backend.createImmutableStorageIndex backend storage_index params)
@@ -103,7 +108,7 @@ readMutableShares :: Backend.Backend b => b -> StorageIndex -> [ShareNumber] -> 
 readMutableShares backend storage_index share_numbers offsets sizes =
     liftIO (Backend.readMutableShares backend storage_index share_numbers offsets sizes)
 
-getMutableShareNumbers :: Backend.Backend b => b -> StorageIndex -> Handler [ShareNumber]
+getMutableShareNumbers :: Backend.Backend b => b -> StorageIndex -> Handler (CBORSet ShareNumber)
 getMutableShareNumbers backend storage_index =
     liftIO (Backend.getMutableShareNumbers backend storage_index)
 
@@ -130,12 +135,12 @@ app backend =
     storageServer :: Server StorageAPI
     storageServer =
         version backend
+            :<|> renewLease backend
             :<|> createImmutableStorageIndex backend
             :<|> writeImmutableShare backend
-            :<|> adviseCorruptImmutableShare backend
-            :<|> getImmutableShareNumbers backend
             :<|> readImmutableShare backend
-            :<|> createMutableStorageIndex backend
+            :<|> getImmutableShareNumbers backend
+            :<|> adviseCorruptImmutableShare backend
             :<|> readvAndTestvAndWritev backend
             :<|> readMutableShares backend
             :<|> getMutableShareNumbers backend
