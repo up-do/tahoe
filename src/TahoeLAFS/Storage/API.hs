@@ -45,9 +45,6 @@ module TahoeLAFS.Storage.API (
     CBORSet (..),
 ) where
 
-import Debug.Trace
-
-import Codec.Serialise (Serialise (decode, encode))
 import Codec.Serialise.Class
 import qualified Codec.Serialise.Decoding as CSD
 import qualified Codec.Serialise.Encoding as CSE
@@ -124,8 +121,8 @@ import Network.HTTP.Types (
     renderByteRanges,
  )
 
-import Codec.CBOR.Encoding (encodeBytes, encodeInt)
-import Codec.Serialise.Decoding (decodeBool, decodeBytes, decodeInteger, decodeListLen, decodeMapLen)
+import Codec.CBOR.Encoding (encodeBytes)
+import Codec.Serialise.Decoding (decodeListLen, decodeMapLen)
 import TahoeLAFS.Internal.ServantUtil (
     CBOR,
  )
