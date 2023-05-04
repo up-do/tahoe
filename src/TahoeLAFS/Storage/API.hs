@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 -- https://artyom.me/aeson#records-and-json-generics
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 -- Supports derivations for ShareNumber
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -28,43 +29,29 @@ module TahoeLAFS.Storage.API (
     ReadTestWriteResult (..),
     ReadVectors,
     ReadVector,
+    QueryRange,
     TestVector (TestVector),
     ReadResult,
     CorruptionDetails (CorruptionDetails),
     SlotSecrets (..),
     TestOperator (..),
     StorageAPI,
+    LeaseSecret (..),
     api,
     renewSecretLength,
     writeEnablerSecretLength,
     leaseRenewSecretLength,
     leaseCancelSecretLength,
+    CBOR,
+    CBORSet (..),
 ) where
 
-import Prelude hiding (
-    toInteger,
- )
-
-import Data.Word
-
-import Data.Text (
-    pack,
-    unpack,
- )
-import Data.Text.Encoding (
-    decodeUtf8,
- )
-
-import Data.Bifunctor
-import Data.ByteString (
-    ByteString,
- )
-
-import qualified Data.ByteString as BS
-import Data.Map.Strict (
-    Map,
- )
-
+import Codec.CBOR.Encoding (encodeBytes)
+import Codec.Serialise.Class
+import Codec.Serialise.Decoding (decodeListLen)
+import qualified Codec.Serialise.Decoding as CSD
+import qualified Codec.Serialise.Encoding as CSE
+import Control.Monad
 import Data.Aeson (
     FromJSON (..),
     FromJSONKey (..),
@@ -76,15 +63,30 @@ import Data.Aeson (
     genericParseJSON,
     genericToJSON,
  )
-
 import Data.Aeson.Types (
+    Options,
     toJSONKeyText,
  )
-
+import Data.Bifunctor (Bifunctor (bimap))
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Base64 as Base64
+import qualified Data.Map as Map
+import Data.Map.Strict (
+    Map,
+ )
+import qualified Data.Set as Set
+import qualified Data.Text as T
+import Data.Text.Encoding (
+    decodeUtf8,
+ )
 import GHC.Generics (
     Generic,
  )
-
+import Network.HTTP.Types (
+    ByteRanges,
+    parseByteRanges,
+    renderByteRanges,
+ )
 import Servant (
     Capture,
     Get,
@@ -101,30 +103,23 @@ import Servant (
     (:<|>),
     (:>),
  )
+import TahoeLAFS.Internal.ServantUtil (
+    CBOR,
+ )
 import Text.Read (
     readMaybe,
  )
-
 import Web.HttpApiData (
     FromHttpApiData (..),
     ToHttpApiData (..),
  )
-
-import Network.HTTP.Types (
-    ByteRanges,
-    parseByteRanges,
-    renderByteRanges,
+import Prelude hiding (
+    toInteger,
  )
-
-import TahoeLAFS.Internal.ServantUtil (
-    CBOR,
- )
-
-import qualified Data.ByteString.Base64 as Base64
-import qualified Data.Text as B
 
 type PutCreated = Verb 'PUT 201
 
+tahoeJSONOptions :: Options
 tahoeJSONOptions =
     defaultOptions
         { fieldLabelModifier = camelTo2 '-'
@@ -141,31 +136,77 @@ leaseRenewSecretLength = 32
 leaseCancelSecretLength :: Num a => a
 leaseCancelSecretLength = 32
 
-type ApplicationVersion = String
+type ApplicationVersion = B.ByteString
 type Size = Integer
 type Offset = Integer
+type QueryRange = Maybe ByteRanges
 
 -- TODO These should probably all be byte strings instead.
 type RenewSecret = String
 type CancelSecret = String
 type StorageIndex = String
-type ShareData = ByteString
+type ShareData = B.ByteString
 
 newtype ShareNumber = ShareNumber Integer
     deriving
         ( Show
-        , Generic
         , Eq
         , Ord
-        , ToJSON
+        , Generic
+        )
+    deriving newtype
+        ( ToJSON
         , FromJSON
         , FromJSONKey
-        , ToHttpApiData
         )
+
+{- | A new type for which we can define our own CBOR serialisation rules.  The
+ cborg library provides a Serialise instance for Set which is not compatible
+ with the representation required by Tahoe-LAFS.
+-}
+newtype CBORSet a = CBORSet
+    { getCBORSet :: Set.Set a
+    }
+    deriving newtype (ToJSON, FromJSON, Show, Eq)
+
+-- | Encode a CBORSet using a CBOR "set" tag and a determinate length list.
+encodeCBORSet :: (Serialise a) => CBORSet a -> CSE.Encoding
+encodeCBORSet (CBORSet theSet) =
+    CSE.encodeTag 258
+        <> CSE.encodeListLen (fromIntegral $ Set.size theSet) -- XXX don't trust fromIntegral
+        <> Set.foldr (\x r -> encode x <> r) mempty theSet
+
+-- | Decode a determinate length list with a CBOR "set" tag.
+decodeCBORSet :: (Serialise a, Ord a) => CSD.Decoder s (CBORSet a)
+decodeCBORSet = do
+    tag <- CSD.decodeTag
+    if tag /= 258
+        then fail $ "expected set tag (258), found " <> show tag
+        else do
+            listLength <- decodeListLen
+            CBORSet . Set.fromList <$> replicateM listLength decode
+
+-- | Define serialisation for CBORSets in a way that is compatible with GBS.
+instance (Serialise a, Ord a) => Serialise (CBORSet a) where
+    encode = encodeCBORSet
+    decode = decodeCBORSet
+
+instance Serialise ShareNumber where
+    decode = decodeShareNumber
+    encode = encodeShareNumber
+
+encodeShareNumber :: ShareNumber -> CSE.Encoding
+encodeShareNumber (ShareNumber i) = CSE.encodeInteger i
+
+decodeShareNumber :: CSD.Decoder s ShareNumber
+decodeShareNumber = ShareNumber <$> CSD.decodeInteger
+
+instance ToHttpApiData ShareNumber where
+    toQueryParam = T.pack . show . toInteger
 
 instance FromHttpApiData ShareNumber where
     parseUrlPiece t =
-        case readMaybe $ unpack t of
+        case readMaybe $ T.unpack t of
             Nothing -> Left "failed to parse"
             Just i -> case shareNumber i of
                 Nothing -> Left "number out of bounds"
@@ -174,7 +215,7 @@ instance FromHttpApiData ShareNumber where
     parseHeader = parseUrlPiece . decodeUtf8
 
 instance ToJSONKey ShareNumber where
-    toJSONKey = toJSONKeyText (pack . show)
+    toJSONKey = toJSONKeyText (T.pack . show)
 
 shareNumber :: Integer -> Maybe ShareNumber
 shareNumber n =
@@ -189,13 +230,54 @@ data Version1Parameters = Version1Parameters
     { maximumImmutableShareSize :: Size
     , maximumMutableShareSize :: Size
     , availableSpace :: Size
-    , toleratesImmutableReadOverrun :: Bool
-    , deleteMutableSharesWithZeroLengthWritev :: Bool
-    , fillsHolesWithZeroBytes :: Bool
-    , preventsReadPastEndOfShareData :: Bool
-    , httpProtocolAvailable :: Bool
     }
     deriving (Show, Eq, Generic)
+
+encodeVersion1Parameters :: Version1Parameters -> CSE.Encoding
+encodeVersion1Parameters Version1Parameters{..} =
+    CSE.encodeMapLen 3 -- three rings for the elven kings
+        <> CSE.encodeBytes "maximum-immutable-share-size"
+        <> CSE.encodeInteger maximumImmutableShareSize
+        <> CSE.encodeBytes "maximum-mutable-share-size"
+        <> CSE.encodeInteger maximumMutableShareSize
+        <> CSE.encodeBytes "available-space"
+        <> CSE.encodeInteger availableSpace
+
+decodeMap :: (Ord k, Serialise k, Serialise v) => CSD.Decoder s (Map k v)
+decodeMap = do
+    lenM <- CSD.decodeMapLenOrIndef
+    case lenM of
+        Nothing -> Map.fromList <$> decodeMapIndef
+        Just len -> Map.fromList <$> decodeMapOfLen len
+  where
+    decodeMapIndef = do
+        atTheEnd <- CSD.decodeBreakOr
+        if atTheEnd
+            then pure []
+            else do
+                k <- decode
+                v <- decode
+                ((k, v) :) <$> decodeMapIndef
+
+    decodeMapOfLen 0 = pure []
+    decodeMapOfLen n = do
+        k <- decode
+        v <- decode
+        ((k, v) :) <$> decodeMapOfLen (n - 1)
+
+decodeVersion1Parameters :: CSD.Decoder s Version1Parameters
+decodeVersion1Parameters = do
+    m <- decodeMap
+    case (Map.size m, map (`Map.lookup` m) keys) of
+        (3, [Just availableSpace, Just maximumImmutableShareSize, Just maximumMutableShareSize]) ->
+            pure Version1Parameters{..}
+        _ -> fail "invalid encoding of Version1Parameters"
+  where
+    keys = ["available-space", "maximum-immutable-share-size", "maximum-mutable-share-size"] :: [B.ByteString]
+
+instance Serialise Version1Parameters where
+    encode = encodeVersion1Parameters
+    decode = decodeVersion1Parameters
 
 instance ToJSON Version1Parameters where
     toJSON = genericToJSON tahoeJSONOptions
@@ -204,10 +286,55 @@ instance FromJSON Version1Parameters where
     parseJSON = genericParseJSON tahoeJSONOptions
 
 data Version = Version
-    { applicationVersion :: ApplicationVersion
-    , parameters :: Version1Parameters
+    { parameters :: Version1Parameters
+    , applicationVersion :: ApplicationVersion
     }
     deriving (Show, Eq, Generic)
+
+encodeApplicationVersion :: ApplicationVersion -> CSE.Encoding
+encodeApplicationVersion = CSE.encodeBytes
+
+decodeApplicationVersion :: CSD.Decoder s ApplicationVersion
+decodeApplicationVersion = CSD.decodeBytes
+
+encodeVersion :: Version -> CSE.Encoding
+encodeVersion Version{..} =
+    CSE.encodeMapLen 2
+        <> encodeBytes "http://allmydata.org/tahoe/protocols/storage/v1"
+        <> encodeVersion1Parameters parameters
+        <> encodeBytes "application-version"
+        <> encodeApplicationVersion applicationVersion
+
+decodeVersion :: CSD.Decoder s Version
+decodeVersion = do
+    mapLen <- CSD.decodeMapLen
+    case mapLen of
+        2 -> do
+            -- Take care to handle either order of fields in the map.
+            k1 <- CSD.decodeBytes
+            case k1 of
+                "http://allmydata.org/tahoe/protocols/storage/v1" -> do
+                    parameters <- decodeVersion1Parameters
+                    k2 <- CSD.decodeBytes
+                    case k2 of
+                        "application-version" -> do
+                            applicationVersion <- decodeApplicationVersion
+                            pure Version{..}
+                        _ -> fail "decodeVersion got bad input"
+                "application-version" -> do
+                    applicationVersion <- decodeApplicationVersion
+                    k2 <- CSD.decodeBytes
+                    case k2 of
+                        "http://allmydata.org/tahoe/protocols/storage/v1" -> do
+                            parameters <- decodeVersion1Parameters
+                            pure Version{..}
+                        _ -> fail "decodeVersion got bad input"
+                _ -> fail "decodeVersion got bad input"
+        _ -> fail "decodeVersion got bad input"
+
+instance Serialise Version where
+    encode = encodeVersion
+    decode = decodeVersion
 
 instance ToJSON Version where
     toJSON = genericToJSON tahoeJSONOptions
@@ -215,6 +342,7 @@ instance ToJSON Version where
 instance FromJSON Version where
     parseJSON = genericParseJSON tahoeJSONOptions
 
+-- XXX Remove the secret fields from this record.
 data AllocateBuckets = AllocateBuckets
     { renewSecret :: RenewSecret
     , cancelSecret :: CancelSecret
@@ -222,6 +350,9 @@ data AllocateBuckets = AllocateBuckets
     , allocatedSize :: Size
     }
     deriving (Show, Eq, Generic)
+
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
+instance Serialise AllocateBuckets
 
 instance ToJSON AllocateBuckets where
     toJSON = genericToJSON tahoeJSONOptions
@@ -235,21 +366,22 @@ data AllocationResult = AllocationResult
     }
     deriving (Show, Eq, Generic)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
+instance Serialise AllocationResult
+
 instance ToJSON AllocationResult where
     toJSON = genericToJSON tahoeJSONOptions
 
 instance FromJSON AllocationResult where
     parseJSON = genericParseJSON tahoeJSONOptions
 
-data ShareType
-    = Mutable
-    | Immutable
-    deriving (Show, Eq, Generic, ToJSON, FromJSON)
-
-data CorruptionDetails = CorruptionDetails
+newtype CorruptionDetails = CorruptionDetails
     { reason :: String
     }
     deriving (Show, Eq, Generic)
+
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
+instance Serialise CorruptionDetails
 
 instance ToJSON CorruptionDetails where
     toJSON = genericToJSON tahoeJSONOptions
@@ -263,67 +395,112 @@ instance FromHttpApiData ByteRanges where
             Nothing -> Left "parse failed"
             Just br -> Right br
 
+    parseUrlPiece _ = Left "Cannot parse ByteRanges from URL piece"
+    parseQueryParam _ = Left "Cannot parse ByteRanges from query params"
+
 instance ToHttpApiData ByteRanges where
     toHeader = renderByteRanges
 
+    toUrlPiece _ = error "Cannot serialize ByteRanges to URL piece"
+    toQueryParam _ = error "Cannot serialize ByteRanges to query params"
+
+data LeaseSecret = Renew B.ByteString | Cancel B.ByteString | Upload B.ByteString | Write B.ByteString
+
+instance FromHttpApiData LeaseSecret where
+    parseHeader bs =
+        do
+            let [key, val] = B.split 32 bs
+            case key of
+                "lease-renew-secret" -> bimap T.pack Renew $ Base64.decode val
+                "lease-cancel-secret" -> bimap T.pack Cancel $ Base64.decode val
+                "upload-secret" -> bimap T.pack Upload $ Base64.decode val
+                "write-enabler" -> bimap T.pack Write $ Base64.decode val
+                _ -> Left $ T.concat ["Cannot interpret secret: ", T.pack . show $ key]
+
+    parseUrlPiece _ = Left "Cannot parse LeaseSecret from URL piece"
+    parseQueryParam _ = Left "Cannot parse LeaseSecret from query params"
+
+instance FromHttpApiData [LeaseSecret] where
+    -- XXX Consider whitespace?
+    parseHeader =
+        mapM parseHeader . B.split (fromIntegral $ fromEnum ',')
+
+    parseUrlPiece _ = Left "Cannot parse [LeaseSecret] from URL piece"
+    parseQueryParam _ = Left "Cannot parse [LeaseSecret] from query params"
+
+instance ToHttpApiData LeaseSecret where
+    toHeader (Renew bs) = "lease-renew-secret " <> Base64.encode bs
+    toHeader (Cancel bs) = "lease-cancel-secret " <> Base64.encode bs
+    toHeader (Upload bs) = "lease-cancel-secret " <> Base64.encode bs
+    toHeader (Write bs) = "write-enabler " <> Base64.encode bs
+
+    toUrlPiece _ = error "Cannot serialize LeaseSecret to URL piece"
+    toQueryParam _ = error "Cannot serialize LeaseSecret to query params"
+
+instance ToHttpApiData [LeaseSecret] where
+    toHeader = B.intercalate "," . map toHeader
+    toUrlPiece _ = error "Cannot serialize [LeaseSecret] to URL piece"
+    toQueryParam _ = error "Cannot serialize [LeaseSecret] to query params"
+
+-- GET .../version
+-- Retrieve information about the server version and behavior
+type GetVersion = "version" :> Get '[CBOR, JSON] Version
+
+-- PUT .../lease/:storage_index
+type RenewLease = "lease" :> Capture "storage_index" StorageIndex :> Header "X-Tahoe-Authorization" [LeaseSecret] :> Get '[CBOR, JSON] ()
+
+-- POST .../immutable/:storage_index
+-- Initialize a new immutable storage index
+type CreateImmutableStorageIndex = "immutable" :> Capture "storage_index" StorageIndex :> ReqBody '[CBOR, JSON] AllocateBuckets :> PostCreated '[CBOR, JSON] AllocationResult
+
+--
+-- PUT .../immutable/:storage_index/:share_number
+-- Write data for an immutable share to an allocated storage index
+--
+-- Note this accepts JSON to facilitate code generation by servant-py.  This
+-- is total nonsense and supplying JSON here will almost certainly break.
+-- At some point hopefully we'll fix servant-py to not need this and then
+-- fix the signature here.
+type WriteImmutableShareData = "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> ReqBody '[OctetStream, JSON] ShareData :> Header "Content-Range" ByteRanges :> PutCreated '[CBOR, JSON] ()
+
+-- POST .../immutable/:storage_index/:share_number/corrupt
+-- Advise the server of a corrupt share data
+type AdviseCorrupt = Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> "corrupt" :> ReqBody '[CBOR, JSON] CorruptionDetails :> Post '[CBOR, JSON] ()
+
+-- GET .../{mutable,immutable}/storage_index/shares
+-- Retrieve the share numbers available for a storage index
+type GetShareNumbers = Capture "storage_index" StorageIndex :> "shares" :> Get '[CBOR, JSON] (CBORSet ShareNumber)
+
+--
+-- GET .../v1/immutable/<storage_index:storage_index>/<int(signed=False):share_number>"
+-- Read from an immutable storage index, possibly from multiple shares, possibly limited to certain ranges
+type ReadImmutableShareData = "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Header "Content-Range" ByteRanges :> Get '[OctetStream, JSON] ShareData
+
+-- POST /v1/mutable/:storage_index/read-test-write
+-- General purpose read-test-and-write operation.
+type ReadTestWrite = "mutable" :> Capture "storage_index" StorageIndex :> "read-test-write" :> ReqBody '[CBOR, JSON] ReadTestWriteVectors :> Post '[CBOR, JSON] ReadTestWriteResult
+
+-- GET /v1/mutable/:storage_index
+-- Read from a mutable storage index
+type ReadMutableShareData = "mutable" :> Capture "storage_index" StorageIndex :> QueryParams "share_number" ShareNumber :> QueryParams "offset" Offset :> QueryParams "size" Size :> Get '[CBOR, JSON] ReadResult
+
 type StorageAPI =
-    -- General server information
-
-    --
-    -- GET /v1/version
-    -- Retrieve information about the server version and behavior
-    "v1" :> "version" :> Get '[CBOR, JSON] Version
-        -- PUT /storage/v1/lease/:storage_index
-        -- :<|> "v1" :> "lease" :> Capture "storage_index" StorageIndex :> Header "X-Tahoe-Authorization" [LeaseSecret] :> Get '[JSON] ()
-        -- Immutable share interactions
-
-        --
-        -- POST /v1/immutable/:storage_index
-        -- Initialize a new immutable storage index
-        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> ReqBody '[CBOR, JSON] AllocateBuckets :> PostCreated '[CBOR, JSON] AllocationResult
-        --
-        -- PUT /v1/immutable/:storage_index/:share_number
-        -- Write data for an immutable share to an allocated storage index
-        --
-        -- Note this accepts JSON to facilitate code generation by servant-py.  This
-        -- is total nonsense and supplying JSON here will almost certainly break.
-        -- At some point hopefully we'll fix servant-py to not need this and then
-        -- fix the signature here.
-        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> ReqBody '[OctetStream, JSON] ShareData :> Header "Content-Range" ByteRanges :> PutCreated '[CBOR, JSON] ()
-        --
-        -- POST /v1/immutable/:storage_index/:share_number/corrupt
-        -- Advise the server of a corrupt share data
-        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> "corrupt" :> ReqBody '[CBOR, JSON] CorruptionDetails :> Post '[CBOR, JSON] ()
-        --
-        -- GET /v1/immutable/storage_index/shares
-        -- Retrieve the share numbers available for a storage index
-        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> "shares" :> Get '[CBOR, JSON] [ShareNumber]
-        --
-        -- GET /v1/immutable/:storage_index?[share=s0&share=s1&...]
-        -- Read from an immutable storage index, possibly from multiple shares, possibly limited to certain ranges
-        :<|> "v1" :> "immutable" :> Capture "storage_index" StorageIndex :> QueryParams "share_number" ShareNumber :> QueryParams "offset" Offset :> QueryParams "size" Size :> Get '[CBOR, JSON] ReadResult
-        -- Mutable share interactions
-
-        --
-        -- POST /v1/mutable/:storage_index
-        -- Initialize a new mutable storage index
-        :<|> "v1" :> "mutable" :> Capture "storage_index" StorageIndex :> ReqBody '[CBOR, JSON] AllocateBuckets :> Post '[CBOR, JSON] AllocationResult
-        --
-        -- POST /v1/mutable/:storage_index/read-test-write
-        -- General purpose read-test-and-write operation.
-        :<|> "v1" :> "mutable" :> Capture "storage_index" StorageIndex :> "read-test-write" :> ReqBody '[CBOR, JSON] ReadTestWriteVectors :> Post '[CBOR, JSON] ReadTestWriteResult
-        --
-        -- GET /v1/mutable/:storage_index
-        -- Read from a mutable storage index
-        :<|> "v1" :> "mutable" :> Capture "storage_index" StorageIndex :> QueryParams "share_number" ShareNumber :> QueryParams "offset" Offset :> QueryParams "size" Size :> Get '[CBOR, JSON] ReadResult
-        --
-        -- GET /v1/mutable/:storage_index/shares
-        -- Retrieve the share numbers available for a storage index
-        :<|> "v1" :> "mutable" :> Capture "storage_index" StorageIndex :> "shares" :> Get '[CBOR, JSON] [ShareNumber]
-        --
-        -- POST /v1/mutable/:storage_index/:share_number/corrupt
-        -- Advise the server of a corrupt share data
-        :<|> "v1" :> "mutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> "corrupt" :> ReqBody '[CBOR, JSON] CorruptionDetails :> Post '[CBOR, JSON] ()
+    "storage"
+        :> "v1"
+        :> ( GetVersion
+                :<|> RenewLease
+                -- Immutables
+                :<|> CreateImmutableStorageIndex
+                :<|> WriteImmutableShareData
+                :<|> ReadImmutableShareData
+                :<|> "immutable" :> GetShareNumbers
+                :<|> "immutable" :> AdviseCorrupt
+                -- Mutables
+                :<|> ReadTestWrite
+                :<|> ReadMutableShareData
+                :<|> "mutable" :> GetShareNumbers
+                :<|> "mutable" :> AdviseCorrupt
+           )
 
 type ReadResult = Map ShareNumber [ShareData]
 
@@ -345,6 +522,9 @@ data ReadTestWriteResult = ReadTestWriteResult
     }
     deriving (Show, Eq, Generic)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
+instance Serialise ReadTestWriteResult
+
 instance ToJSON ReadTestWriteResult where
     toJSON = genericToJSON tahoeJSONOptions
 
@@ -358,6 +538,9 @@ data ReadTestWriteVectors = ReadTestWriteVectors
     }
     deriving (Show, Eq, Generic)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
+instance Serialise ReadTestWriteVectors
+
 instance ToJSON ReadTestWriteVectors where
     toJSON = genericToJSON tahoeJSONOptions
 
@@ -369,6 +552,9 @@ data ReadVector = ReadVector
     , readSize :: Size
     }
     deriving (Show, Eq, Generic)
+
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
+instance Serialise ReadVector
 
 instance ToJSON ReadVector where
     toJSON = genericToJSON tahoeJSONOptions
@@ -382,6 +568,10 @@ data TestWriteVectors = TestWriteVectors
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
+instance Serialise TestWriteVectors
+
+-- XXX Most of these operators have been removed from the spec.
 data TestOperator
     = Lt
     | Le
@@ -391,6 +581,9 @@ data TestOperator
     | Gt
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
+instance Serialise TestOperator
+
 data TestVector = TestVector
     { testOffset :: Offset
     , testSize :: Size
@@ -399,18 +592,29 @@ data TestVector = TestVector
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
+instance Serialise TestVector
+
 data WriteVector = WriteVector
     { writeOffset :: Offset
     , shareData :: ShareData
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
+instance Serialise WriteVector
+
+-- XXX These fields moved to an HTTP Header, this type is probably not useful
+-- anymore?
 data SlotSecrets = SlotSecrets
     { writeEnabler :: WriteEnablerSecret
     , leaseRenew :: LeaseRenewSecret
     , leaseCancel :: LeaseCancelSecret
     }
     deriving (Show, Eq, Generic)
+
+-- XXX This derived instance is surely not compatible with Tahoe-LAFS.
+instance Serialise SlotSecrets
 
 instance ToJSON SlotSecrets where
     toJSON = genericToJSON tahoeJSONOptions

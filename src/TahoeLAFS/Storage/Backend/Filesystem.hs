@@ -14,14 +14,14 @@ import Prelude hiding (
     writeFile,
  )
 
-import Network.HTTP.Types (
-    ByteRanges,
- )
-
 import Data.ByteString (
     hPut,
     readFile,
     writeFile,
+ )
+import qualified Data.Set as Set
+import Network.HTTP.Types (
+    ByteRanges,
  )
 
 import Control.Exception (
@@ -64,7 +64,9 @@ import System.Directory (
 import TahoeLAFS.Storage.API (
     AllocateBuckets (..),
     AllocationResult (..),
+    CBORSet (..),
     Offset,
+    QueryRange,
     ReadTestWriteResult (ReadTestWriteResult, readData, success),
     ReadTestWriteVectors (ReadTestWriteVectors),
     ShareData,
@@ -121,13 +123,6 @@ instance Backend FilesystemBackend where
                         , -- TODO: Copy the "reserved space" feature of the Python
                           -- implementation.
                           availableSpace = available
-                        , toleratesImmutableReadOverrun = True
-                        , deleteMutableSharesWithZeroLengthWritev = True
-                        , fillsHolesWithZeroBytes = True
-                        , preventsReadPastEndOfShareData = True
-                        , -- TODO Doesn't really belong here.  Also we need more than a bool.
-                          -- We need to tell them *where* it is available or it is useless.
-                          httpProtocolAvailable = True
                         }
                 }
 
@@ -159,7 +154,7 @@ instance Backend FilesystemBackend where
                 createDirectoryIfMissing createParents $ takeDirectory finalSharePath
                 renameFile incomingSharePath finalSharePath
 
-    getImmutableShareNumbers :: FilesystemBackend -> StorageIndex -> IO [ShareNumber]
+    getImmutableShareNumbers :: FilesystemBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getImmutableShareNumbers (FilesystemBackend root) storageIndex = do
         let storageIndexPath = pathOfStorageIndex root storageIndex
         storageIndexChildren <-
@@ -168,17 +163,15 @@ instance Backend FilesystemBackend where
                 case storageIndexChildren of
                     Left _ -> []
                     Right children -> children
-        return $ mapMaybe (shareNumber . read) sharePaths
+        return $ CBORSet . Set.fromList $ mapMaybe (shareNumber . read) sharePaths
 
     -- TODO Handle ranges.
     -- TODO Make sure the share storage was allocated.
-    readImmutableShares :: FilesystemBackend -> StorageIndex -> [ShareNumber] -> [Offset] -> [Storage.Size] -> IO Storage.ReadResult
-    readImmutableShares (FilesystemBackend root) storageIndex shareNumbers [] [] =
+    readImmutableShare :: FilesystemBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO Storage.ShareData
+    readImmutableShare (FilesystemBackend root) storageIndex shareNum _qr =
         let _storageIndexPath = pathOfStorageIndex root storageIndex
-            only x = [x]
             readShare = readFile . pathOfShare root storageIndex
-         in fromList . zip shareNumbers . map only <$> mapM readShare shareNumbers
-    readImmutableShares _ _ _ _ _ = error "readImmutableShares got bad input"
+         in readShare shareNum
 
     createMutableStorageIndex = createImmutableStorageIndex
 

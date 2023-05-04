@@ -11,10 +11,6 @@ import Control.Monad (
     when,
  )
 
-import Data.Maybe (
-    catMaybes,
- )
-
 import Data.Bits (
     xor,
  )
@@ -39,24 +35,19 @@ import Test.Hspec (
     SpecWith,
     around,
     before,
-    beforeWith,
     context,
     describe,
     it,
-    shouldBe,
     shouldThrow,
  )
 import Test.Hspec.Expectations (
     Selector,
  )
+
 import Test.QuickCheck (
-    Arbitrary (arbitrary),
-    Gen,
     Property,
     forAll,
     property,
-    suchThatMap,
-    vectorOf,
  )
 
 import Test.QuickCheck.Monadic (
@@ -65,8 +56,6 @@ import Test.QuickCheck.Monadic (
     pre,
     run,
  )
-
-import qualified Test.QuickCheck.Instances.ByteString
 
 import Data.ByteString (
     ByteString,
@@ -79,12 +68,9 @@ import Data.List (
     sort,
  )
 
-import Data.Map.Strict (
-    lookup,
- )
-
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets),
+    CBORSet (..),
     ShareData,
     ShareNumber,
     Size,
@@ -92,7 +78,6 @@ import TahoeLAFS.Storage.API (
     StorageIndex,
     allocated,
     alreadyHave,
-    shareNumber,
     toInteger,
  )
 
@@ -102,7 +87,7 @@ import TahoeLAFS.Storage.Backend (
         createMutableStorageIndex,
         getImmutableShareNumbers,
         getMutableShareNumbers,
-        readImmutableShares,
+        readImmutableShare,
         writeImmutableShare
     ),
     ImmutableShareAlreadyWritten,
@@ -209,10 +194,8 @@ immutableWriteAndEnumerateShares backend storageIndex shareNumbers shareSeed = m
     _result <- run $ createImmutableStorageIndex backend storageIndex allocate
     run $ writeShares (writeImmutableShare backend storageIndex) (zip shareNumbers permutedShares)
     readShareNumbers <- run $ getImmutableShareNumbers backend storageIndex
-    let sreadShareNumbers = sort readShareNumbers
-    let sshareNumbers = sort shareNumbers
-    when (sreadShareNumbers /= sshareNumbers) $
-        fail (show sreadShareNumbers ++ " /= " ++ show sshareNumbers)
+    when (readShareNumbers /= (CBORSet . Set.fromList $ shareNumbers)) $
+        fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
 
 -- Immutable share data written to the shares of a given storage index cannot
 -- be rewritten by a subsequent writeImmutableShare operation.
@@ -255,18 +238,9 @@ immutableWriteAndReadShare backend storageIndex shareNumbers shareSeed = monadic
     let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
     _result <- run $ createImmutableStorageIndex backend storageIndex allocate
     run $ writeShares (writeImmutableShare backend storageIndex) (zip shareNumbers permutedShares)
-    readShares' <- run $ readShares backend storageIndex shareNumbers
+    readShares' <- run $ mapM (\sn -> readImmutableShare backend storageIndex sn Nothing) shareNumbers
     when (permutedShares /= readShares') $
         fail (show permutedShares ++ " /= " ++ show readShares')
-  where
-    readShares :: Backend b => b -> StorageIndex -> [ShareNumber] -> IO [ShareData]
-    readShares b storageIndex shareNumbers = do
-        -- Map ShareNumber [ShareData]
-        shares <- readImmutableShares b storageIndex shareNumbers [] []
-        let maybeShares = Prelude.map (`lookup` shares) shareNumbers
-        let orderedShares = catMaybes maybeShares
-        let shareData = Prelude.map Data.ByteString.concat orderedShares :: [ShareData]
-        return shareData
 
 -- The share numbers of mutable share data written to the shares of a given
 -- storage index can be retrieved.
@@ -291,11 +265,9 @@ mutableWriteAndEnumerateShares backend storageIndex shareNumbers shareSeed = mon
                 }
     _result <- run $ createMutableStorageIndex backend storageIndex allocate
     run $ writeShares (writeMutableShare backend nullSecrets storageIndex) (zip shareNumbers permutedShares)
-    readShareNumbers <- run $ getMutableShareNumbers backend storageIndex
-    let sreadShareNumbers = sort readShareNumbers
-    let sshareNumbers = sort shareNumbers
-    when (sreadShareNumbers /= sshareNumbers) $
-        fail (show sreadShareNumbers ++ " /= " ++ show sshareNumbers)
+    (CBORSet readShareNumbers) <- run $ getMutableShareNumbers backend storageIndex
+    when (readShareNumbers /= Set.fromList shareNumbers) $
+        fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
 
 -- The specification for a storage backend.
 storageSpec :: Backend b => SpecWith b

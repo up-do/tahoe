@@ -1,3 +1,5 @@
+{-# LANGUAGE DataKinds #-}
+
 module TahoeLAFS.Storage.Backend (
     Backend (..),
     ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten),
@@ -13,15 +15,19 @@ import Data.Map.Strict (
     fromList,
  )
 
+import qualified Data.Set as Set
 import Network.HTTP.Types (
     ByteRanges,
  )
-
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult,
+    CBOR,
+    CBORSet (..),
     CorruptionDetails,
+    LeaseSecret,
     Offset,
+    QueryRange,
     ReadResult,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
@@ -42,28 +48,22 @@ instance Exception ImmutableShareAlreadyWritten
 class Backend b where
     version :: b -> IO Version
 
+    -- | Update the lease expiration time on the shares associated with the
+    -- given storage index.
+    renewLease :: b -> StorageIndex -> [LeaseSecret] -> IO ()
+
     createImmutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
 
     -- May throw ImmutableShareAlreadyWritten
     writeImmutableShare :: b -> StorageIndex -> ShareNumber -> ShareData -> Maybe ByteRanges -> IO ()
     adviseCorruptImmutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
-    getImmutableShareNumbers :: b -> StorageIndex -> IO [ShareNumber]
-
-    -- Provide a default for requesting all shares.
-    readImmutableShares :: b -> StorageIndex -> [ShareNumber] -> [Offset] -> [Size] -> IO ReadResult
-    readImmutableShares backend storageIndex [] offsets sizes = do
-        shareNumbers <- getImmutableShareNumbers backend storageIndex
-        case shareNumbers of
-            [] ->
-                return mempty
-            _ ->
-                readImmutableShares backend storageIndex shareNumbers offsets sizes
-    readImmutableShares _ _ _ _ _ = error "readImmutableShares got bad input"
+    getImmutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
+    readImmutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
 
     createMutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
     readvAndTestvAndWritev :: b -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readMutableShares :: b -> StorageIndex -> [ShareNumber] -> [Offset] -> [Size] -> IO ReadResult
-    getMutableShareNumbers :: b -> StorageIndex -> IO [ShareNumber]
+    getMutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     adviseCorruptMutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
 
 writeMutableShare ::

@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module TahoeLAFS.Storage.Backend.Null (
     NullBackend (NullBackend),
 ) where
@@ -6,8 +8,10 @@ import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult (..),
     ApplicationVersion,
+    CBORSet (..),
     CorruptionDetails,
     Offset,
+    QueryRange,
     ReadResult,
     ShareData,
     ShareNumber,
@@ -17,6 +21,7 @@ import TahoeLAFS.Storage.API (
     Version1Parameters (..),
  )
 
+import qualified Data.Set as Set
 import TahoeLAFS.Storage.Backend (
     Backend (..),
  )
@@ -34,13 +39,6 @@ instance Backend NullBackend where
                         { maximumImmutableShareSize = 0
                         , maximumMutableShareSize = 0
                         , availableSpace = 0
-                        , toleratesImmutableReadOverrun = False
-                        , deleteMutableSharesWithZeroLengthWritev = False
-                        , fillsHolesWithZeroBytes = False
-                        , preventsReadPastEndOfShareData = False
-                        , -- TODO Doesn't really belong here.  Also we need more than a bool.
-                          -- We need to tell them *where* it is available or it is useless.
-                          httpProtocolAvailable = True
                         }
                 }
 
@@ -59,10 +57,9 @@ instance Backend NullBackend where
     adviseCorruptImmutableShare NullBackend _ _ _ =
         return mempty
 
-    getImmutableShareNumbers :: NullBackend -> StorageIndex -> IO [ShareNumber]
+    getImmutableShareNumbers :: NullBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getImmutableShareNumbers NullBackend _ =
-        return []
+        return (CBORSet $ Set.fromList [])
 
-    readImmutableShares :: NullBackend -> StorageIndex -> [ShareNumber] -> [Offset] -> [Size] -> IO ReadResult
-    readImmutableShares NullBackend _ _ _ _ =
-        return mempty
+    readImmutableShare :: NullBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readImmutableShare NullBackend _ _ _ = mempty

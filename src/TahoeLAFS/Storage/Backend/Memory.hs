@@ -15,6 +15,7 @@ import Network.HTTP.Types (
 import Control.Exception (
     throwIO,
  )
+import Data.Maybe (fromMaybe)
 
 import Data.IORef (
     IORef,
@@ -23,7 +24,6 @@ import Data.IORef (
     newIORef,
     readIORef,
  )
-
 import Data.Map.Strict (
     Map,
     adjust,
@@ -35,12 +35,15 @@ import Data.Map.Strict (
     map,
     toList,
  )
+import qualified Data.Set as Set
 
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult (..),
+    CBORSet (..),
     CorruptionDetails,
     Offset,
+    QueryRange,
     ReadResult,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
@@ -83,13 +86,6 @@ instance Backend MemoryBackend where
                         { maximumImmutableShareSize = 1024 * 1024 * 64
                         , maximumMutableShareSize = 1024 * 1024 * 64
                         , availableSpace = (1024 * 1024 * 1024) - totalSize
-                        , toleratesImmutableReadOverrun = True
-                        , deleteMutableSharesWithZeroLengthWritev = True
-                        , fillsHolesWithZeroBytes = True
-                        , preventsReadPastEndOfShareData = True
-                        , -- TODO Doesn't really belong here.  Also we need more than a bool.
-                          -- We need to tell them *where* it is available or it is useless.
-                          httpProtocolAvailable = True
                         }
                 }
 
@@ -101,10 +97,13 @@ instance Backend MemoryBackend where
                 , allocated = shareNumbers params
                 }
 
-    getMutableShareNumbers :: MemoryBackend -> StorageIndex -> IO [ShareNumber]
+    getMutableShareNumbers :: MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getMutableShareNumbers backend storageIndex = do
         shares' <- readIORef $ mutableShares backend
-        return $ maybe [] keys $ lookup storageIndex shares'
+        return $
+            CBORSet . Set.fromList $
+                maybe [] keys $
+                    lookup storageIndex shares'
 
     readvAndTestvAndWritev :: MemoryBackend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev
@@ -158,23 +157,18 @@ instance Backend MemoryBackend where
     adviseCorruptImmutableShare _backend _ _ _ =
         return mempty
 
-    getImmutableShareNumbers :: MemoryBackend -> StorageIndex -> IO [ShareNumber]
+    getImmutableShareNumbers :: MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getImmutableShareNumbers backend storageIndex = do
         shares' <- readIORef $ immutableShares backend
-        return $ maybe [] keys $ lookup storageIndex shares'
+        return $ CBORSet . Set.fromList $ maybe [] keys $ lookup storageIndex shares'
 
-    readImmutableShares :: MemoryBackend -> StorageIndex -> [ShareNumber] -> [Offset] -> [Size] -> IO ReadResult
-    readImmutableShares backend storageIndex shareNumbers [] [] = do
+    readImmutableShare :: MemoryBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readImmutableShare backend storageIndex shareNum _qr = do
         shares' <- readIORef $ immutableShares backend
         let result = case lookup storageIndex shares' of
                 Nothing -> mempty
-                Just shares'' ->
-                    let matchingShares = filterWithKey matches shares''
-                     in map (replicate 1) matchingShares
-              where
-                matches k _v = k `elem` shareNumbers
-        return result
-    readImmutableShares _ _ _ _ _ = error "readImmutableShares got bad input"
+                Just shares'' -> lookup shareNum shares''
+        pure $ fromMaybe mempty result
 
 totalShareSize :: MemoryBackend -> IO Size
 totalShareSize backend = do

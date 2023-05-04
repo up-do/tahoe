@@ -4,20 +4,24 @@ module TahoeLAFS.Storage.Server (
     main,
 ) where
 
-import Control.Monad.IO.Class (
-    liftIO,
- )
-
 import Control.Exception (
     Exception,
     throw,
  )
+import Control.Monad.IO.Class (
+    MonadIO,
+    liftIO,
+ )
+import Data.Maybe (fromMaybe)
 
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult (..),
+    CBORSet (..),
     CorruptionDetails,
+    LeaseSecret,
     Offset,
+    QueryRange,
     ReadResult,
     ReadTestWriteResult (..),
     ReadTestWriteVectors,
@@ -43,6 +47,7 @@ import Servant (
  )
 
 import Network.HTTP.Types (
+    ByteRange,
     ByteRanges,
  )
 
@@ -66,6 +71,9 @@ version :: Backend.Backend b => b -> Handler Version
 version backend =
     liftIO (Backend.version backend)
 
+renewLease :: (MonadIO m, Backend.Backend b) => b -> StorageIndex -> Maybe [LeaseSecret] -> m ()
+renewLease backend storageIndex secrets = liftIO (Backend.renewLease backend storageIndex (fromMaybe [] secrets))
+
 createImmutableStorageIndex :: Backend.Backend b => b -> StorageIndex -> AllocateBuckets -> Handler AllocationResult
 createImmutableStorageIndex backend storage_index params =
     liftIO (Backend.createImmutableStorageIndex backend storage_index params)
@@ -78,13 +86,15 @@ adviseCorruptImmutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNu
 adviseCorruptImmutableShare backend storage_index share_number details =
     liftIO (Backend.adviseCorruptImmutableShare backend storage_index share_number details)
 
-getImmutableShareNumbers :: Backend.Backend b => b -> StorageIndex -> Handler [ShareNumber]
+getImmutableShareNumbers :: Backend.Backend b => b -> StorageIndex -> Handler (CBORSet ShareNumber)
 getImmutableShareNumbers backend storage_index =
     liftIO (Backend.getImmutableShareNumbers backend storage_index)
 
-readImmutableShares :: Backend.Backend b => b -> StorageIndex -> [ShareNumber] -> [Offset] -> [Size] -> Handler ReadResult
-readImmutableShares backend storage_index share_numbers offsets sizes =
-    liftIO (Backend.readImmutableShares backend storage_index share_numbers offsets sizes)
+readImmutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> QueryRange -> Handler ShareData
+readImmutableShare backend storage_index share_number qr =
+    -- TODO Need to return NO CONTENT if the result is empty.
+    -- TODO Need to make sure content-range is set in the header otherwise
+    liftIO (Backend.readImmutableShare backend storage_index share_number qr)
 
 createMutableStorageIndex :: Backend.Backend b => b -> StorageIndex -> AllocateBuckets -> Handler AllocationResult
 createMutableStorageIndex backend storage_index params =
@@ -98,7 +108,7 @@ readMutableShares :: Backend.Backend b => b -> StorageIndex -> [ShareNumber] -> 
 readMutableShares backend storage_index share_numbers offsets sizes =
     liftIO (Backend.readMutableShares backend storage_index share_numbers offsets sizes)
 
-getMutableShareNumbers :: Backend.Backend b => b -> StorageIndex -> Handler [ShareNumber]
+getMutableShareNumbers :: Backend.Backend b => b -> StorageIndex -> Handler (CBORSet ShareNumber)
 getMutableShareNumbers backend storage_index =
     liftIO (Backend.getMutableShareNumbers backend storage_index)
 
@@ -125,12 +135,12 @@ app backend =
     storageServer :: Server StorageAPI
     storageServer =
         version backend
+            :<|> renewLease backend
             :<|> createImmutableStorageIndex backend
             :<|> writeImmutableShare backend
-            :<|> adviseCorruptImmutableShare backend
+            :<|> readImmutableShare backend
             :<|> getImmutableShareNumbers backend
-            :<|> readImmutableShares backend
-            :<|> createMutableStorageIndex backend
+            :<|> adviseCorruptImmutableShare backend
             :<|> readvAndTestvAndWritev backend
             :<|> readMutableShares backend
             :<|> getMutableShareNumbers backend

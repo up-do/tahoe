@@ -119,7 +119,33 @@ library
 --                      , tahoe-great-black-swamp
 --                      , text
 
-executable tahoe-great-black-swamp
+executable client-test
+  import:           common-opts
+  hs-source-dirs:   client-test
+  main-is:          Main.hs
+  default-language: Haskell2010
+  build-depends:
+    , aeson
+    , base
+    , base32
+    , base64
+    , bytestring
+    , cborg
+    , connection
+    , containers
+    , http-client
+    , http-client-tls
+    , http-types
+    , megaparsec
+    , network-uri
+    , serialise
+    , servant
+    , servant-client
+    , tahoe-chk
+    , tahoe-great-black-swamp
+    , text
+
+executable gbs-lafs-storage-server
   hs-source-dirs:   app
   main-is:          Main.hs
   default-language: Haskell2010
@@ -146,6 +172,7 @@ test-suite http-tests
   hs-source-dirs:   test
   main-is:          Main.hs
   other-modules:
+    CBORSpec
     HTTPSpec
     Lib
     MiscSpec
@@ -157,11 +184,14 @@ test-suite http-tests
   build-depends:
     , base
     , base32string
+    , cborg
     , hspec
     , hspec-expectations
     , hspec-wai
     , QuickCheck
     , quickcheck-instances
+    , serialise
+    , servant
     , tahoe-great-black-swamp
     , temporary
     , vector

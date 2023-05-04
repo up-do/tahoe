@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module TahoeLAFS.Internal.ServantUtil (
     CBOR,
@@ -30,29 +31,14 @@ import Servant (
     MimeUnrender (..),
  )
 
+import qualified Codec.Serialise as S
 import Data.Aeson (
     FromJSON (parseJSON),
     ToJSON (toJSON),
     withText,
  )
 import Data.Aeson.Types (
-    Parser,
-    Result (Error, Success),
     Value (String),
-    fromJSON,
- )
-
-import Codec.CBOR.Write (
-    toLazyByteString,
- )
-
-import Codec.CBOR.Read (
-    deserialiseFromBytes,
- )
-
-import Codec.CBOR.JSON (
-    decodeValue,
-    encodeValue,
  )
 
 data CBOR
@@ -61,18 +47,11 @@ instance Accept CBOR where
     -- https://tools.ietf.org/html/rfc7049#section-7.3
     contentType _ = "application" // "cbor"
 
-instance ToJSON a => MimeRender CBOR a where
-    mimeRender _ val = toLazyByteString $ encodeValue $ toJSON val
+instance S.Serialise a => MimeRender CBOR a where
+    mimeRender _ = S.serialise
 
-instance FromJSON a => MimeUnrender CBOR a where
-    mimeUnrender _ bytes =
-        case deserialiseFromBytes (decodeValue False) bytes of
-            Right ("", val) ->
-                case fromJSON val of
-                    Error s -> Left s
-                    Success x -> Right x
-            Right (extra, _) -> Left "extra bytes at tail"
-            Left err -> Left $ show err
+instance S.Serialise a => MimeUnrender CBOR a where
+    mimeUnrender _ bytes = Right $ S.deserialise bytes
 
 instance ToJSON ByteString where
     toJSON bs = String $ decodeUtf8 $ encode bs
