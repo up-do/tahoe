@@ -47,9 +47,6 @@ instance Accept CBOR where
     -- https://tools.ietf.org/html/rfc7049#section-7.3
     contentType _ = "application" // "cbor"
 
--- instance ToJSON a => MimeRender CBOR a where
---     mimeRender _ val = toLazyByteString $ encodeValue $ toJSON val
-
 instance S.Serialise a => MimeRender CBOR a where
     mimeRender _ = S.serialise
 
