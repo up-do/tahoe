@@ -46,24 +46,12 @@ module TahoeLAFS.Storage.API (
     CBORSet (..),
 ) where
 
+import Codec.CBOR.Encoding (encodeBytes)
 import Codec.Serialise.Class
+import Codec.Serialise.Decoding (decodeListLen)
 import qualified Codec.Serialise.Decoding as CSD
 import qualified Codec.Serialise.Encoding as CSE
 import Control.Monad
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Base64 as Base64
-import Data.Map.Strict (
-    Map,
- )
-import qualified Data.Set as Set
-import qualified Data.Text as T
-import Data.Text.Encoding (
-    decodeUtf8,
- )
-import Prelude hiding (
-    toInteger,
- )
-
 import Data.Aeson (
     FromJSON (..),
     FromJSONKey (..),
@@ -75,16 +63,30 @@ import Data.Aeson (
     genericParseJSON,
     genericToJSON,
  )
-
 import Data.Aeson.Types (
     Options,
     toJSONKeyText,
  )
-
+import Data.Bifunctor (Bifunctor (bimap))
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Base64 as Base64
+import qualified Data.Map as Map
+import Data.Map.Strict (
+    Map,
+ )
+import qualified Data.Set as Set
+import qualified Data.Text as T
+import Data.Text.Encoding (
+    decodeUtf8,
+ )
 import GHC.Generics (
     Generic,
  )
-
+import Network.HTTP.Types (
+    ByteRanges,
+    parseByteRanges,
+    renderByteRanges,
+ )
 import Servant (
     Capture,
     Get,
@@ -101,26 +103,18 @@ import Servant (
     (:<|>),
     (:>),
  )
+import TahoeLAFS.Internal.ServantUtil (
+    CBOR,
+ )
 import Text.Read (
     readMaybe,
  )
-
 import Web.HttpApiData (
     FromHttpApiData (..),
     ToHttpApiData (..),
  )
-
-import Network.HTTP.Types (
-    ByteRanges,
-    parseByteRanges,
-    renderByteRanges,
- )
-
-import Codec.CBOR.Encoding (encodeBytes)
-import Codec.Serialise.Decoding (decodeListLen, decodeMapLen)
-import Data.Bifunctor (Bifunctor (bimap))
-import TahoeLAFS.Internal.ServantUtil (
-    CBOR,
+import Prelude hiding (
+    toInteger,
  )
 
 type PutCreated = Verb 'PUT 201
