@@ -10,13 +10,8 @@
 -}
 module Main where
 
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
 import Data.ByteString.Base32 (encodeBase32Unpadded)
 import Data.ByteString.Base64 (encodeBase64)
-import qualified Data.ByteString.Lazy as BSL
-import qualified Data.Sequence.Internal.Sorting as APIs
-import qualified Data.Set as Set
 import Data.Text (pack, replace, toLower, unpack)
 import Data.Text.Encoding (encodeUtf8)
 import Network.Connection (TLSSettings (TLSSettingsSimple))
@@ -36,6 +31,8 @@ import Network.URI (
  )
 import Servant.Client (
     BaseUrl (BaseUrl),
+    ClientError,
+    ClientM,
     Scheme (Https),
     mkClientEnv,
     runClientM,
@@ -56,11 +53,10 @@ import Tahoe.CHK.Capability (
     pCapability,
     pReader,
  )
-import Tahoe.CHK.Share (getVersion)
 import TahoeLAFS.Storage.API (ShareNumber (..))
 import TahoeLAFS.Storage.Client (
     getImmutableShareNumbers,
-    readImmutableShares,
+    readImmutableShare,
     version,
  )
 import Text.Megaparsec (parse)
@@ -73,19 +69,24 @@ main = do
 
     run (Data.Text.unpack . Data.Text.toLower . encodeBase32Unpadded $ storageIndex) hostname (read port) swissnum (ShareNumber (read shareNumStr))
 
+-- Parse it like a regular URI after removing the confusing "tcp:" prefix on
+-- the netloc.
 parseFURL :: String -> Maybe URI
 parseFURL = parseURI . Data.Text.unpack . Data.Text.replace "tcp:" "" . Data.Text.pack
 
+-- Add the necessary authorization header.
 fixAccept :: Applicative f => String -> Request -> f Request
 fixAccept swissnum req =
     pure req{requestHeaders = ("Authorization", "Tahoe-LAFS " <> enc swissnum) : requestHeaders req}
   where
     enc = encodeUtf8 . encodeBase64 . encodeUtf8 . Data.Text.pack
 
+fixAcceptPrint :: String -> Request -> IO Request
 fixAcceptPrint swissnum req = do
     print req
     fixAccept swissnum req
 
+-- Do some API calls and report the results.
 run ::
     -- | The base32-encoded storage index for which to request share info.
     String ->
@@ -99,11 +100,8 @@ run ::
     ShareNumber ->
     IO ()
 run storageIndex hostname port swissnum shareNum = do
-    let tlsSettings = TLSSettingsSimple True True True
-        sockSettings = Nothing
-        managerSettings = (mkManagerSettings tlsSettings sockSettings){managerModifyRequest = fixAccept swissnum}
     manager' <- newTlsManagerWith managerSettings
-    let manager'' = manager'
+    let callIt :: ClientM a -> IO (Either ClientError a)
         callIt = flip runClientM (mkClientEnv manager' (BaseUrl Https hostname port ""))
 
     putStrLn "getVersion"
@@ -112,11 +110,13 @@ run storageIndex hostname port swissnum shareNum = do
     putStrLn "getImmutableShareNumbers:"
     sharez <- callIt $ getImmutableShareNumbers storageIndex
     showIt sharez
-    putStrLn "readImmutableShares - succeeds!"
-    chk <- callIt $ readImmutableShares storageIndex shareNum Nothing
+    putStrLn "readImmutableShare - succeeds!"
+    chk <- callIt $ readImmutableShare storageIndex shareNum Nothing
     showIt chk
-
-flomp bip = dangerRealShow . CHKVerifier . verifier <$> parse pReader "" bip
+  where
+    tlsSettings = TLSSettingsSimple True True True
+    sockSettings = Nothing
+    managerSettings = (mkManagerSettings tlsSettings sockSettings){managerModifyRequest = fixAccept swissnum}
 
 showIt :: (Show a1, Show a2) => Either a1 a2 -> IO ()
 showIt what = case what of
