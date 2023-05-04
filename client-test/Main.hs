@@ -39,7 +39,7 @@ import Servant.Client (
  )
 import System.Environment (getArgs)
 import Tahoe.CHK.Capability (
-    CHK (CHKReader, CHKVerifier),
+    CHK (CHKReader),
     Reader (Reader, verifier),
     Verifier (
         Verifier,
@@ -49,9 +49,7 @@ import Tahoe.CHK.Capability (
         storageIndex,
         total
     ),
-    dangerRealShow,
     pCapability,
-    pReader,
  )
 import TahoeLAFS.Storage.API (ShareNumber (..))
 import TahoeLAFS.Storage.Client (
@@ -64,7 +62,7 @@ import Text.Megaparsec (parse)
 main :: IO ()
 main = do
     [storageFURLStr, capStr, shareNumStr] <- getArgs
-    let Right (CHKReader cap@Reader{verifier = Verifier{..}}) = parse pCapability "argv[2]" (Data.Text.pack capStr)
+    let Right (CHKReader Reader{verifier = Verifier{..}}) = parse pCapability "argv[2]" (Data.Text.pack capStr)
         Just URI{uriAuthority = Just URIAuth{uriRegName = hostname, uriPort = (':' : port)}, uriPath = ('/' : swissnum)} = parseFURL storageFURLStr
 
     run (Data.Text.unpack . Data.Text.toLower . encodeBase32Unpadded $ storageIndex) hostname (read port) swissnum (ShareNumber (read shareNumStr))
