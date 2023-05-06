@@ -14,14 +14,10 @@ import Network.HTTP.Media (
 import Data.ByteString (
     ByteString,
  )
-
-import Data.ByteString.Base64 (
-    decode,
-    encode,
- )
-
+import qualified Data.ByteString.Base64 as Base64
+import qualified Data.Text as T
 import Data.Text.Encoding (
-    decodeUtf8,
+    decodeLatin1,
     encodeUtf8,
  )
 
@@ -54,14 +50,14 @@ instance S.Serialise a => MimeUnrender CBOR a where
     mimeUnrender _ bytes = Right $ S.deserialise bytes
 
 instance ToJSON ByteString where
-    toJSON bs = String $ decodeUtf8 $ encode bs
+    toJSON = String . decodeLatin1 . Base64.encode
 
 instance FromJSON ByteString where
     parseJSON =
         withText
             "String"
             ( \bs ->
-                case decode $ encodeUtf8 bs of
-                    Left err -> fail ("Base64 decoding failed: " ++ err)
+                case Base64.decode $ encodeUtf8 bs of
+                    Left err -> fail ("Base64 decoding failed: " <> err)
                     Right bytes -> return bytes
             )

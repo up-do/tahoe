@@ -77,7 +77,7 @@ import Data.Map.Strict (
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Text.Encoding (
-    decodeUtf8,
+    decodeUtf8',
  )
 import GHC.Generics (
     Generic,
@@ -212,7 +212,10 @@ instance FromHttpApiData ShareNumber where
                 Nothing -> Left "number out of bounds"
                 Just s -> Right s
     parseQueryParam = parseUrlPiece
-    parseHeader = parseUrlPiece . decodeUtf8
+    parseHeader bs =
+        case parseUrlPiece <$> decodeUtf8' bs of
+            Left err -> fail $ "FromHttpApiData ShareNumber instance failed to decode number from header: " <> show err
+            Right sn -> sn
 
 instance ToJSONKey ShareNumber where
     toJSONKey = toJSONKeyText (T.pack . show)

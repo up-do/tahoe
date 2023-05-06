@@ -128,7 +128,7 @@ executable client-test
     , aeson
     , base
     , base32
-    , base64
+    , base64-bytestring
     , bytestring
     , cborg
     , connection

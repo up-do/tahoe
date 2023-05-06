@@ -11,7 +11,7 @@
 module Main where
 
 import Data.ByteString.Base32 (encodeBase32Unpadded)
-import Data.ByteString.Base64 (encodeBase64)
+import qualified Data.ByteString.Base64 as Base64
 import Data.Text (pack, replace, toLower, unpack)
 import Data.Text.Encoding (encodeUtf8)
 import Network.Connection (TLSSettings (TLSSettingsSimple))
@@ -77,7 +77,7 @@ fixAccept :: Applicative f => String -> Request -> f Request
 fixAccept swissnum req =
     pure req{requestHeaders = ("Authorization", "Tahoe-LAFS " <> enc swissnum) : requestHeaders req}
   where
-    enc = encodeUtf8 . encodeBase64 . encodeUtf8 . Data.Text.pack
+    enc = Base64.encode . encodeUtf8 . Data.Text.pack
 
 fixAcceptPrint :: String -> Request -> IO Request
 fixAcceptPrint swissnum req = do
