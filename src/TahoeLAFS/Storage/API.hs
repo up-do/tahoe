@@ -214,7 +214,12 @@ instance FromHttpApiData ShareNumber where
     parseQueryParam = parseUrlPiece
     parseHeader bs =
         case parseUrlPiece <$> decodeUtf8' bs of
-            Left err -> fail $ "FromHttpApiData ShareNumber instance failed to decode number from header: " <> show err
+            Left err ->
+                Left $
+                    T.concat
+                        [ "FromHttpApiData ShareNumber instance failed to decode number from header: "
+                        , T.pack . show $ err
+                        ]
             Right sn -> sn
 
 instance ToJSONKey ShareNumber where
