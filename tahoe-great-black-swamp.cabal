@@ -1,6 +1,6 @@
 cabal-version:      2.4
 name:               tahoe-great-black-swamp
-version:            0.2.0.1
+version:            0.2.0.2
 build-type:         Simple
 synopsis:           An implementation of the "Great Black Swamp" LAFS protocol.
 description:
@@ -27,7 +27,9 @@ category:
   , Storage
   , Web
 
-extra-source-files: README.rst
+extra-source-files:
+  ChangeLog.md
+  README.rst
 
 common executable-opts
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
