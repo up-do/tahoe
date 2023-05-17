@@ -11,9 +11,12 @@
 module Main where
 
 import Data.ByteString.Base32 (encodeBase32Unpadded)
+
 import qualified Data.ByteString.Base64 as Base64
-import Data.Text (pack, replace, toLower, unpack)
+
+import Data.Text
 import Data.Text.Encoding (encodeUtf8)
+
 import Network.Connection (TLSSettings (TLSSettingsSimple))
 import Network.HTTP.Client (
     ManagerSettings (managerModifyRequest),
@@ -51,13 +54,10 @@ import Tahoe.CHK.Capability (
     ),
     pCapability,
  )
-import TahoeLAFS.Storage.API (ShareNumber (..))
-import TahoeLAFS.Storage.Client (
-    getImmutableShareNumbers,
-    readImmutableShare,
-    version,
- )
-import Text.Megaparsec (parse)
+import TahoeLAFS.Storage.Client
+import Text.Megaparsec
+
+import TahoeLAFS.Storage.API
 
 main :: IO ()
 main = do
@@ -102,15 +102,19 @@ run storageIndex hostname port swissnum shareNum = do
     let callIt :: ClientM a -> IO (Either ClientError a)
         callIt = flip runClientM (mkClientEnv manager' (BaseUrl Https hostname port ""))
 
-    putStrLn "getVersion"
-    ver <- callIt version
-    showIt ver
-    putStrLn "getImmutableShareNumbers:"
-    sharez <- callIt $ getImmutableShareNumbers storageIndex
-    showIt sharez
-    putStrLn "readImmutableShare - succeeds!"
-    chk <- callIt $ readImmutableShare storageIndex shareNum Nothing
-    showIt chk
+    -- putStrLn "getVersion"
+    -- ver <- callIt version
+    -- showIt ver
+    -- putStrLn "getImmutableShareNumbers:"
+    -- sharez <- callIt $ getImmutableShareNumbers storageIndex
+    -- showIt sharez
+    -- putStrLn "readImmutableShare - succeeds!"
+    -- chk <- callIt $ readImmutableShare storageIndex shareNum Nothing
+    -- showIt chk
+    isn <- callIt $ getMutableShareNumbers "ff6cuc3yntepkdpc3shzovnz7m"
+    showIt isn
+    ms <- callIt $ readMutableShares "kfkcceylmhherd4sp4xlxdkyt4" (ShareNumber 0) Nothing
+    showIt ms
   where
     tlsSettings = TLSSettingsSimple True True True
     sockSettings = Nothing
