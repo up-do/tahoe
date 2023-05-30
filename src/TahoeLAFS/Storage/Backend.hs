@@ -62,7 +62,7 @@ class Backend b where
 
     createMutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
     readvAndTestvAndWritev :: b -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
-    readMutableShares :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readMutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     getMutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     adviseCorruptMutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
 

@@ -104,9 +104,9 @@ readvAndTestvAndWritev :: Backend.Backend b => b -> StorageIndex -> ReadTestWrit
 readvAndTestvAndWritev backend storage_index vectors =
     liftIO (Backend.readvAndTestvAndWritev backend storage_index vectors)
 
-readMutableShares :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> QueryRange -> Handler ShareData
-readMutableShares backend storage_index share_numbers params =
-    liftIO (Backend.readMutableShares backend storage_index share_numbers params)
+readMutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> QueryRange -> Handler ShareData
+readMutableShare backend storage_index share_numbers params =
+    liftIO (Backend.readMutableShare backend storage_index share_numbers params)
 
 getMutableShareNumbers :: Backend.Backend b => b -> StorageIndex -> Handler (CBORSet ShareNumber)
 getMutableShareNumbers backend storage_index =
@@ -142,7 +142,7 @@ app backend =
             :<|> getImmutableShareNumbers backend
             :<|> adviseCorruptImmutableShare backend
             :<|> readvAndTestvAndWritev backend
-            :<|> readMutableShares backend
+            :<|> readMutableShare backend
             :<|> getMutableShareNumbers backend
             :<|> adviseCorruptMutableShare backend
 
