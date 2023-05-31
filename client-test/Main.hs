@@ -11,9 +11,12 @@
 module Main where
 
 import Data.ByteString.Base32 (encodeBase32Unpadded)
+
 import qualified Data.ByteString.Base64 as Base64
-import Data.Text (pack, replace, toLower, unpack)
+
+import Data.Text
 import Data.Text.Encoding (encodeUtf8)
+
 import Network.Connection (TLSSettings (TLSSettingsSimple))
 import Network.HTTP.Client (
     ManagerSettings (managerModifyRequest),
@@ -51,13 +54,10 @@ import Tahoe.CHK.Capability (
     ),
     pCapability,
  )
-import TahoeLAFS.Storage.API (ShareNumber (..))
-import TahoeLAFS.Storage.Client (
-    getImmutableShareNumbers,
-    readImmutableShare,
-    version,
- )
-import Text.Megaparsec (parse)
+import TahoeLAFS.Storage.Client
+import Text.Megaparsec
+
+import TahoeLAFS.Storage.API
 
 main :: IO ()
 main = do

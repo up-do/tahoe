@@ -488,9 +488,9 @@ type ReadImmutableShareData = "immutable" :> Capture "storage_index" StorageInde
 -- General purpose read-test-and-write operation.
 type ReadTestWrite = "mutable" :> Capture "storage_index" StorageIndex :> "read-test-write" :> ReqBody '[CBOR, JSON] ReadTestWriteVectors :> Post '[CBOR, JSON] ReadTestWriteResult
 
--- GET /v1/mutable/:storage_index
+-- GET /v1/mutable/:storage_index/:share_number
 -- Read from a mutable storage index
-type ReadMutableShareData = "mutable" :> Capture "storage_index" StorageIndex :> QueryParams "share_number" ShareNumber :> QueryParams "offset" Offset :> QueryParams "size" Size :> Get '[CBOR, JSON] ReadResult
+type ReadMutableShareData = "mutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Header "Content-Range" ByteRanges :> Get '[OctetStream, JSON] ShareData
 
 type StorageAPI =
     "storage"
