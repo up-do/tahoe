@@ -1,5 +1,10 @@
 # Changelog for tahoe-great-black-swamp
 
+## 0.3.0.0
+
+* Support for ``GET /storage/v1/mutable/:storage-index/shares`` to list *mutable* shares on a server.
+* Support for ``GET /storage/v1/mutable/:storage-index/:share-number`` to read *mutable* share bytes from a server.
+
 ## 0.2.0.2
 
 * Initial release.
