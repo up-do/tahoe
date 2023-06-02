@@ -1,0 +1,44 @@
+# Use a template that makes pipelines run for the default branch, tags, and
+# all types of merge request pipelines.
+include:
+  - template: 'Workflows/MergeRequest-Pipelines.gitlab-ci.yml'
+
+# The jobs all use the `nix` CLI so make sure we have it.
+image: "nixos/nix:2.13.2"
+
+default:
+  # Choose a native Nix runner and we can use the local system's Nix store as
+  # our Nix cache.
+  tags:
+    - "nix"
+
+variables:
+  # Pick a nixpkgs to get cachix and bash from.  Nothing else
+  # Turn on some `nix` CLI features that aren't on by default.
+  NIX_CONFIG: "experimental-features = nix-command flakes"
+
+# Run the standard Haskell linter over the library and test suite sources.
+hlint:
+  script: >-
+    nix run .#hlint -- src/ test/
+
+# Use cabal to build the library and test suite and then run the test suite.
+cabal-build-and-test:
+  script:
+    - |
+      nix run .#cabal-test
+
+# Use nix to build the library and test suite and run the test suite.
+nix-build-and-test:
+  script: >-
+    nix build
+
+# Force a build of the dev shell dependencies so we know they still work.
+# Also, this populates the cache with the results which is a big win for every
+# developer using our cache.
+#
+# We only have an x86_64-linux builder so we can't build the aarch64-darwin
+# shell.  Sorry...
+nix-develop:
+  script: >-
+    nix build .#devShells.x86_64-linux.default
