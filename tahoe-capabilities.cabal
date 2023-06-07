@@ -64,7 +64,9 @@ library
   import:           warnings
 
   -- Modules exported by the library.
-  exposed-modules:  Tahoe.Capability
+  exposed-modules:
+    Tahoe.Capability
+    Tahoe.Capability.Internal.Confidential
 
   -- Modules included in this library but not exported.
   -- other-modules:
@@ -73,7 +75,9 @@ library
   -- other-extensions:
 
   -- Other library packages from which modules are imported.
-  build-depends:    base ^>=4.14.3.0
+  build-depends:
+    , base
+    , text
 
   -- Directories containing source files.
   hs-source-dirs:   src
@@ -105,5 +109,5 @@ test-suite tahoe-capabilities-test
 
   -- Test dependencies.
   build-depends:
-    , base                ^>=4.14.3.0
+    , base
     , tahoe-capabilities
