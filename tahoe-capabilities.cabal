@@ -36,6 +36,9 @@ description:
 homepage:
   https://whetstone.private.storage/PrivateStorage/tahoe-capabilities
 
+bug-reports:
+  https://whetstone.private.storage/PrivateStorage/tahoe-capabilities/-/issues
+
 -- The license under which the package is released.
 license:         LGPL-3.0-or-later
 
