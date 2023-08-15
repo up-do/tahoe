@@ -31,7 +31,7 @@ version:         0.1.0.0
 
 -- URL for the project homepage or repository.
 homepage:
-  https://whetstone.private/storage/PrivateStorage/tahoe-capabilities
+  https://whetstone.private.storage/PrivateStorage/tahoe-capabilities
 
 -- The license under which the package is released.
 license:         LGPL-3.0-or-later
