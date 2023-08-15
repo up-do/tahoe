@@ -43,7 +43,7 @@ license-file:    LICENSE
 author:          Jean-Paul Calderone
 
 -- An email address to which users can send suggestions, bug reports, and patches.
-maintainer:      jean-paul@private.storage
+maintainer:      exarkun@twistedmatrix.com
 
 -- A copyright notice.
 -- copyright:
