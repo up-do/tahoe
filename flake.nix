@@ -42,12 +42,30 @@
             runtimeInputs = with pkgs; [pkg-config haskell.compiler.${ghcVersion} cabal-install];
 
             text = ''
+              set -ex
               cabal update hackage.haskell.org
-              cabal build all
-              cabal run tests
+              cabal build --enable-tests
+              runtests=$(cabal list-bin --enable-tests tahoe-capabilities-test)
+              eval "$runtests"
             '';
           }
         }/bin/cabal-build-and-test";
+      };
+      apps.release = {
+        type = "app";
+        program = "${
+          pkgs.writeShellApplication {
+            name = "release";
+            runtimeInputs = with pkgs; [cabal-install];
+            text = ''
+              set -x
+              sdist=$(cabal sdist | tail -n 1)
+              haddocks=$(cabal haddock --haddock-for-hackage | tail -n 1)
+              cabal upload "$sdist"
+              cabal upload --documentation "$haddocks"
+            '';
+          }
+        }/bin/release";
       };
     });
 }
