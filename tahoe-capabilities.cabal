@@ -52,7 +52,7 @@ author:          Jean-Paul Calderone
 maintainer:      exarkun@twistedmatrix.com
 
 -- A copyright notice.
--- copyright:
+copyright:       2023 The Authors
 category:        Codec
 build-type:      Simple
 
