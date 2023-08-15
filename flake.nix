@@ -51,5 +51,21 @@
           }
         }/bin/cabal-build-and-test";
       };
+      apps.release = {
+        type = "app";
+        program = "${
+          pkgs.writeShellApplication {
+            name = "release";
+            runtimeInputs = with pkgs; [cabal-install];
+            text = ''
+              set -x
+              sdist=$(cabal sdist | tail -n 1)
+              haddocks=$(cabal haddock --haddock-for-hackage | tail -n 1)
+              cabal upload "$sdist"
+              cabal upload --documentation "$haddocks"
+            '';
+          }
+        }/bin/release";
+      };
     });
 }
