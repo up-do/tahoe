@@ -42,9 +42,11 @@
             runtimeInputs = with pkgs; [pkg-config haskell.compiler.${ghcVersion} cabal-install];
 
             text = ''
+              set -ex
               cabal update hackage.haskell.org
-              cabal build all
-              cabal run tests
+              cabal build --enable-tests
+              runtests=$(cabal list-bin --enable-tests tahoe-capabilities-test)
+              eval "$runtests"
             '';
           }
         }/bin/cabal-build-and-test";
