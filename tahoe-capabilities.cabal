@@ -24,10 +24,13 @@ name:            tahoe-capabilities
 version:         0.1.0.0
 
 -- A short (one-line) description of the package.
--- synopsis:
+synopsis:        Abstractions related to Tahoe-LAFS "capabilities".
 
 -- A longer description of the package.
--- description:
+description:
+  Tahoe-LAFS LIT, CHK, SDMF, and MDMF capabilities offer varying functionality
+  for interacting with encrypted data.  This library provides abstractions for
+  functionality common to all of these capability types.
 
 -- URL for the project homepage or repository.
 homepage:
