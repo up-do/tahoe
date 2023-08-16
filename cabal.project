@@ -1,5 +1,1 @@
 packages: .
-          -- These aren't released on hackage yet so we have to grab them
-          -- straight from the vcs host.  Probably should do some releases
-          -- soon.
-          https://whetstone.private.storage/privatestorage/tahoe-chk/-/archive/0.1.0.0/tahoe-chk-0.1.0.0.tar.gz
