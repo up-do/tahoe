@@ -8,17 +8,6 @@ description:
   Authority File Store protocol from the Tahoe-LAFS project.  It also includes
   pieces of a storage server and client implementation based on that protocol.
 
-homepage:
-  https://whetstone.private.storage/PrivateStorage/tahoe-great-black-swamp
-
-bug-reports:
-  https://whetstone.private.storage/privatestorage/tahoe-great-black-swamp/-/issues
-
-source-repository head
-  type:     git
-  location:
-    gitlab@whetstone.private.storage:privatestorage/tahoe-great-black-swamp.git
-
 license:            BSD-3-Clause
 license-file:       LICENSE
 author:             Jean-Paul Calderone and others
@@ -38,6 +27,17 @@ category:
 extra-source-files:
   ChangeLog.md
   README.rst
+
+homepage:
+  https://whetstone.private.storage/PrivateStorage/tahoe-great-black-swamp
+
+bug-reports:
+  https://whetstone.private.storage/privatestorage/tahoe-great-black-swamp/-/issues
+
+source-repository head
+  type:     git
+  location:
+    gitlab@whetstone.private.storage:privatestorage/tahoe-great-black-swamp.git
 
 common executable-opts
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
