@@ -1,5 +1,9 @@
 # Changelog for tahoe-great-black-swamp
 
+## 0.3.0.1
+
+* Package metadata improvements.
+
 ## 0.3.0.0
 
 * Support for ``GET /storage/v1/mutable/:storage-index/shares`` to list *mutable* shares on a server.
