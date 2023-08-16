@@ -13,9 +13,9 @@ homepage:
 
 license:            BSD-3-Clause
 license-file:       LICENSE
-author:             Least Authority TFA GmbH
-maintainer:         jean-paul@leastauthority.com
-copyright:          © 2023 Least Authority TFA GmbH
+author:             Jean-Paul Calderone and others
+maintainer:         exarkun@twistedmatrix.com
+copyright:          2018-2023 The Authors
 category:
   Cryptography
   , Distributed Computing
