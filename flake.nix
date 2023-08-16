@@ -54,5 +54,9 @@
           ];
       };
       packages = hslib.packages {};
+      apps = {
+        cabal-test = hslib.apps.cabal-test {};
+        release = hslib.apps.release {};
+      };
     });
 }
