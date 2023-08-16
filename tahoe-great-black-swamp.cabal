@@ -11,6 +11,14 @@ description:
 homepage:
   https://whetstone.private.storage/PrivateStorage/tahoe-great-black-swamp
 
+bug-reports:
+  https://whetstone.private.storage/privatestorage/tahoe-great-black-swamp/-/issues
+
+source-repository head
+  type:     git
+  location:
+    gitlab@whetstone.private.storage:privatestorage/tahoe-great-black-swamp.git
+
 license:            BSD-3-Clause
 license-file:       LICENSE
 author:             Jean-Paul Calderone and others
