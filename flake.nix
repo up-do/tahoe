@@ -57,6 +57,7 @@
       apps = {
         cabal-test = hslib.apps.cabal-test {};
         release = hslib.apps.release {};
+        hlint = hslib.apps.hlint {};
       };
     });
 }
