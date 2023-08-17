@@ -51,12 +51,12 @@ spec :: Spec
 spec = do
     describe "partitionM" $
         it "handles empty lists" $
-            partitionM (\e -> return True) ([] :: [(Integer, Integer)]) `shouldBe` (Just ([], []))
+            partitionM (\e -> return True) ([] :: [(Integer, Integer)]) `shouldBe` Just ([], [])
 
     describe "partitionM" $
         it "puts matching elements in the first list and non-matching in the second" $
-            partitionM (\e -> return $ (e `mod` 2) == 0) [5, 5, 6, 7, 8, 8]
-                `shouldBe` (Just ([6, 8, 8], [5, 5, 7]))
+            partitionM (return . even) [5, 5, 6, 7, 8, 8]
+                `shouldBe` Just ([6, 8, 8], [5, 5, 7])
 
     describe "storageStartSegment" $
         it "returns a string of length 2" $
@@ -70,7 +70,7 @@ spec = do
                     genStorageIndex
                     ( \storageIndex shareNumber ->
                         pathOfShare "/foo" storageIndex shareNumber
-                            `shouldBe` (printf "/foo/shares/%s/%s/%d" (take 2 storageIndex) storageIndex (toInteger shareNumber))
+                            `shouldBe` printf "/foo/shares/%s/%s/%d" (take 2 storageIndex) storageIndex (toInteger shareNumber)
                     )
 
     describe "incomingPathOf" $
@@ -80,7 +80,7 @@ spec = do
                     genStorageIndex
                     ( \storageIndex shareNumber ->
                         incomingPathOf "/foo" storageIndex shareNumber
-                            `shouldBe` (printf "/foo/shares/incoming/%s/%s/%d" (take 2 storageIndex) storageIndex (toInteger shareNumber))
+                            `shouldBe` printf "/foo/shares/incoming/%s/%s/%d" (take 2 storageIndex) storageIndex (toInteger shareNumber)
                     )
 
     describe "incomingPathOf vs pathOfShare" $
@@ -102,7 +102,7 @@ spec = do
     describe "base32 alphabet" $
         it "encodes using only the base32 alphabet" $
             property $
-                \bs -> b32encode bs `shouldSatisfy` (onlyContains "abcdefghijklmnopqrstuvwxyz234567")
+                \bs -> b32encode bs `shouldSatisfy` onlyContains "abcdefghijklmnopqrstuvwxyz234567"
 
     describe "size ratio" $
         it "encodes to a string no more than twice the length" $
@@ -111,5 +111,4 @@ spec = do
 
 -- Does the second list contain only elements of the first list?
 onlyContains :: (Eq a) => [a] -> [a] -> Bool
-onlyContains xs [] = True
-onlyContains xs (y : ys) = y `elem` xs && onlyContains xs ys
+onlyContains xs = foldr (\y -> (&&) (y `elem` xs)) True
