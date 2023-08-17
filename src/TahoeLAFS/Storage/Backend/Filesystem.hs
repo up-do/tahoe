@@ -86,7 +86,7 @@ import TahoeLAFS.Storage.Backend (
     ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten),
  )
 
-data FilesystemBackend = FilesystemBackend FilePath
+newtype FilesystemBackend = FilesystemBackend FilePath
     deriving (Show)
 
 versionString :: Storage.ApplicationVersion
@@ -94,7 +94,7 @@ versionString = "tahoe-lafs (gbs) 0.1.0"
 
 -- Copied from the Python implementation.  Kind of arbitrary.
 maxMutableShareSize :: Storage.Size
-maxMutableShareSize = 69105 * 1000 * 1000 * 1000 * 1000
+maxMutableShareSize = 69_105 * 1_000 * 1_000 * 1_000 * 1_000
 
 --  storage/
 --  storage/shares/incoming

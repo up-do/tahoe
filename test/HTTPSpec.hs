@@ -79,12 +79,11 @@ getJSON path =
         ""
 
 -- postJSON :: ByteString -> L.ByteString -> WaiSession st SResponse
-postJSON path body =
+postJSON path =
     request
         methodPost
         path
         [("Content-Type", "application/json"), ("Accept", "application/json")]
-        body
 
 -- putShare :: ByteString -> Int64 -> WaiSession st SResponse
 putShare path size =
