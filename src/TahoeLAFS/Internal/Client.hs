@@ -28,7 +28,7 @@ mkGBSManagerSettings ::
     ManagerSettings
 mkGBSManagerSettings swissnum =
     (mkManagerSettings gbsTLSSettings sockSettings)
-        { managerModifyRequest = addAuthorization swissnum
+        { managerModifyRequest = addAuthorizationPrint swissnum
         }
   where
     sockSettings = Nothing
