@@ -192,15 +192,20 @@ test-suite http-tests
     , base                     >=4.7      && <5
     , base32string             >=0.9.1    && <0.10
     , cborg                    >=0.2.4    && <0.3
+    , connection
+    , data-default-class
     , hspec                    <2.12
     , hspec-expectations       <0.9
     , hspec-wai                <0.12
     , http-client              >=0.6.4.1  && <0.8
+    , network
     , QuickCheck               <2.15
     , quickcheck-instances     <0.4
     , serialise                >=0.2.3    && <0.3
     , servant                  >=0.16.2   && <0.21
     , tahoe-great-black-swamp
     , temporary                >=1.3      && <1.4
+    , tls
     , vector                   >=0.12.1.2 && <0.13
     , wai-extra                >=3.0.29.2 && <3.2
+    , x509
