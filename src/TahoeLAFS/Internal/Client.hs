@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 {- | Implement the correct HTTPS client configuration for using Great Black
  Swamp.  This is necessary and correct for authenticating Great Black
  Swamp's self-authenticating URLs.
@@ -5,11 +7,14 @@
 module TahoeLAFS.Internal.Client where
 
 import qualified Data.ByteString.Base64 as Base64
+
+-- import qualified Data.CaseInsensitive as CI
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Network.Connection (TLSSettings (..))
 import Network.HTTP.Client (ManagerSettings, Request (requestHeaders), managerModifyRequest)
 import Network.HTTP.Client.TLS (mkManagerSettings)
+import Network.HTTP.Types (Header)
 
 -- import qualified Network.HTTP.Client.TLS as TLS
 
@@ -34,14 +39,33 @@ mkGBSManagerSettings swissnum =
 gbsTLSSettings :: TLSSettings
 gbsTLSSettings = TLSSettingsSimple True True True
 
--- Add the necessary authorization header.
+-- Add the necessary authorization header.  Since this is used with
+-- `managerModifyRequest`, it may be called more than once per request so it
+-- needs to take care not to double up headers.
+-- https://github.com/snoyberg/http-client/issues/350
 fixAccept :: Applicative f => T.Text -> Request -> f Request
 fixAccept swissnum req =
-    pure req{requestHeaders = ("Authorization", "Tahoe-LAFS " <> enc swissnum) : requestHeaders req}
+    pure
+        req
+            { requestHeaders = addHeader authz . requestHeaders $ req
+            }
   where
     enc = Base64.encode . T.encodeUtf8
+    authz = ("Authorization", "Tahoe-LAFS " <> enc swissnum)
+
+    addHeader :: Header -> [Header] -> [Header]
+    addHeader (name, value) [] = [(name, value)]
+    addHeader (name, value) (o@(name', value') : xs)
+        | name == name' = (o : xs)
+        | otherwise = o : addHeader (name, value) xs
 
 fixAcceptPrint :: T.Text -> Request -> IO Request
 fixAcceptPrint swissnum req = do
+    print "Before"
     print req
-    fixAccept swissnum req
+    print "--------"
+    r <- fixAccept swissnum req
+    print "After"
+    print r
+    print "--------"
+    pure r

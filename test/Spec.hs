@@ -3,6 +3,7 @@ module Spec where
 import Test.Hspec
 
 import qualified CBORSpec as C
+import qualified ClientSpec as Client
 import qualified HTTPSpec as H
 import qualified MiscSpec as M
 import qualified SemanticSpec as S
@@ -13,3 +14,4 @@ spec = parallel $ do
     describe "Misc" M.spec
     describe "Semantic" S.spec
     describe "CBOR" C.spec
+    describe "Client" Client.spec

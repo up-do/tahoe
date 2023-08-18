@@ -179,6 +179,7 @@ test-suite http-tests
   main-is:          Main.hs
   other-modules:
     CBORSpec
+    ClientSpec
     HTTPSpec
     Lib
     MiscSpec
@@ -194,6 +195,7 @@ test-suite http-tests
     , hspec                    <2.12
     , hspec-expectations       <0.9
     , hspec-wai                <0.12
+    , http-client              >=0.6.4.1  && <0.8
     , QuickCheck               <2.15
     , quickcheck-instances     <0.4
     , serialise                >=0.2.3    && <0.3
