@@ -28,7 +28,7 @@ mkGBSManagerSettings ::
     ManagerSettings
 mkGBSManagerSettings swissnum =
     (mkManagerSettings gbsTLSSettings sockSettings)
-        { managerModifyRequest = fixAccept swissnum
+        { managerModifyRequest = addAuthorization swissnum
         }
   where
     sockSettings = Nothing
@@ -43,8 +43,8 @@ gbsTLSSettings = TLSSettingsSimple True True True
 -- `managerModifyRequest`, it may be called more than once per request so it
 -- needs to take care not to double up headers.
 -- https://github.com/snoyberg/http-client/issues/350
-fixAccept :: Applicative f => T.Text -> Request -> f Request
-fixAccept swissnum req =
+addAuthorization :: Applicative f => T.Text -> Request -> f Request
+addAuthorization swissnum req =
     pure
         req
             { requestHeaders = addHeader authz . requestHeaders $ req
@@ -59,12 +59,12 @@ fixAccept swissnum req =
         | name == name' = (o : xs)
         | otherwise = o : addHeader (name, value) xs
 
-fixAcceptPrint :: T.Text -> Request -> IO Request
-fixAcceptPrint swissnum req = do
+addAuthorizationPrint :: T.Text -> Request -> IO Request
+addAuthorizationPrint swissnum req = do
     print "Before"
     print req
     print "--------"
-    r <- fixAccept swissnum req
+    r <- addAuthorization swissnum req
     print "After"
     print r
     print "--------"
