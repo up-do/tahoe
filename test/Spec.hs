@@ -8,8 +8,8 @@ import qualified MiscSpec as M
 import qualified SemanticSpec as S
 
 spec :: Spec
-spec = do
-    parallel $ describe "HTTP" H.spec
-    parallel $ describe "Misc" M.spec
-    parallel $ describe "Semantic" S.spec
-    parallel $ describe "CBOR" C.spec
+spec = parallel $ do
+    describe "HTTP" H.spec
+    describe "Misc" M.spec
+    describe "Semantic" S.spec
+    describe "CBOR" C.spec
