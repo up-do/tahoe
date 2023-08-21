@@ -8,27 +8,41 @@ module TahoeLAFS.Internal.Client where
 
 import qualified Data.ByteString.Base64 as Base64
 
--- import qualified Data.CaseInsensitive as CI
+import Crypto.Hash (Digest, hash)
+import Crypto.Hash.Algorithms (SHA256)
+import Data.ASN1.BinaryEncoding (DER (DER))
+import Data.ASN1.Encoding (encodeASN1')
+import Data.ASN1.Types (ASN1Object (fromASN1, toASN1))
+import Data.ByteArray (convert)
+import qualified Data.ByteString as B
+import Data.Default.Class (Default (def))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Data.X509 (Certificate (Certificate, certPubKey, certSignatureAlg), CertificateChain (CertificateChain), SignatureALG, Signed (signedObject), SignedExact (getSigned))
+import Data.X509.CertificateStore (CertificateStore)
+import Data.X509.Validation (FailedReason (AuthorityTooDeep, EmptyChain, InvalidSignature), ServiceID, SignatureFailure (SignaturePubkeyMismatch), SignatureVerification (SignatureFailed, SignaturePass), verifySignedSignature)
 import Network.Connection (TLSSettings (..))
 import Network.HTTP.Client (ManagerSettings, Request (requestHeaders), managerModifyRequest)
 import Network.HTTP.Client.TLS (mkManagerSettings)
 import Network.HTTP.Types (Header)
+import Network.TLS (ClientHooks (onServerCertificate), ClientParams (..), Supported (..), ValidationCache)
+import Network.TLS.Extra.Cipher (ciphersuite_default)
 
--- import qualified Network.HTTP.Client.TLS as TLS
+newtype SPKIHash = SPKIHash B.ByteString deriving (Eq, Ord, Show)
 
 {- | Create a ManagerSettings suitable for use with Great Black Swamp client
  requests.
 -}
 mkGBSManagerSettings ::
+    -- | The SPKI hash of the certificate of the storage service to access.
+    SPKIHash ->
     -- | The secret capability identifying the storage service to access.
     T.Text ->
     -- | The settings.
     ManagerSettings
-mkGBSManagerSettings swissnum =
-    (mkManagerSettings gbsTLSSettings sockSettings)
-        { managerModifyRequest = addAuthorizationPrint swissnum
+mkGBSManagerSettings requiredHash swissnum =
+    (mkManagerSettings (gbsTLSSettings requiredHash) sockSettings)
+        { managerModifyRequest = addAuthorization swissnum
         }
   where
     sockSettings = Nothing
@@ -36,8 +50,71 @@ mkGBSManagerSettings swissnum =
 {- | The TLSSettings suitable for use with Great Black Swamp client requests.
  These ensure we can authenticate the server before using it.
 -}
-gbsTLSSettings :: TLSSettings
-gbsTLSSettings = TLSSettingsSimple True True True
+gbsTLSSettings :: SPKIHash -> TLSSettings
+gbsTLSSettings requiredHash =
+    TLSSettings
+        ( ClientParams
+            { clientUseMaxFragmentLength = Nothing
+            , clientServerIdentification = ("", "")
+            , clientUseServerNameIndication = True
+            , clientWantSessionResume = Nothing
+            , clientShared = def
+            , clientHooks =
+                def
+                    { onServerCertificate = validateGBSCertificate requiredHash
+                    }
+            , clientSupported = def{supportedCiphers = ciphersuite_default}
+            , clientDebug = def
+            , clientEarlyData = Nothing
+            }
+        )
+
+{- | Determine the validity of an x509 certificate presented during a TLS
+ handshake for a GBS connection.
+
+ The certificate is considered valid if its signature can be validated and
+ the sha256 hash of its SPKI fields match the expected value.
+
+ If not exactly one certificate is presented then validation fails.
+-}
+validateGBSCertificate :: SPKIHash -> CertificateStore -> ValidationCache -> ServiceID -> CertificateChain -> IO [FailedReason]
+validateGBSCertificate _ _ _ _ (CertificateChain []) = pure [EmptyChain]
+validateGBSCertificate requiredSPKIHash _ _ _ (CertificateChain [signedExactCert]) =
+    -- Nothing is valid unless the signature on the certificate is valid
+    -- so do that first.
+    case verifySignedSignature signedExactCert pubKey of
+        SignatureFailed failure -> pure [InvalidSignature failure]
+        SignaturePass -> do
+            -- The certificates SubjectPublicKeyInfo must match the hash we
+            -- expect, too.
+            if spkiHash cert == requiredSPKIHash
+                then pure []
+                else pure [InvalidSignature SignaturePubkeyMismatch]
+  where
+    pubKey = certPubKey cert
+    cert = signedObject . getSigned $ signedExactCert
+validateGBSCertificate _ _ _ _ _ = pure [AuthorityTooDeep]
+
+data SubjectPublicKeyInfo pubKey = SubjectPublicKeyInfo
+    { subjectPublicKeyInfoAlgorithm :: SignatureALG
+    , subjectPublicKeyInfoPublicKey :: pubKey
+    }
+
+instance ASN1Object pubKey => ASN1Object (SubjectPublicKeyInfo pubKey) where
+    toASN1 (SubjectPublicKeyInfo{subjectPublicKeyInfoAlgorithm, subjectPublicKeyInfoPublicKey}) =
+        toASN1 subjectPublicKeyInfoAlgorithm <> toASN1 subjectPublicKeyInfoPublicKey
+
+    fromASN1 asn1s = do
+        (subjectPublicKeyInfoAlgorithm, theRest) <- fromASN1 asn1s
+        (subjectPublicKeyInfoPublicKey, unused) <- fromASN1 theRest
+        pure (SubjectPublicKeyInfo{..}, unused)
+
+spkiHash :: Certificate -> SPKIHash
+spkiHash (Certificate{certSignatureAlg, certPubKey}) =
+    SPKIHash . sha256 . encodeASN1' DER . flip toASN1 [] $ SubjectPublicKeyInfo certSignatureAlg certPubKey
+
+sha256 :: B.ByteString -> B.ByteString
+sha256 = convert . (hash :: B.ByteString -> Digest SHA256)
 
 -- Add the necessary authorization header.  Since this is used with
 -- `managerModifyRequest`, it may be called more than once per request so it
@@ -56,7 +133,7 @@ addAuthorization swissnum req =
     addHeader :: Header -> [Header] -> [Header]
     addHeader (name, value) [] = [(name, value)]
     addHeader (name, value) (o@(name', value') : xs)
-        | name == name' = (o : xs)
+        | name == name' = o : xs
         | otherwise = o : addHeader (name, value) xs
 
 addAuthorizationPrint :: T.Text -> Request -> IO Request
