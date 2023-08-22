@@ -115,8 +115,7 @@ spec = do
                     it "makes a connection to a server using the correct certificate" $ do
                         withTlsServer (TLS.Credentials [credential]) "Hello!" expectServerSuccess $ \serverAddr -> do
                             let (host, port) = addrToHostPort serverAddr
-                                settings = mkGBSManagerSettings requiredHash "swissnum"
-                            manager <- newManager settings
+                            manager <- newManager (mkGBSManagerSettings requiredHash "swissnum")
                             req <- parseRequest $ printf "https://%s:%d/" host port
                             withConnection req manager $ \clientConn -> do
                                 connectionRead clientConn `shouldReturn` "Hello!"
@@ -124,8 +123,7 @@ spec = do
                     it "refuses to make a connection to a server not using the correct certificate" $ do
                         withTlsServer (TLS.Credentials [credential]) "Hello!" expectServerFailure $ \serverAddr -> do
                             let (host, port) = addrToHostPort serverAddr
-                                settings = mkGBSManagerSettings (SPKIHash "wrong spki hash") "swissnum"
-                            manager <- newManager settings
+                            manager <- newManager (mkGBSManagerSettings (SPKIHash "wrong spki hash") "swissnum")
                             req <- parseRequest $ printf "https://%s:%d/" host port
                             withConnection req manager connectionRead
                                 `shouldThrow` (\(TLS.HandshakeFailed _) -> True)
