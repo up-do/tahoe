@@ -128,7 +128,7 @@ spec = do
                             manager <- newManager settings
                             req <- parseRequest $ printf "https://%s:%d/" host port
                             withConnection req manager connectionRead
-                                `shouldThrow` (\(TLS.HandshakeFailed tlsError) -> True)
+                                `shouldThrow` (\(TLS.HandshakeFailed _) -> True)
   where
     settings = mkGBSManagerSettings (SPKIHash "just any hash") "swissnum"
     request = defaultRequest
