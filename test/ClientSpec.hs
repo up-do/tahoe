@@ -48,6 +48,7 @@ import Numeric (showHex)
 import TahoeLAFS.Internal.Client (
     SPKIHash (SPKIHash),
     mkGBSManagerSettings,
+    spkiBytes,
     spkiHash,
  )
 import Test.Hspec (
@@ -63,11 +64,14 @@ import Test.Hspec (
     shouldThrow,
  )
 import Text.Printf (printf)
+import Vectors (SPKICase (..), loadSPKITestVector)
 
 -- Paths to pre-generated test data - an RSA private key and associated
 -- self-signed certificate.
 privateKeyPath = "test/data/private-key.pem"
 certificatePath = "test/data/certificate.pem"
+
+spkiTestVectorPath = "test/data/spki-hash-test-vectors.yaml"
 
 spec :: Spec
 spec = do
@@ -83,6 +87,22 @@ spec = do
                 modified' <- managerModifyRequest settings modified
                 let authorizations = filter (("authorization" ==) . fst) (requestHeaders modified')
                 length authorizations `shouldBe` 1
+
+        describe "SPKI Fingerprints" $ do
+            vectorE <- runIO $ loadSPKITestVector <$> B.readFile spkiTestVectorPath
+            case vectorE of
+                Left loadErr ->
+                    it "is broken" $ expectationFailure $ "could not load test vectors: " <> show loadErr
+                Right vector -> do
+                    describe "spkiBytes" $ do
+                        it "agrees with the test vectors" $ do
+                            flip mapM_ vector $ \(SPKICase{spkiExpected, spkiCertificate}) -> do
+                                spkiBytes spkiCertificate `shouldBe` spkiExpected
+
+                    describe "spkiHash" $ do
+                        it "agrees with the test vectors" $ do
+                            flip mapM_ vector $ \(SPKICase{spkiExpectedHash, spkiCertificate}) -> do
+                                spkiHash spkiCertificate `shouldBe` spkiExpectedHash
 
         describe "TLS connections" $ do
             credentialE <- runIO $ TLS.credentialLoadX509 certificatePath privateKeyPath

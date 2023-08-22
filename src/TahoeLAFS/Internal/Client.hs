@@ -18,7 +18,7 @@ import qualified Data.ByteString as B
 import Data.Default.Class (Default (def))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.X509 (Certificate (Certificate, certPubKey, certSignatureAlg), CertificateChain (CertificateChain), SignatureALG, Signed (signedObject), SignedExact (getSigned))
+import Data.X509 (Certificate (Certificate, certPubKey, certSignatureAlg), CertificateChain (CertificateChain), PubKey, SignatureALG, Signed (signedObject), SignedExact (getSigned))
 import Data.X509.CertificateStore (CertificateStore)
 import Data.X509.Validation (FailedReason (AuthorityTooDeep, EmptyChain, InvalidSignature), ServiceID, SignatureFailure (SignaturePubkeyMismatch), SignatureVerification (SignatureFailed, SignaturePass), verifySignedSignature)
 import Network.Connection (TLSSettings (..))
@@ -28,7 +28,10 @@ import Network.HTTP.Types (Header)
 import Network.TLS (ClientHooks (onServerCertificate), ClientParams (..), Supported (..), ValidationCache)
 import Network.TLS.Extra.Cipher (ciphersuite_default)
 
-newtype SPKIHash = SPKIHash B.ByteString deriving (Eq, Ord, Show)
+newtype SPKIHash = SPKIHash B.ByteString deriving (Eq, Ord)
+
+instance Show SPKIHash where
+    show (SPKIHash bs) = "SPKIHash " <> T.unpack (T.decodeLatin1 (Base64.encode bs))
 
 {- | Create a ManagerSettings suitable for use with Great Black Swamp client
  requests.
@@ -89,18 +92,22 @@ validateGBSCertificate requiredSPKIHash _ _ _ (CertificateChain [signedExactCert
             -- expect, too.
             if spkiHash cert == requiredSPKIHash
                 then pure []
-                else pure [InvalidSignature SignaturePubkeyMismatch]
+                else do
+                    print $ "Expected SPKI hash: " <> show requiredSPKIHash
+                    print $ "Got SPKI hash" <> show (spkiHash cert)
+                    pure [InvalidSignature SignaturePubkeyMismatch]
   where
     pubKey = certPubKey cert
     cert = signedObject . getSigned $ signedExactCert
 validateGBSCertificate _ _ _ _ _ = pure [AuthorityTooDeep]
 
-data SubjectPublicKeyInfo pubKey = SubjectPublicKeyInfo
+data SubjectPublicKeyInfo = SubjectPublicKeyInfo
     { subjectPublicKeyInfoAlgorithm :: SignatureALG
-    , subjectPublicKeyInfoPublicKey :: pubKey
+    , subjectPublicKeyInfoPublicKey :: PubKey
     }
+    deriving (Eq, Show)
 
-instance ASN1Object pubKey => ASN1Object (SubjectPublicKeyInfo pubKey) where
+instance ASN1Object SubjectPublicKeyInfo where
     toASN1 (SubjectPublicKeyInfo{subjectPublicKeyInfoAlgorithm, subjectPublicKeyInfoPublicKey}) =
         toASN1 subjectPublicKeyInfoAlgorithm <> toASN1 subjectPublicKeyInfoPublicKey
 
@@ -110,8 +117,13 @@ instance ASN1Object pubKey => ASN1Object (SubjectPublicKeyInfo pubKey) where
         pure (SubjectPublicKeyInfo{..}, unused)
 
 spkiHash :: Certificate -> SPKIHash
-spkiHash (Certificate{certSignatureAlg, certPubKey}) =
-    SPKIHash . sha256 . encodeASN1' DER . flip toASN1 [] $ SubjectPublicKeyInfo certSignatureAlg certPubKey
+spkiHash = SPKIHash . sha256 . spkiBytes
+
+spki :: Certificate -> SubjectPublicKeyInfo
+spki (Certificate{certSignatureAlg, certPubKey}) = SubjectPublicKeyInfo certSignatureAlg certPubKey
+
+spkiBytes :: Certificate -> B.ByteString
+spkiBytes = encodeASN1' DER . flip toASN1 [] . spki
 
 sha256 :: B.ByteString -> B.ByteString
 sha256 = convert . (hash :: B.ByteString -> Digest SHA256)
