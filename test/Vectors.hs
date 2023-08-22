@@ -31,7 +31,7 @@ instance FromJSON SPKICase' where
             <*> (Base64URL.decodeBase64 . T.encodeUtf8 <$> o .: "expected-hash")
             <*> (fmap (signedObject . getSigned) . readSignedObjectFromMemory . T.encodeUtf8 <$> o .: "certificate")
 
-data SPKITestVector = SPKITestVector
+newtype SPKITestVector = SPKITestVector
     { spkiTestVector :: [SPKICase']
     }
     deriving (Eq, Show)
