@@ -44,12 +44,11 @@ import Network.Socket (
  )
 import qualified Network.TLS as TLS
 import Network.TLS.Extra.Cipher (ciphersuite_default)
-import Numeric (showHex)
 import TahoeLAFS.Internal.Client (
     SPKIHash (SPKIHash),
     mkGBSManagerSettings,
     spkiBytes,
-    spkiHash,
+    spkiFingerprint,
  )
 import Test.Hspec (
     Spec,
@@ -102,10 +101,10 @@ spec = do
                             flip mapM_ vector $ \(SPKICase{spkiExpected, spkiCertificate}) -> do
                                 spkiBytes spkiCertificate `shouldBe` spkiExpected
 
-                    describe "spkiHash" $ do
+                    describe "spkiFingerprint" $ do
                         it "agrees with the test vectors" $ do
                             flip mapM_ vector $ \(SPKICase{spkiExpectedHash, spkiCertificate}) -> do
-                                spkiHash spkiCertificate `shouldBe` spkiExpectedHash
+                                spkiFingerprint spkiCertificate `shouldBe` spkiExpectedHash
 
         describe "TLS connections" $ do
             credentialE <- runIO $ TLS.credentialLoadX509 certificatePath privateKeyPath
@@ -114,7 +113,7 @@ spec = do
                     it "is broken" $ expectationFailure "could not load pre-generated certificate"
                 Right credential -> do
                     let CertificateChain [signedExactCert] = fst credential
-                        requiredHash = spkiHash . signedObject . getSigned $ signedExactCert
+                        requiredHash = spkiFingerprint . signedObject . getSigned $ signedExactCert
                     it "makes a connection to a server using the correct certificate" $ do
                         withTlsServer (TLS.Credentials [credential]) "Hello!" expectServerSuccess $ \serverAddr -> do
                             let (host, port) = addrToHostPort serverAddr

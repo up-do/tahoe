@@ -12,20 +12,37 @@ import Crypto.Hash (Digest, hash)
 import Crypto.Hash.Algorithms (SHA256)
 import Data.ASN1.BinaryEncoding (DER (DER))
 import Data.ASN1.Encoding (encodeASN1')
-import Data.ASN1.Types (ASN1Object (fromASN1, toASN1))
+import Data.ASN1.Types (ASN1Object (toASN1))
 import Data.ByteArray (convert)
 import qualified Data.ByteString as B
 import Data.Default.Class (Default (def))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.X509 (Certificate (Certificate, certPubKey, certSignatureAlg), CertificateChain (CertificateChain), PubKey, SignatureALG, Signed (signedObject), SignedExact (getSigned))
+import Data.X509 (
+    Certificate (certPubKey),
+    CertificateChain (CertificateChain),
+    PubKey,
+    Signed (signedObject),
+    SignedExact (getSigned),
+ )
 import Data.X509.CertificateStore (CertificateStore)
-import Data.X509.Validation (FailedReason (AuthorityTooDeep, EmptyChain, InvalidSignature), ServiceID, SignatureFailure (SignaturePubkeyMismatch), SignatureVerification (SignatureFailed, SignaturePass), verifySignedSignature)
+import Data.X509.Validation (
+    FailedReason (AuthorityTooDeep, EmptyChain, InvalidSignature),
+    ServiceID,
+    SignatureFailure (SignaturePubkeyMismatch),
+    SignatureVerification (SignatureFailed, SignaturePass),
+    verifySignedSignature,
+ )
 import Network.Connection (TLSSettings (..))
 import Network.HTTP.Client (ManagerSettings, Request (requestHeaders), managerModifyRequest)
 import Network.HTTP.Client.TLS (mkManagerSettings)
 import Network.HTTP.Types (Header)
-import Network.TLS (ClientHooks (onServerCertificate), ClientParams (..), Supported (..), ValidationCache)
+import Network.TLS (
+    ClientHooks (onServerCertificate),
+    ClientParams (..),
+    Supported (..),
+    ValidationCache,
+ )
 import Network.TLS.Extra.Cipher (ciphersuite_default)
 
 newtype SPKIHash = SPKIHash B.ByteString deriving (Eq, Ord)
@@ -82,7 +99,7 @@ gbsTLSSettings requiredHash =
 -}
 validateGBSCertificate :: SPKIHash -> CertificateStore -> ValidationCache -> ServiceID -> CertificateChain -> IO [FailedReason]
 validateGBSCertificate _ _ _ _ (CertificateChain []) = pure [EmptyChain]
-validateGBSCertificate requiredSPKIHash _ _ _ (CertificateChain [signedExactCert]) =
+validateGBSCertificate requiredSPKIFingerprint _ _ _ (CertificateChain [signedExactCert]) =
     -- Nothing is valid unless the signature on the certificate is valid
     -- so do that first.
     case verifySignedSignature signedExactCert pubKey of
@@ -90,43 +107,36 @@ validateGBSCertificate requiredSPKIHash _ _ _ (CertificateChain [signedExactCert
         SignaturePass -> do
             -- The certificates SubjectPublicKeyInfo must match the hash we
             -- expect, too.
-            if spkiHash cert == requiredSPKIHash
+            if spkiFingerprint cert == requiredSPKIFingerprint
                 then pure []
                 else do
-                    print $ "Expected SPKI hash: " <> show requiredSPKIHash
-                    print $ "Got SPKI hash" <> show (spkiHash cert)
                     pure [InvalidSignature SignaturePubkeyMismatch]
   where
     pubKey = certPubKey cert
     cert = signedObject . getSigned $ signedExactCert
 validateGBSCertificate _ _ _ _ _ = pure [AuthorityTooDeep]
 
-data SubjectPublicKeyInfo = SubjectPublicKeyInfo
-    { subjectPublicKeyInfoAlgorithm :: SignatureALG
-    , subjectPublicKeyInfoPublicKey :: PubKey
-    }
-    deriving (Eq, Show)
+sha256 :: B.ByteString -> B.ByteString
+sha256 = convert . (hash :: B.ByteString -> Digest SHA256)
 
-instance ASN1Object SubjectPublicKeyInfo where
-    toASN1 (SubjectPublicKeyInfo{subjectPublicKeyInfoAlgorithm, subjectPublicKeyInfoPublicKey}) =
-        toASN1 subjectPublicKeyInfoAlgorithm <> toASN1 subjectPublicKeyInfoPublicKey
+{- | Extract the SubjectPublicKeyInfo from a Certificate.
 
-    fromASN1 asn1s = do
-        (subjectPublicKeyInfoAlgorithm, theRest) <- fromASN1 asn1s
-        (subjectPublicKeyInfoPublicKey, unused) <- fromASN1 theRest
-        pure (SubjectPublicKeyInfo{..}, unused)
+ The PubKey type contains all of the values related to the
+ SubjectPublicKeyInfo and serializes correctly for this type so we just
+ extract that.
+-}
+spki :: Certificate -> PubKey
+spki = certPubKey
 
-spkiHash :: Certificate -> SPKIHash
-spkiHash = SPKIHash . sha256 . spkiBytes
-
-spki :: Certificate -> SubjectPublicKeyInfo
-spki (Certificate{certSignatureAlg, certPubKey}) = SubjectPublicKeyInfo certSignatureAlg certPubKey
-
+{- | Construct the bytes which can be hashed to produce the SPKI Fingerprint
+ for the given Certificate.
+-}
 spkiBytes :: Certificate -> B.ByteString
 spkiBytes = encodeASN1' DER . flip toASN1 [] . spki
 
-sha256 :: B.ByteString -> B.ByteString
-sha256 = convert . (hash :: B.ByteString -> Digest SHA256)
+-- | Compute the SPKI Fingerprint (RFC 7469) for the given Certificate.
+spkiFingerprint :: Certificate -> SPKIHash
+spkiFingerprint = SPKIHash . sha256 . spkiBytes
 
 -- Add the necessary authorization header.  Since this is used with
 -- `managerModifyRequest`, it may be called more than once per request so it
