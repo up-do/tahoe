@@ -4,16 +4,14 @@ module ClientSpec where
 
 import qualified Control.Concurrent.Async as Async
 import Control.Exception (Exception, SomeException, throwIO, try)
+import Control.Monad (forM_)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import Data.Default.Class (Default (def))
-import Data.List (intercalate)
 import Data.X509 (CertificateChain (..), getSigned, signedObject)
-import Debug.Trace
 import Network.HTTP.Client (
     defaultRequest,
     managerModifyRequest,
-    managerTlsConnection,
     newManager,
     parseRequest,
     requestHeaders,
@@ -22,17 +20,13 @@ import Network.HTTP.Client (
 import Network.HTTP.Client.Internal (Connection (connectionRead))
 import qualified Network.Simple.TCP.TLS as SimpleTLS
 import Network.Socket (
-    AddrInfo,
     AddrInfoFlag (AI_NUMERICHOST, AI_NUMERICSERV),
     SockAddr (SockAddrInet, SockAddrInet6, SockAddrUnix),
     SocketType (Stream),
     addrAddress,
-    addrFamily,
     addrFlags,
-    addrProtocol,
     addrSocketType,
     bind,
-    close',
     defaultHints,
     getAddrInfo,
     getSocketName,
@@ -40,7 +34,6 @@ import Network.Socket (
     hostAddressToTuple,
     listen,
     openSocket,
-    socket,
  )
 import qualified Network.TLS as TLS
 import Network.TLS.Extra.Cipher (ciphersuite_default)
@@ -52,7 +45,6 @@ import TahoeLAFS.Internal.Client (
  )
 import Test.Hspec (
     Spec,
-    anyIOException,
     describe,
     expectationFailure,
     it,
@@ -94,23 +86,23 @@ spec = do
             vectorE <- runIO $ loadSPKITestVector <$> B.readFile spkiTestVectorPath
             case vectorE of
                 Left loadErr ->
-                    it "is broken" $ expectationFailure $ "could not load test vectors: " <> show loadErr
+                    it "test suite bug" $ expectationFailure $ "could not load test vectors: " <> show loadErr
                 Right vector -> do
                     describe "spkiBytes" $ do
                         it "agrees with the test vectors" $ do
-                            flip mapM_ vector $ \(SPKICase{spkiExpected, spkiCertificate}) -> do
+                            forM_ vector $ \(SPKICase{spkiExpected, spkiCertificate}) -> do
                                 spkiBytes spkiCertificate `shouldBe` spkiExpected
 
                     describe "spkiFingerprint" $ do
                         it "agrees with the test vectors" $ do
-                            flip mapM_ vector $ \(SPKICase{spkiExpectedHash, spkiCertificate}) -> do
+                            forM_ vector $ \(SPKICase{spkiExpectedHash, spkiCertificate}) -> do
                                 spkiFingerprint spkiCertificate `shouldBe` spkiExpectedHash
 
         describe "TLS connections" $ do
             credentialE <- runIO $ TLS.credentialLoadX509 certificatePath privateKeyPath
             case credentialE of
                 Left loadErr ->
-                    it "is broken" $ expectationFailure "could not load pre-generated certificate"
+                    it "test suite bug" $ expectationFailure $ "could not load pre-generated certificate" <> show loadErr
                 Right credential -> do
                     let CertificateChain [signedExactCert] = fst credential
                         requiredHash = spkiFingerprint . signedObject . getSigned $ signedExactCert
@@ -137,7 +129,7 @@ spec = do
     expectServerFailure server = do
         result <- try server
         case result of
-            Left (e :: SomeException) -> pure ()
+            Left (_ :: SomeException) -> pure ()
             Right r -> throwIO $ ExpectedFailure ("Expect the server to fail but it succeed with " <> show r)
 
 newtype ExpectedFailure = ExpectedFailure String deriving (Eq, Ord, Show)
@@ -172,7 +164,7 @@ withTlsServer serverCredentials expectedBytes runServer clientApp = do
     Async.wait client
   where
     -- Serve a connection to the TLS server.
-    serverApp (ctx, addr) = TLS.sendData ctx expectedBytes
+    serverApp (ctx, _) = TLS.sendData ctx expectedBytes
 
     hints =
         defaultHints
