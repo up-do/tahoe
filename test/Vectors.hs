@@ -40,7 +40,7 @@ instance FromJSON SPKITestVector where
     parseJSON = withObject "SPKITestVector" $ \o -> SPKITestVector <$> o .: "vector"
 
 loadSPKITestVector :: B.ByteString -> Either LoadError [SPKICase]
-loadSPKITestVector = either (Left . YamlParseError) (traverse id . fmap toSPKICase . spkiTestVector) . decodeEither'
+loadSPKITestVector = either (Left . YamlParseError) (traverse toSPKICase . spkiTestVector) . decodeEither'
 
 toSPKICase (SPKICase' (Right expected) (Right hash) [cert]) = Right $ SPKICase expected (SPKIHash hash) cert
 toSPKICase (SPKICase' (Left err) _ _) = Left $ TestVectorDataError $ "Error loading expected field: " <> T.pack (show err)
