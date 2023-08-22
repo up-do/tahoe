@@ -68,9 +68,12 @@ import Vectors (SPKICase (..), loadSPKITestVector)
 
 -- Paths to pre-generated test data - an RSA private key and associated
 -- self-signed certificate.
+privateKeyPath :: FilePath
 privateKeyPath = "test/data/private-key.pem"
+certificatePath :: FilePath
 certificatePath = "test/data/certificate.pem"
 
+spkiTestVectorPath :: FilePath
 spkiTestVectorPath = "test/data/spki-hash-test-vectors.yaml"
 
 spec :: Spec
