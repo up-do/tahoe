@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
 {- | Demonstrate the use of some GBS client APIs.
@@ -10,6 +9,7 @@
 -}
 module Main where
 
+import Control.Monad ((>=>))
 import Data.ByteString.Base32 (encodeBase32Unpadded)
 import qualified Data.ByteString.Base64.URL as Base64URL
 import qualified Data.Text as T
@@ -18,6 +18,7 @@ import Network.HTTP.Client.TLS (
     newTlsManagerWith,
  )
 import Network.HTTP.Types ()
+import Network.Socket (HostName, PortNumber)
 import Network.URI (
     URI (URI, uriAuthority, uriPath),
     URIAuth (URIAuth, uriPort, uriRegName, uriUserInfo),
@@ -53,19 +54,33 @@ import TahoeLAFS.Storage.Client (
     version,
  )
 import Text.Megaparsec (parse)
+import Text.Read (readMaybe)
 
 main :: IO ()
 main = do
-    [storageFURLStr, capStr, shareNumStr] <- getArgs
+    [storageNURLStr, capStr, shareNumStr] <- getArgs
     let Right (CHKReader Reader{verifier = Verifier{..}}) = parse pCapability "argv[2]" (T.pack capStr)
-        Just URI{uriAuthority = Just URIAuth{uriUserInfo, uriRegName = hostname, uriPort = (':' : port)}, uriPath = ('/' : swissnum)} = parseFURL storageFURLStr
-        requiredHashE = fmap SPKIHash . Base64URL.decodeBase64 . T.encodeUtf8 . T.pack . dropLast 1 $ uriUserInfo
+        nurlM = parseNURL . T.pack $ storageNURLStr
 
-    case requiredHashE of
-        Left err ->
-            print $ "Failed to parse authentication information from NURL: " <> show err
-        Right requiredHash ->
-            run requiredHash (T.unpack . T.toLower . encodeBase32Unpadded $ storageIndex) hostname (read port) (T.pack swissnum) (ShareNumber (read shareNumStr))
+    case nurlM of
+        Nothing ->
+            print ("Failed to parse NURL" :: T.Text)
+        Just nurl -> do
+            result <- runGBS nurl $ do
+                ver <- version
+                sharez <- getImmutableShareNumbers storageIndexS
+                chk <- readImmutableShare storageIndexS shareNum Nothing
+                pure (ver, sharez, chk)
+
+            case result of
+                Left err -> print $ "Uh " <> show err
+                Right (ver, sharez, chk) -> do
+                    print $ "version: " <> show ver
+                    print $ "share numbers: " <> show sharez
+                    print $ "share bytes: " <> show chk
+          where
+            storageIndexS = T.unpack . T.toLower . encodeBase32Unpadded $ storageIndex
+            shareNum = ShareNumber $ read shareNumStr
 
 -- Parse it like a regular URI after removing the confusing "tcp:" prefix on
 -- the netloc.
@@ -76,35 +91,31 @@ dropLast :: Int -> [a] -> [a]
 dropLast n xs =
     take (length xs - n) xs
 
--- Do some API calls and report the results.
-run ::
-    -- | The SPKI hash to use to authenticate the server.
-    SPKIHash ->
-    -- | The base32-encoded storage index for which to request share info.
-    String ->
-    -- | The hostname or IP address of the storage server to query.
-    String ->
-    -- | The port number of the storage server to query.
-    Int ->
-    -- | The swissnum of the storage service
-    T.Text ->
-    -- | A share number to download from the server.
-    ShareNumber ->
-    IO ()
-run requiredHash storageIndex hostname port swissnum shareNum = do
-    manager' <- newTlsManagerWith (mkGBSManagerSettings requiredHash swissnum)
-    let callIt :: ClientM a -> IO (Either ClientError a)
-        callIt = flip runClientM (mkClientEnv manager' (BaseUrl Https hostname port ""))
+data NURL = NURLv1
+    { nurlv1Fingerprint :: SPKIHash
+    , nurlv1Address :: (HostName, PortNumber)
+    , nurlv1Swissnum :: T.Text
+    }
+    deriving (Ord, Eq, Show)
 
-    putStrLn "getVersion"
-    ver <- callIt version
-    showIt ver
-    putStrLn "getImmutableShareNumbers:"
-    sharez <- callIt $ getImmutableShareNumbers storageIndex
-    showIt sharez
-    putStrLn "readImmutableShare - succeeds!"
-    chk <- callIt $ readImmutableShare storageIndex shareNum Nothing
-    showIt chk
+parseNURL :: T.Text -> Maybe NURL
+parseNURL = parseURI . T.unpack >=> uriToNURL
+
+uriToNURL :: URI -> Maybe NURL
+uriToNURL URI{uriAuthority = Just URIAuth{uriUserInfo, uriRegName = hostname, uriPort = (':' : port)}, uriPath = ('/' : swissnum)} =
+    case (requiredHashE, portM) of
+        (Left _, _) -> Nothing
+        (_, Nothing) -> Nothing
+        (Right requiredHash, Just portNum) -> Just NURLv1{nurlv1Fingerprint = requiredHash, nurlv1Address = (hostname, portNum), nurlv1Swissnum = T.pack swissnum}
+  where
+    requiredHashE = fmap SPKIHash . Base64URL.decodeBase64 . T.encodeUtf8 . T.pack . dropLast 1 $ uriUserInfo
+    portM = readMaybe port
+
+runGBS :: NURL -> ClientM a -> IO (Either ClientError a)
+runGBS NURLv1{nurlv1Fingerprint, nurlv1Address = (hostname, port), nurlv1Swissnum} client = do
+    manager <- newTlsManagerWith (mkGBSManagerSettings nurlv1Fingerprint nurlv1Swissnum)
+    let clientEnv = mkClientEnv manager (BaseUrl Https hostname (fromIntegral port) "")
+    runClientM client clientEnv
 
 showIt :: (Show a1, Show a2) => Either a1 a2 -> IO ()
 showIt what = case what of
