@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PackageImports #-}
 
 {- | Implement the correct HTTPS client configuration for using Great Black
  Swamp.  This is necessary and correct for authenticating Great Black
@@ -6,7 +7,7 @@
 -}
 module TahoeLAFS.Internal.Client where
 
-import qualified Data.ByteString.Base64 as Base64
+import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
 
 import Crypto.Hash (Digest, hash)
 import Crypto.Hash.Algorithms (SHA256)
