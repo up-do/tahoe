@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module ClientSpec where
@@ -5,11 +6,14 @@ module ClientSpec where
 import qualified Control.Concurrent.Async as Async
 import Control.Exception (Exception, SomeException, throwIO, try)
 import Control.Monad (forM_)
+import Data.Bifunctor (Bifunctor (bimap))
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import Data.Default.Class (Default (def))
+import Data.Either (isRight)
 import qualified Data.Text as T
 import Data.X509 (CertificateChain (..), getSigned, signedObject)
+import GHC.IO (unsafePerformIO)
 import Network.HTTP.Client (
     defaultRequest,
     managerModifyRequest,
@@ -22,12 +26,15 @@ import Network.HTTP.Client.Internal (Connection (connectionRead))
 import qualified Network.Simple.TCP.TLS as SimpleTLS
 import Network.Socket (
     AddrInfoFlag (AI_NUMERICHOST, AI_NUMERICSERV),
+    Family (AF_INET),
     SockAddr (SockAddrInet, SockAddrInet6, SockAddrUnix),
+    Socket,
     SocketType (Stream),
     addrAddress,
     addrFlags,
     addrSocketType,
     bind,
+    close',
     defaultHints,
     getAddrInfo,
     getSocketName,
@@ -35,15 +42,25 @@ import Network.Socket (
     hostAddressToTuple,
     listen,
     openSocket,
+    socket,
  )
 import qualified Network.TLS as TLS
 import Network.TLS.Extra.Cipher (ciphersuite_default)
+import Network.Wai.Handler.Warp (defaultSettings)
+import Network.Wai.Handler.WarpTLS (
+    runTLSSocket,
+    tlsSettings,
+ )
+import Servant.Client (ClientError (ConnectionError))
 import TahoeLAFS.Internal.Client (
     SPKIHash (SPKIHash),
     mkGBSManagerSettings,
     spkiBytes,
     spkiFingerprint,
  )
+import TahoeLAFS.Storage.Backend.Memory (memoryBackend)
+import TahoeLAFS.Storage.Client (NURL (NURLv1, nurlv1Address), runGBS, version)
+import qualified TahoeLAFS.Storage.Server as Server
 import Test.Hspec (
     Spec,
     describe,
@@ -53,6 +70,7 @@ import Test.Hspec (
     shouldBe,
     shouldContain,
     shouldReturn,
+    shouldSatisfy,
     shouldThrow,
  )
 import Text.Printf (printf)
@@ -67,6 +85,13 @@ certificatePath = "test/data/certificate.pem"
 
 spkiTestVectorPath :: FilePath
 spkiTestVectorPath = "test/data/spki-hash-test-vectors.yaml"
+
+credentialE :: Either String TLS.Credential
+{-# NOINLINE credentialE #-}
+credentialE = unsafePerformIO $ TLS.credentialLoadX509 certificatePath privateKeyPath
+
+credential :: TLS.Credential
+credential = either (error . ("Failed to load test credentials: " <>) . show) id credentialE
 
 spec :: Spec
 spec = do
@@ -100,28 +125,45 @@ spec = do
                                 spkiFingerprint spkiCertificate `shouldBe` spkiExpectedHash
 
         describe "TLS connections" $ do
-            credentialE <- runIO $ TLS.credentialLoadX509 certificatePath privateKeyPath
-            case credentialE of
-                Left loadErr ->
-                    it "test suite bug" $ expectationFailure $ "could not load pre-generated certificate" <> show loadErr
-                Right credential -> do
-                    let CertificateChain [signedExactCert] = fst credential
-                        requiredHash = spkiFingerprint . signedObject . getSigned $ signedExactCert
-                    it "makes a connection to a server using the correct certificate" $ do
-                        withTlsServer (TLS.Credentials [credential]) "Hello!" expectServerSuccess $ \serverAddr -> do
-                            let (host, port) = addrToHostPort serverAddr
-                            manager <- newManager (mkGBSManagerSettings requiredHash "swissnum")
-                            req <- parseRequest $ printf "https://%s:%d/" host port
-                            withConnection req manager $ \clientConn -> do
-                                connectionRead clientConn `shouldReturn` "Hello!"
+            let CertificateChain [signedExactCert] = fst credential
+                requiredHash = spkiFingerprint . signedObject . getSigned $ signedExactCert
+            it "makes a connection to a server using the correct certificate" $ do
+                withTlsServer (TLS.Credentials [credential]) "Hello!" expectServerSuccess $ \serverAddr -> do
+                    let (host, port) = addrToHostPort serverAddr
+                    manager <- newManager (mkGBSManagerSettings requiredHash "swissnum")
+                    req <- parseRequest $ printf "https://%s:%d/" host port
+                    withConnection req manager $ \clientConn -> do
+                        connectionRead clientConn `shouldReturn` "Hello!"
 
-                    it "refuses to make a connection to a server not using the correct certificate" $ do
-                        withTlsServer (TLS.Credentials [credential]) "Hello!" expectServerFailure $ \serverAddr -> do
-                            let (host, port) = addrToHostPort serverAddr
-                            manager <- newManager (mkGBSManagerSettings (SPKIHash "wrong spki hash") "swissnum")
-                            req <- parseRequest $ printf "https://%s:%d/" host port
-                            withConnection req manager connectionRead
-                                `shouldThrow` (\(TLS.HandshakeFailed _) -> True)
+            it "refuses to make a connection to a server not using the correct certificate" $ do
+                withTlsServer (TLS.Credentials [credential]) "Hello!" expectServerFailure $ \serverAddr -> do
+                    let (host, port) = addrToHostPort serverAddr
+                    manager <- newManager (mkGBSManagerSettings (SPKIHash "wrong spki hash") "swissnum")
+                    req <- parseRequest $ printf "https://%s:%d/" host port
+                    withConnection req manager connectionRead
+                        `shouldThrow` (\(TLS.HandshakeFailed _) -> True)
+
+        describe "runGBS" $ do
+            let swissnum = "hello world"
+            let CertificateChain [signedExactCert] = fst credential
+            let certificate = signedObject . getSigned $ signedExactCert
+            let nurl = NURLv1 (spkiFingerprint certificate) ("127.0.0.1", 0) swissnum
+            it "returns Left on connection errors" $ do
+                result <- runGBS nurl version
+                result
+                    `shouldSatisfy` ( \case
+                                        Left (ConnectionError _) -> True
+                                        _ -> False
+                                    )
+
+            it "returns Right on success" $ do
+                backend <- memoryBackend
+                ver <- withServerSocket $ \sock -> do
+                    Async.withAsync (runTLSSocket (tlsSettings certificatePath privateKeyPath) defaultSettings sock (Server.app backend)) $
+                        const $ do
+                            addr <- getSocketName sock
+                            runGBS nurl{nurlv1Address = bimap T.unpack fromIntegral $ addrToHostPort addr} version
+                ver `shouldSatisfy` isRight
   where
     settings = mkGBSManagerSettings (SPKIHash "just any hash") "swissnum"
     request = defaultRequest
@@ -132,6 +174,14 @@ spec = do
         case result of
             Left (_ :: SomeException) -> pure ()
             Right r -> throwIO $ ExpectedFailure ("Expect the server to fail but it succeed with " <> show r)
+
+withServerSocket :: (Socket -> IO a) -> IO a
+withServerSocket action = do
+    sock <- socket AF_INET Stream 0
+    listen sock 1
+    r <- action sock
+    close' sock
+    pure r
 
 newtype ExpectedFailure = ExpectedFailure String deriving (Eq, Ord, Show)
 instance Exception ExpectedFailure

@@ -216,11 +216,14 @@ test-suite http-tests
     , quickcheck-instances     <0.4
     , serialise                >=0.2.3    && <0.3
     , servant                  >=0.16.2   && <0.21
+    , servant-client           >=0.16.0.1 && <0.21
     , tahoe-great-black-swamp
     , temporary                >=1.3      && <1.4
     , tls
     , vector                   >=0.12.1.2 && <0.13
     , wai-extra                >=3.0.29.2 && <3.2
+    , warp
+    , warp-tls
     , x509
     , x509-store
     , yaml                     >=0.11.5.0 && <0.11.9.0 || >=0.11.9.0.0 && <0.12
