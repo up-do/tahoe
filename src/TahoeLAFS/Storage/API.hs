@@ -8,6 +8,7 @@
 -- Supports derivations for ShareNumber
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PackageImports #-}
 {-# LANGUAGE TypeOperators #-}
 
 module TahoeLAFS.Storage.API (
@@ -69,7 +70,7 @@ import Data.Aeson.Types (
  )
 import Data.Bifunctor (Bifunctor (bimap))
 import qualified Data.ByteString as B
-import qualified Data.ByteString.Base64 as Base64
+import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
 import qualified Data.Map as Map
 import Data.Map.Strict (
     Map,

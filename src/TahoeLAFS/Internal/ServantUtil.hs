@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PackageImports #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module TahoeLAFS.Internal.ServantUtil (
@@ -14,8 +15,7 @@ import Network.HTTP.Media (
 import Data.ByteString (
     ByteString,
  )
-import qualified Data.ByteString.Base64 as Base64
-import qualified Data.Text as T
+import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
 import Data.Text.Encoding (
     decodeLatin1,
     encodeUtf8,

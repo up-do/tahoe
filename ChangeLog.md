@@ -1,5 +1,9 @@
 # Changelog for tahoe-great-black-swamp
 
+## X.Y.Z
+
+* ``TahoeLAFS.Storage.Client.runGBS`` is a new high-level API for performing an interaction with a GBS server.
+
 ## 0.3.0.1
 
 * Package metadata improvements.

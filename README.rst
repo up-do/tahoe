@@ -21,6 +21,31 @@ Run Unit Tests
 
    stack test
 
+Write a Client
+--------------
+
+Here's a client program that shows two things:
+
+* a server's version response
+* all of the share numbers it claims to hold for a particular storage index
+
+The server details are encoded in the NURL and the storage index is hard-coded in another string.
+
+::
+
+   import Control.Monad.IO.Class (liftIO)
+   import TahoeLAFS.Storage.Client (runGBS, version, getImmutableShareNumbers, parseNURL)
+
+   main :: IO ()
+   main =
+     let
+       Just nURL = parseNURL "pb://..."
+       storageIndex = "aaabbbcccdddeeefffggg"
+     in
+       runGBS nURL $ do
+       version >>= liftIO . print
+       getImmutableShareNumbers storageIndex >>= liftIO . print
+
 Generate GBS Clients
 --------------------
 
