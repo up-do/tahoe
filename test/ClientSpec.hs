@@ -8,6 +8,7 @@ import Control.Monad (forM_)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import Data.Default.Class (Default (def))
+import qualified Data.Text as T
 import Data.X509 (CertificateChain (..), getSigned, signedObject)
 import Network.HTTP.Client (
     defaultRequest,
@@ -135,9 +136,9 @@ spec = do
 newtype ExpectedFailure = ExpectedFailure String deriving (Eq, Ord, Show)
 instance Exception ExpectedFailure
 
-addrToHostPort :: SockAddr -> (String, Int)
-addrToHostPort (SockAddrInet port host) = (uncurry4 (printf "%d.%d.%d.%d") (hostAddressToTuple host), fromIntegral port)
-addrToHostPort (SockAddrInet6 port _flow host _scope) = (uncurry8 (printf "%x:%x:%x:%x:%x:%x:%x:%x") (hostAddress6ToTuple host), fromIntegral port)
+addrToHostPort :: SockAddr -> (T.Text, Int)
+addrToHostPort (SockAddrInet port host) = (T.pack $ uncurry4 (printf "%d.%d.%d.%d") (hostAddressToTuple host), fromIntegral port)
+addrToHostPort (SockAddrInet6 port _flow host _scope) = (T.pack $ uncurry8 (printf "%x:%x:%x:%x:%x:%x:%x:%x") (hostAddress6ToTuple host), fromIntegral port)
 addrToHostPort (SockAddrUnix _path) = error "Cannot do TLS over a Unix socket"
 
 -- XXX get a Credential here and then use it to set up the TLS.Context
