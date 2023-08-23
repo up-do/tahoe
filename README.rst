@@ -33,12 +33,13 @@ The server details are encoded in the NURL and the storage index is hard-coded i
 
 ::
 
-   import TahoeLAFS.Storage.Client (parseNURL, version, getImmutableShareNumbers)
+   import Control.Monad.IO.Class (liftIO)
+   import TahoeLAFS.Storage.Client (runGBS, version, getImmutableShareNumbers, parseNURL)
 
    main :: IO ()
    main =
      let
-       Right nURL = parseNURL "pb://..."
+       Just nURL = parseNURL "pb://..."
        storageIndex = "aaabbbcccdddeeefffggg"
      in
        runGBS nURL $ do
