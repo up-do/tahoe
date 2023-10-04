@@ -4,14 +4,16 @@
   inputs = {
     # Nix Inputs
     nixpkgs.follows = "hs-flake-utils/nixpkgs";
-    flake-utils.url = github:numtide/flake-utils;
+    flake-utils.url = "github:numtide/flake-utils";
     hs-flake-utils.url = "git+https://whetstone.private.storage/jcalderone/hs-flake-utils.git?ref=main";
+    tahoe-great-black-swamp.url = "git+https://whetstone.private.storage/privatestorage/tahoe-great-black-swamp.git?ref=refs/tags/0.3.0.1";
   };
 
   outputs = {
     self,
     nixpkgs,
     flake-utils,
+    tahoe-great-black-swamp,
     hs-flake-utils,
   }: let
     ulib = flake-utils.lib;
@@ -21,12 +23,17 @@
       # Get a nixpkgs customized for this system and including our overlay.
       pkgs = import nixpkgs {
         inherit system;
+        config = {allowBroken = true;};
       };
       hslib = hs-flake-utils.lib {
         inherit pkgs;
         src = ./.;
         compilerVersion = ghcVersion;
         packageName = "tahoe-s3";
+        hsPkgsOverrides = hprev: hfinal: {
+          tahoe-great-black-swamp = tahoe-great-black-swamp.outputs.packages.${system}.default;
+          # amazonka-core = hprev.hsPkgs
+        };
       };
 
       # string -> flake app
@@ -57,7 +64,9 @@
       };
     in {
       checks = hslib.checks {};
-      devShells = hslib.devShells {};
+      devShells = hslib.devShells {
+        extraBuildInputs = pkgs: [pkgs.zlib];
+      };
       packages = hslib.packages {};
       apps.hlint = hslib.apps.hlint {};
 

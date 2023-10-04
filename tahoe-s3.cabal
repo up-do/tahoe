@@ -60,7 +60,7 @@ library
   import:           warnings
 
   -- Modules exported by the library.
-  exposed-modules:  MyLib
+  exposed-modules:  Tahoe.Storage.Backend.S3
 
   -- Modules included in this library but not exported.
   -- other-modules:
@@ -69,7 +69,15 @@ library
   -- other-extensions:
 
   -- Other library packages from which modules are imported.
-  build-depends:    base ^>=4.14.3.0
+  build-depends:
+    , aeson
+    , amazonka
+    , amazonka-s3
+    , base                     ^>=4.14.3.0
+    , bytestring
+    , http-client
+    , tahoe-great-black-swamp
+    , text
 
   -- Directories containing source files.
   hs-source-dirs:   src
@@ -125,5 +133,17 @@ test-suite tahoe-s3-test
 
   -- Test dependencies.
   build-depends:
-    , base      ^>=4.14.3.0
+    , base                     ^>=4.14.3.0
+    , base32string
+    , bytestring
+    , containers
+    , directory
+    , hspec
+    , hspec-expectations
+    , QuickCheck
+    , quickcheck-instances
+    , tahoe-great-black-swamp
     , tahoe-s3
+    , tasty
+    , temporary
+    , text
