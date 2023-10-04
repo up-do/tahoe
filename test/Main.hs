@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Main (main) where
 
 import Prelude hiding (
@@ -6,6 +8,7 @@ import Prelude hiding (
  )
 
 import Control.Monad (
+    void,
     when,
  )
 
@@ -35,7 +38,9 @@ import Test.Hspec (
     before,
     context,
     describe,
+    hspec,
     it,
+    parallel,
     shouldThrow,
  )
 import Test.Hspec.Expectations (
@@ -113,7 +118,7 @@ import TahoeLAFS.Storage.Backend.Filesystem (
  )
 
 main :: IO ()
-main = putStrLn "Test suite not yet implemented."
+main = hspec . parallel $ describe "S3" spec
 
 spec :: Spec
 spec = do
@@ -123,7 +128,7 @@ spec = do
 s3Backend :: IO S3Backend
 s3Backend = do
     env <- AWS.newEnv AWS.discover
-    void $ runResourceT $ AWS.send env (S3.newCreateBucket name)
+    void $ AWS.runResourceT $ AWS.send env (S3.newCreateBucket name)
     pure $ S3Backend env name
   where
     name = S3.BucketName "yoyoyo"
@@ -165,6 +170,9 @@ storageSpec =
 class Mess m where
     -- Cleanup resources belonging to m
     cleanup :: m -> IO ()
+
+instance Mess S3Backend where
+    cleanup _ = pure ()
 
 withBackend :: (Mess b, Backend b) => IO b -> ((b -> IO ()) -> IO ())
 withBackend b action = do
