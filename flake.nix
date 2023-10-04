@@ -30,9 +30,43 @@
         src = ./.;
         compilerVersion = ghcVersion;
         packageName = "tahoe-s3";
-        hsPkgsOverrides = hprev: hfinal: {
+        hsPkgsOverrides = hfinal: hprev: {
           tahoe-great-black-swamp = tahoe-great-black-swamp.outputs.packages.${system}.default;
-          # amazonka-core = hprev.hsPkgs
+          crypton = hfinal.callHackageDirect {
+            pkg = "crypton";
+            ver = "0.33";
+            sha256 = "sha256-bq1ypwOhYC8OR5XDWDj0u4+gTygxcwnPL+IffUWvlhg=";
+          } {};
+          amazonka-core = hfinal.callHackageDirect {
+            pkg = "amazonka-core";
+            ver = "2.0";
+            sha256 = "sha256-KVTe6IlVDNaot1XuFjbvlUs/jmeoyEfqnDYsb4V1K2g=";
+          } {};
+          amazonka-sso = hfinal.callHackageDirect {
+            pkg = "amazonka-sso";
+            ver = "2.0";
+            sha256 = "sha256-+632/wu9Vdii8f5NwFeypXUeUV5b3DgMonUluiwO3F0=";
+          } {};
+          amazonka-sts = hfinal.callHackageDirect {
+            pkg = "amazonka-sts";
+            ver = "2.0";
+            sha256 = "sha256-5eRQ5zH5gsoiJZMwq4eepUyDBHzrIZFOPA6vKOCSuHQ=";
+          } {};
+          amazonka-s3 = hfinal.callHackageDirect {
+            pkg = "amazonka-s3";
+            ver = "2.0";
+            sha256 = "sha256-NHARJB4pGQFNUgoPSAdcibrXVD2nS+vqLxcP0/4bA7I=";
+          } {};
+          amazonka-test = hfinal.callHackageDirect {
+            pkg = "amazonka-test";
+            ver = "2.0";
+            sha256 = "sha256-lFXvtzj4p3aqMpRMyCz32jpkET3tE7BaUf6+2iwQ/ok=";
+          } {};
+          amazonka = hfinal.callHackageDirect {
+            pkg = "amazonka";
+            ver = "2.0";
+            sha256 = "sha256-ut71byLgmg9SgZCfIrDbG76LI7Buq+x6F4oHTTuEdHI=";
+          } {};
         };
       };
 
