@@ -92,6 +92,12 @@ import TahoeLAFS.Storage.Backend (
     writeMutableShare,
  )
 
+import qualified Amazonka as AWS
+import qualified Amazonka.S3 as S3
+import Tahoe.Storage.Backend.S3 (
+    S3Backend (S3Backend),
+ )
+
 -- We also get the Arbitrary ShareNumber instance from here.
 import Lib (
     genStorageIndex,
@@ -113,6 +119,14 @@ spec :: Spec
 spec = do
     Test.Hspec.context "filesystem" $
         Test.Hspec.around (withBackend s3Backend) storageSpec
+
+s3Backend :: IO S3Backend
+s3Backend = do
+    env <- AWS.newEnv AWS.discover
+    void $ runResourceT $ AWS.send env (S3.newCreateBucket name)
+    pure $ S3Backend env name
+  where
+    name = S3.BucketName "yoyoyo"
 
 -- The specification for a storage backend.
 storageSpec :: Backend b => SpecWith b
