@@ -23,7 +23,6 @@
       # Get a nixpkgs customized for this system and including our overlay.
       pkgs = import nixpkgs {
         inherit system;
-        config = {allowBroken = true;};
       };
       hslib = hs-flake-utils.lib {
         inherit pkgs;
@@ -99,7 +98,10 @@
     in {
       checks = hslib.checks {};
       devShells = hslib.devShells {
-        extraBuildInputs = pkgs: [pkgs.zlib];
+        extraBuildInputs = pkgs: with pkgs; [zlib pkg-config gcc];
+        shellHook = ''
+          nix run .#write-cabal-project
+        '';
       };
       packages = hslib.packages {};
       apps.hlint = hslib.apps.hlint {};
@@ -110,6 +112,12 @@
       apps.cabal-test-902 = mkCabalTest "ghc902";
       apps.cabal-test-924 = mkCabalTest "ghc924";
       apps.cabal-test-943 = mkCabalTest "ghc943";
+
+      apps.write-cabal-project = hslib.apps.write-cabal-project {
+        localPackages = {
+          tahoe-great-black-swamp = tahoe-great-black-swamp.sourceInfo.outPath;
+        };
+      };
 
       apps.cabal-test = self.outputs.apps.${system}.cabal-test-943;
 
