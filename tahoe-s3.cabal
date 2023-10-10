@@ -76,7 +76,7 @@ library
     , base                     ^>=4.14.3.0
     , bytestring
     , http-client
-    , tahoe-great-black-swamp
+    , tahoe-great-black-swamp  >=0.3.1.0
     , text
 
   -- Directories containing source files.

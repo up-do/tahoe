@@ -217,11 +217,11 @@
         "pre-commit-hooks": "pre-commit-hooks"
       },
       "locked": {
-        "lastModified": 1696619796,
-        "narHash": "sha256-4PjNRfnk22EuGCu7mF2sAb3JtaWKuBdgew4frd+Xpts=",
+        "lastModified": 1696872058,
+        "narHash": "sha256-QCfoTnGtUABi5KbWXrTh4fhvLGP5B0gAG6KU1ACd96s=",
         "ref": "main",
-        "rev": "8887555c96886d81d671fb68a3a2d000e578c4e0",
-        "revCount": 19,
+        "rev": "683abab784ee38ea61863b3594d3777345f420d6",
+        "revCount": 20,
         "type": "git",
         "url": "https://whetstone.private.storage/jcalderone/hs-flake-utils.git"
       },
@@ -496,16 +496,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1681998540,
-        "narHash": "sha256-gtlHidh8+qMUdnTzlxLIGlCMavq4/TFQDmope33Cd2w=",
-        "ref": "refs/tags/0.1.0.0",
-        "rev": "799bab0c2b8b5f9cbd98e7dd7d6a77285c87f16b",
-        "revCount": 340,
+        "lastModified": 1696262854,
+        "narHash": "sha256-0/6VEsjXe7EvYY2BnkWkmHCVzdp1WcFLjx5mvHDMLnM=",
+        "ref": "refs/tags/0.2.0.0",
+        "rev": "42ae52257ec6e6d8eaa9a56662ca5edfbce8074b",
+        "revCount": 487,
         "type": "git",
         "url": "https://whetstone.private.storage/PrivateStorage/tahoe-chk"
       },
       "original": {
-        "ref": "refs/tags/0.1.0.0",
+        "ref": "refs/tags/0.2.0.0",
         "type": "git",
         "url": "https://whetstone.private.storage/PrivateStorage/tahoe-chk"
       }
@@ -522,16 +522,16 @@
         "tahoe-chk": "tahoe-chk"
       },
       "locked": {
-        "lastModified": 1692208747,
-        "narHash": "sha256-uQde6Sj0h16UkNKx/96OGaEIDI/Jw9hDsfPODR7zSiE=",
-        "ref": "refs/tags/0.3.0.1",
-        "rev": "7614cd4a5b453c5043c1c73c845430cf1ed33c0b",
-        "revCount": 204,
+        "lastModified": 1696949119,
+        "narHash": "sha256-DSrpTLdE4tnpLzTrInWAss1fg8CHSIa+sLGtewSO3Io=",
+        "ref": "refs/tags/0.3.1.0",
+        "rev": "75aa8fe8ba655bbf7fd5025ef8dc2fed6f2ee703",
+        "revCount": 243,
         "type": "git",
         "url": "https://whetstone.private.storage/privatestorage/tahoe-great-black-swamp.git"
       },
       "original": {
-        "ref": "refs/tags/0.3.0.1",
+        "ref": "refs/tags/0.3.1.0",
         "type": "git",
         "url": "https://whetstone.private.storage/privatestorage/tahoe-great-black-swamp.git"
       }

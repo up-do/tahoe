@@ -4,7 +4,9 @@ module Tahoe.Storage.Backend.S3 where
 
 import Amazonka (runResourceT)
 import qualified Amazonka as AWS
+import Amazonka.Auth
 import qualified Amazonka.S3 as S3
+import Control.Monad
 import TahoeLAFS.Storage.API (AllocateBuckets (..), AllocationResult (..))
 import TahoeLAFS.Storage.Backend (Backend (..))
 

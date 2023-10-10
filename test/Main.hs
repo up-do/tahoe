@@ -2,14 +2,13 @@
 
 module Main (main) where
 
-import Prelude hiding (
-    lookup,
-    toInteger,
- )
-
 import Control.Monad (
     void,
     when,
+ )
+import Prelude hiding (
+    lookup,
+    toInteger,
  )
 
 import Data.Bits (
@@ -22,14 +21,7 @@ import GHC.Word (
 
 import qualified Data.Set as Set
 
-import System.Directory (
-    removeDirectoryRecursive,
- )
-
-import System.IO.Temp (
-    createTempDirectory,
-    getCanonicalTemporaryDirectory,
- )
+import Control.Exception
 
 import Test.Hspec (
     Spec,
@@ -124,14 +116,6 @@ spec :: Spec
 spec = do
     Test.Hspec.context "filesystem" $
         Test.Hspec.around (withBackend s3Backend) storageSpec
-
-s3Backend :: IO S3Backend
-s3Backend = do
-    env <- AWS.newEnv AWS.discover
-    void $ AWS.runResourceT $ AWS.send env (S3.newCreateBucket name)
-    pure $ S3Backend env name
-  where
-    name = S3.BucketName "yoyoyo"
 
 -- The specification for a storage backend.
 storageSpec :: Backend b => SpecWith b
@@ -340,3 +324,18 @@ writeShares write ((shareNumber, shareData) : rest) = do
     -- TODO For now we'll do single complete writes.  Later try breaking up the data.
     write shareNumber shareData Nothing
     writeShares write rest
+
+s3Backend :: IO S3Backend
+s3Backend = do
+    let s3 = AWS.setEndpoint False "127.0.0.1" 9000
+    env <- AWS.newEnv AWS.discover
+    let foo = AWS.configureService (s3 S3.defaultService) env
+        newfoo = AWS.overrideService (\s -> s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}) foo
+    bucket <- try $ AWS.runResourceT $ AWS.send newfoo (S3.newCreateBucket name)
+    case bucket of
+        Left (AWS.ServiceError _se) -> pure ()
+        Right _ -> pure ()
+        xxx -> error $ show xxx
+    pure $ S3Backend env name
+  where
+    name = S3.BucketName "yoyoyo"
