@@ -322,16 +322,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1681998540,
-        "narHash": "sha256-gtlHidh8+qMUdnTzlxLIGlCMavq4/TFQDmope33Cd2w=",
-        "ref": "refs/tags/0.1.0.0",
-        "rev": "799bab0c2b8b5f9cbd98e7dd7d6a77285c87f16b",
-        "revCount": 340,
+        "lastModified": 1696262854,
+        "narHash": "sha256-0/6VEsjXe7EvYY2BnkWkmHCVzdp1WcFLjx5mvHDMLnM=",
+        "ref": "refs/tags/0.2.0.0",
+        "rev": "42ae52257ec6e6d8eaa9a56662ca5edfbce8074b",
+        "revCount": 487,
         "type": "git",
         "url": "https://whetstone.private.storage/PrivateStorage/tahoe-chk"
       },
       "original": {
-        "ref": "refs/tags/0.1.0.0",
+        "ref": "refs/tags/0.2.0.0",
         "type": "git",
         "url": "https://whetstone.private.storage/PrivateStorage/tahoe-chk"
       }
