@@ -77,8 +77,18 @@ common common-opts
 
   default-language:   Haskell2010
 
+common warp-workaround
+  -- Place an upper bound on http2 to get a solution that avoids a compile
+  -- error in warp 3.3.25 which for some reason includes < 5 as its
+  -- constraint.
+
+  build-depends: http2 <4
+
 library
-  import:           common-opts
+  import:
+    common-opts
+    , warp-workaround
+
   hs-source-dirs:   src
   exposed-modules:
     TahoeLAFS.Internal.Client
