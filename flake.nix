@@ -8,7 +8,7 @@
     hs-flake-utils.url = "git+https://whetstone.private.storage/jcalderone/hs-flake-utils.git?ref=main";
 
     tahoe-chk = {
-      url = "git+https://whetstone.private.storage/PrivateStorage/tahoe-chk?ref=refs/tags/0.1.0.0";
+      url = "git+https://whetstone.private.storage/PrivateStorage/tahoe-chk?ref=refs/tags/0.2.0.0";
       inputs.nixpkgs.follows = "hs-flake-utils/nixpkgs";
     };
   };

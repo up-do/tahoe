@@ -1,8 +1,9 @@
 # Changelog for tahoe-great-black-swamp
 
-## X.Y.Z
+## 0.3.1.0
 
 * ``TahoeLAFS.Storage.Client.runGBS`` is a new high-level API for performing an interaction with a GBS server.
+* Transitive ``http2`` dependency is now constrained to ``<4`` for compatibility with warp 3.3.25.
 
 ## 0.3.0.1
 

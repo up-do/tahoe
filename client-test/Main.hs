@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE RecordWildCards #-}
 
 {- | Demonstrate the use of some GBS client APIs.
 
@@ -9,14 +8,15 @@
 -}
 module Main where
 
+import Control.Lens (view)
 import Data.ByteString.Base32 (encodeBase32Unpadded)
 import qualified Data.Text as T
 import System.Environment (getArgs)
 import Tahoe.CHK.Capability (
     CHK (CHKReader),
-    Reader (Reader, verifier),
-    Verifier (Verifier, storageIndex),
     pCapability,
+    storageIndex,
+    verifier,
  )
 import TahoeLAFS.Storage.API (ShareNumber (..))
 import TahoeLAFS.Storage.Client (
@@ -31,7 +31,7 @@ import Text.Megaparsec (parse)
 main :: IO ()
 main = do
     [storageNURLStr, capStr, shareNumStr] <- getArgs
-    let Right (CHKReader Reader{verifier = Verifier{..}}) = parse pCapability "argv[2]" (T.pack capStr)
+    let Right (CHKReader reader) = parse pCapability "argv[2]" (T.pack capStr)
         nurlM = parseNURL . T.pack $ storageNURLStr
 
     case nurlM of
@@ -51,5 +51,5 @@ main = do
                     print $ "share numbers: " <> show sharez
                     print $ "share bytes: " <> show chk
           where
-            storageIndexS = T.unpack . T.toLower . encodeBase32Unpadded $ storageIndex
+            storageIndexS = T.unpack . T.toLower . encodeBase32Unpadded . view (verifier . storageIndex) $ reader
             shareNum = ShareNumber $ read shareNumStr
