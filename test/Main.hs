@@ -336,6 +336,6 @@ s3Backend = do
         Left (AWS.ServiceError _se) -> pure ()
         Right _ -> pure ()
         xxx -> error $ show xxx
-    pure $ S3Backend env name
+    pure $ S3Backend newfoo name
   where
     name = S3.BucketName "yoyoyo"
