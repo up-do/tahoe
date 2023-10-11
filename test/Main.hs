@@ -93,6 +93,7 @@ import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import Tahoe.Storage.Backend.S3 (
     S3Backend (S3Backend),
+    newS3Backend,
  )
 
 -- We also get the Arbitrary ShareNumber instance from here.
@@ -336,6 +337,6 @@ s3Backend = do
         Left (AWS.ServiceError _se) -> pure ()
         Right _ -> pure ()
         xxx -> error $ show xxx
-    pure $ S3Backend newfoo name
+    newS3Backend newfoo name
   where
     name = S3.BucketName "yoyoyo"

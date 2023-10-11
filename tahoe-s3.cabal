@@ -75,8 +75,10 @@ library
     , amazonka-s3
     , base                     ^>=4.14.3.0
     , bytestring
+    , conduit
     , containers
     , http-client
+    , lens
     , mtl
     , tahoe-great-black-swamp  >=0.3.1.0
     , text
