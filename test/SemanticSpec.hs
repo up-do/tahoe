@@ -64,10 +64,6 @@ import Data.ByteString (
     map,
  )
 
-import Data.List (
-    sort,
- )
-
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets),
     CBORSet (..),
