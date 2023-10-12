@@ -78,6 +78,7 @@ library
     , conduit
     , containers
     , http-client
+    , http-types
     , lens
     , mtl
     , tahoe-great-black-swamp  >=0.3.1.0

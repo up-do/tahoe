@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -7,28 +9,71 @@ import Amazonka (runResourceT)
 import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import Amazonka.S3.CreateMultipartUpload (createMultipartUploadResponse_uploadId)
+import Amazonka.S3.Lens (completeMultipartUpload_multipartUpload, listObjectsResponse_contents, listObjects_prefix, object_key)
+import qualified Amazonka.S3.Lens as S3
 import Conduit (yield)
-import Control.Lens (view)
+import Control.Lens (set, view, (.~), (?~), (^.))
 import Control.Monad.IO.Class
 import qualified Data.ByteString as B
 import Data.IORef
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (mapMaybe)
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
+import Network.HTTP.Types (ByteRange (ByteRangeFrom))
 import TahoeLAFS.Storage.API
 import TahoeLAFS.Storage.Backend (Backend (..))
+import Text.Read (readMaybe)
 
 -- Where's my Cow?
 type AllocatedShares = Map (StorageIndex, ShareNumber) UploadState
 
-newtype UploadPart = UploadPart S3.UploadPartResponse
+newtype PartNumber = PartNumber Int deriving newtype (Eq)
+
+data UploadPart
+    = UploadStarted
+        { uploadPartNumber :: PartNumber
+        }
+    | UploadFinished
+        { uploadPartNumber :: PartNumber
+        , uploadPartSize :: Integer
+        , uploadPartResponse :: S3.UploadPartResponse
+        }
 
 data UploadState = UploadState
     { uploadStateSize :: Integer
     , uploadParts :: [UploadPart]
     , uploadResponse :: S3.CreateMultipartUploadResponse
     }
+
+-- | Add another part upload to the given state and return the part number and upload id to use with it.
+startUpload :: UploadState -> (UploadState, (PartNumber, T.Text))
+startUpload u@UploadState{uploadParts, uploadResponse} = (u{uploadParts = UploadStarted partNum : uploadParts}, (partNum, view createMultipartUploadResponse_uploadId uploadResponse))
+  where
+    partNum = PartNumber $ length uploadParts
+
+finishUpload :: PartNumber -> Integer -> S3.UploadPartResponse -> UploadState -> (UploadState, (Bool, [S3.CompletedPart]))
+finishUpload finishedPartNum finishedPartSize response u@UploadState{uploadStateSize, uploadParts} = (u{uploadParts = newUploadParts}, (uploadedSize == uploadStateSize, mapMaybe toCompleted newUploadParts))
+  where
+    newUploadParts = finishPart <$> uploadParts
+
+    finishPart c@(UploadStarted candidatePartNum)
+        | finishedPartNum == candidatePartNum = UploadFinished finishedPartNum finishedPartSize response
+        | otherwise = c
+    finishPart f@UploadFinished{} = f
+
+    uploadedSize = sum $ partSize <$> uploadParts
+
+    partSize (UploadStarted _) = 0
+    partSize (UploadFinished _ size _) = size
+
+    toCompleted (UploadStarted _) = Nothing
+    toCompleted (UploadFinished (PartNumber partNum) _ partResp) = completed
+      where
+        completed = S3.newCompletedPart partNum <$> (partResp ^. S3.uploadPartResponse_eTag)
 
 data S3Backend = S3Backend AWS.Env S3.BucketName (IORef AllocatedShares)
 
@@ -71,20 +116,58 @@ instance Backend S3Backend where
             liftIO $ modifyIORef allocatedShares (newMap `Map.union`)
             pure $ AllocationResult{alreadyHave = [], allocated = shareNumbers}
 
-    writeImmutableShare (S3Backend env bucketName allocatedShares) storageIndex shareNumber shareData byteRange = do
-        state <- Map.lookup (storageIndex, shareNumber) <$> readIORef allocatedShares
-        case state of
+    writeImmutableShare s3 storageIndex shareNum shareData Nothing = do
+        -- If no range is given, this is the whole thing.
+        writeImmutableShare s3 storageIndex shareNum shareData (Just [ByteRangeFrom 0])
+    writeImmutableShare (S3Backend env bucketName allocatedShares) storageIndex shareNum shareData (Just byteRanges) = do
+        let stateKey = (storageIndex, shareNum)
+        uploadInfo <- liftIO $ atomicModifyIORef allocatedShares (adjust' startUpload stateKey)
+        case uploadInfo of
             Nothing -> error "not uploading"
-            Just ustate@UploadState{uploadStateSize, uploadParts, uploadResponse} -> runResourceT $ do
+            Just (PartNumber partNum', uploadId) -> runResourceT $ do
                 let reqBody = AWS.Chunked (AWS.ChunkedBody (AWS.ChunkSize (1024 * 1024)) (fromIntegral $ B.length shareData) (yield shareData))
-                response <- AWS.send env (S3.newUploadPart bucketName (storageIndexShareNumberToObjectKey storageIndex shareNumber) (length uploadParts + 1) (view createMultipartUploadResponse_uploadId uploadResponse) reqBody)
-                let uploadPart = UploadPart response
-                -- XXX If we just finished the last piece, also send the CompleteMultipartUpload bit and then clean up our local bookkeeping.
-                liftIO $ modifyIORef allocatedShares (Map.insert (storageIndex, shareNumber) (ustate{uploadParts = uploadPart : uploadParts}))
+                    objKey = storageIndexShareNumberToObjectKey storageIndex shareNum
+                    uploadPart = S3.newUploadPart bucketName objKey partNum' uploadId reqBody
+                response <- AWS.send env uploadPart
+                newState <- liftIO $ atomicModifyIORef allocatedShares (adjust' (finishUpload (PartNumber partNum') (fromIntegral $ B.length shareData) response) stateKey)
+                case newState of
+                    Nothing ->
+                        error "It went missing?"
+                    Just (True, []) ->
+                        error "No parts upload but we're done, huh?"
+                    Just (True, p : parts) -> do
+                        let completedMultipartUpload = Just $ (S3.completedMultipartUpload_parts ?~ (p :| parts)) S3.newCompletedMultipartUpload
+                            completeMultipartUpload = S3.newCompleteMultipartUpload bucketName objKey uploadId
+
+                        liftIO $ print completeMultipartUpload
+                        resp <- AWS.send env ((completeMultipartUpload_multipartUpload .~ completedMultipartUpload) completeMultipartUpload)
+                        liftIO $ print resp
+                        pure ()
+                    Just (False, _) ->
+                        pure ()
+
+    getImmutableShareNumbers (S3Backend env bucketName _) storageIndex = runResourceT $ do
+        resp <- AWS.send env (set listObjects_prefix (Just . storageIndexPrefix $ storageIndex) $ S3.newListObjects bucketName)
+        case view listObjectsResponse_contents resp of
+            Nothing -> pure $ CBORSet mempty
+            Just objects -> pure . CBORSet $ shareNumbers
+              where
+                shareNumbers = Set.fromList (mapMaybe objToShareNum objects)
+
+                objToShareNum :: S3.Object -> Maybe ShareNumber
+                objToShareNum obj = case T.split (== '/') (view (object_key . S3._ObjectKey) obj) of
+                    ["allocated", si, shareNum] ->
+                        if T.unpack si == storageIndex
+                            then ShareNumber <$> readMaybe (T.unpack shareNum)
+                            else Nothing
+                    _ -> Nothing
 
 storageIndexShareNumberToObjectKey :: StorageIndex -> ShareNumber -> S3.ObjectKey
-storageIndexShareNumberToObjectKey si sn =
-    S3.ObjectKey $ T.concat ["allocated/", Text.pack si, "/", T.pack (show sn)]
+storageIndexShareNumberToObjectKey si (ShareNumber sn) =
+    S3.ObjectKey $ T.concat [storageIndexPrefix si, T.pack (show sn)]
+
+storageIndexPrefix :: StorageIndex -> T.Text
+storageIndexPrefix si = T.concat ["allocated/", Text.pack si, "/"]
 
 {-
 TODO: fill in more methods
@@ -119,3 +202,10 @@ class Backend b where
     adviseCorruptMutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
 
 -}
+
+adjust' :: Ord k => (v -> (v, b)) -> k -> Map.Map k v -> (Map k v, Maybe b)
+adjust' f k m = case Map.lookup k m of
+    Nothing -> (m, Nothing)
+    Just v -> (Map.insert k newV m, Just result)
+      where
+        (newV, result) = f v
