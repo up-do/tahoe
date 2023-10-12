@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
@@ -23,6 +24,7 @@ import qualified Data.Set as Set
 
 import Control.Exception
 
+import Control.Lens ((.~), (?~), (^.))
 import Test.Hspec (
     Spec,
     SpecWith,
@@ -106,12 +108,18 @@ import TahoeLAFS.Storage.Backend.Memory (
     memoryBackend,
  )
 
+import Amazonka (runResourceT)
+import qualified Amazonka.S3 as AWS
+import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_key)
+import Control.Monad.IO.Class (MonadIO (liftIO))
+import Data.Maybe (fromMaybe)
+import qualified System.IO as IO
 import TahoeLAFS.Storage.Backend.Filesystem (
     FilesystemBackend (FilesystemBackend),
  )
 
 main :: IO ()
-main = hspec . parallel $ describe "S3" spec
+main = hspec $ describe "S3" spec
 
 spec :: Spec
 spec = do
@@ -157,7 +165,17 @@ class Mess m where
     cleanup :: m -> IO ()
 
 instance Mess S3Backend where
-    cleanup _ = pure ()
+    cleanup (S3Backend env bucketName _) = runResourceT $ do
+        resp <- AWS.send env (S3.newListObjects bucketName)
+        let objectKeysM = (S3.newObjectIdentifier . (^. object_key) <$>) <$> (resp ^. listObjectsResponse_contents)
+        maybe
+            (pure ())
+            ( \case
+                [] -> pure ()
+                objectKeys -> void $ AWS.send env (S3.newDeleteObjects bucketName (delete_objects .~ objectKeys $ S3.newDelete))
+            )
+            objectKeysM
+        void $ AWS.send env (S3.newDeleteBucket bucketName)
 
 withBackend :: (Mess b, Backend b) => IO b -> ((b -> IO ()) -> IO ())
 withBackend b action = do
@@ -221,7 +239,7 @@ immutableWriteAndEnumerateShares ::
 immutableWriteAndEnumerateShares backend storageIndex shareNumbers shareSeed = monadicIO $ do
     pre (isUnique shareNumbers)
     pre (hasElements shareNumbers)
-    let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
+    let permutedShares = shareSeed <$ shareNumbers -- Prelude.map (permuteShare shareSeed) shareNumbers
     let size = fromIntegral (Data.ByteString.length shareSeed)
     let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
     _result <- run $ createImmutableStorageIndex backend storageIndex allocate
@@ -328,15 +346,23 @@ writeShares write ((shareNumber, shareData) : rest) = do
 
 s3Backend :: IO S3Backend
 s3Backend = do
-    let s3 = AWS.setEndpoint False "127.0.0.1" 9000
+    let setLocalEndpoint = AWS.setEndpoint False "127.0.0.1" 9000
+        setAddressingStyle s = s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}
+
+    logger <- AWS.newLogger AWS.Debug IO.stdout
+
     env <- AWS.newEnv AWS.discover
-    let foo = AWS.configureService (s3 S3.defaultService) env
-        newfoo = AWS.overrideService (\s -> s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}) foo
-    bucket <- try $ AWS.runResourceT $ AWS.send newfoo (S3.newCreateBucket name)
+    let loggedEnv = env{AWS.logger = logger}
+        pathEnv = AWS.overrideService setAddressingStyle loggedEnv
+        localEnv = AWS.overrideService setLocalEndpoint pathEnv
+        env' = localEnv
+
+    bucket <- try $ AWS.runResourceT $ AWS.send env' (S3.newCreateBucket name)
     case bucket of
         Left (AWS.ServiceError _se) -> pure ()
         Right _ -> pure ()
         xxx -> error $ show xxx
-    newS3Backend newfoo name
+    -- newS3Backend newfoo name
+    newS3Backend env' name
   where
-    name = S3.BucketName "yoyoyo"
+    name = S3.BucketName "45336944-25bf-4fb1-8e82-9ba2631bda67"

@@ -23,6 +23,7 @@ import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
+import Debug.Trace (trace)
 import Network.HTTP.Types (ByteRange (ByteRangeFrom))
 import TahoeLAFS.Storage.API
 import TahoeLAFS.Storage.Backend (Backend (..))
@@ -53,7 +54,7 @@ data UploadState = UploadState
 startUpload :: UploadState -> (UploadState, (PartNumber, T.Text))
 startUpload u@UploadState{uploadParts, uploadResponse} = (u{uploadParts = UploadStarted partNum : uploadParts}, (partNum, view createMultipartUploadResponse_uploadId uploadResponse))
   where
-    partNum = PartNumber $ length uploadParts
+    partNum = PartNumber $ 1 + length uploadParts
 
 finishUpload :: PartNumber -> Integer -> S3.UploadPartResponse -> UploadState -> (UploadState, (Bool, [S3.CompletedPart]))
 finishUpload finishedPartNum finishedPartSize response u@UploadState{uploadStateSize, uploadParts} = (u{uploadParts = newUploadParts}, (uploadedSize == uploadStateSize, mapMaybe toCompleted newUploadParts))
@@ -125,9 +126,8 @@ instance Backend S3Backend where
         case uploadInfo of
             Nothing -> error "not uploading"
             Just (PartNumber partNum', uploadId) -> runResourceT $ do
-                let reqBody = AWS.Chunked (AWS.ChunkedBody (AWS.ChunkSize (1024 * 1024)) (fromIntegral $ B.length shareData) (yield shareData))
-                    objKey = storageIndexShareNumberToObjectKey storageIndex shareNum
-                    uploadPart = S3.newUploadPart bucketName objKey partNum' uploadId reqBody
+                let objKey = storageIndexShareNumberToObjectKey storageIndex shareNum
+                    uploadPart = S3.newUploadPart bucketName objKey partNum' uploadId (AWS.toBody shareData)
                 response <- AWS.send env uploadPart
                 newState <- liftIO $ atomicModifyIORef allocatedShares (adjust' (finishUpload (PartNumber partNum') (fromIntegral $ B.length shareData) response) stateKey)
                 case newState of
@@ -136,11 +136,11 @@ instance Backend S3Backend where
                     Just (True, []) ->
                         error "No parts upload but we're done, huh?"
                     Just (True, p : parts) -> do
-                        let completedMultipartUpload = Just $ (S3.completedMultipartUpload_parts ?~ (p :| parts)) S3.newCompletedMultipartUpload
-                            completeMultipartUpload = S3.newCompleteMultipartUpload bucketName objKey uploadId
+                        let completedMultipartUpload = (S3.completedMultipartUpload_parts ?~ (p :| parts)) S3.newCompletedMultipartUpload
+                            completeMultipartUpload = (completeMultipartUpload_multipartUpload ?~ completedMultipartUpload) (S3.newCompleteMultipartUpload bucketName objKey uploadId)
 
                         liftIO $ print completeMultipartUpload
-                        resp <- AWS.send env ((completeMultipartUpload_multipartUpload .~ completedMultipartUpload) completeMultipartUpload)
+                        resp <- AWS.send env completeMultipartUpload
                         liftIO $ print resp
                         pure ()
                     Just (False, _) ->
@@ -148,19 +148,24 @@ instance Backend S3Backend where
 
     getImmutableShareNumbers (S3Backend env bucketName _) storageIndex = runResourceT $ do
         resp <- AWS.send env (set listObjects_prefix (Just . storageIndexPrefix $ storageIndex) $ S3.newListObjects bucketName)
+        liftIO $ print resp
         case view listObjectsResponse_contents resp of
             Nothing -> pure $ CBORSet mempty
-            Just objects -> pure . CBORSet $ shareNumbers
+            Just objects -> pure $ trace ("SHARE NOMBERS:" <> show (CBORSet shareNumbers)) (CBORSet shareNumbers)
               where
                 shareNumbers = Set.fromList (mapMaybe objToShareNum objects)
 
                 objToShareNum :: S3.Object -> Maybe ShareNumber
-                objToShareNum obj = case T.split (== '/') (view (object_key . S3._ObjectKey) obj) of
-                    ["allocated", si, shareNum] ->
-                        if T.unpack si == storageIndex
-                            then ShareNumber <$> readMaybe (T.unpack shareNum)
-                            else Nothing
-                    _ -> Nothing
+                objToShareNum obj =
+                    trace ("objToShareNum: " <> show parsed) $ case parsed of
+                        ["allocated", si, shareNum] ->
+                            if T.unpack si == storageIndex
+                                then ShareNumber <$> readMaybe (T.unpack shareNum)
+                                else trace ("BLAAAH: " <> show si) Nothing
+                        stuff ->
+                            trace ("blaaah: " <> show stuff) Nothing
+                  where
+                    parsed = T.split (== '/') (view (object_key . S3._ObjectKey) obj)
 
 storageIndexShareNumberToObjectKey :: StorageIndex -> ShareNumber -> S3.ObjectKey
 storageIndexShareNumberToObjectKey si (ShareNumber sn) =
