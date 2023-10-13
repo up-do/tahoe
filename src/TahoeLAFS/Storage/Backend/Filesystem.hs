@@ -9,35 +9,32 @@ module TahoeLAFS.Storage.Backend.Filesystem (
     incomingPathOf,
 ) where
 
-import Prelude hiding (
-    readFile,
-    writeFile,
+import Control.Exception (
+    throwIO,
+    tryJust,
  )
-
 import Data.ByteString (
     hPut,
     readFile,
     writeFile,
  )
-import qualified Data.Set as Set
-import Network.HTTP.Types (
-    ByteRanges,
+import Data.Map.Strict (
+    toList,
  )
-
-import Control.Exception (
-    throwIO,
-    tryJust,
- )
-
 import Data.Maybe (
     mapMaybe,
  )
-
-import Data.Map.Strict (
-    fromList,
-    toList,
+import qualified Data.Set as Set
+import System.Directory (
+    createDirectoryIfMissing,
+    doesPathExist,
+    listDirectory,
+    renameFile,
  )
-
+import System.FilePath (
+    takeDirectory,
+    (</>),
+ )
 import System.IO (
     Handle,
     IOMode (ReadWriteMode),
@@ -48,26 +45,11 @@ import System.IO (
 import System.IO.Error (
     isDoesNotExistError,
  )
-
-import System.FilePath (
-    takeDirectory,
-    (</>),
- )
-
-import System.Directory (
-    createDirectoryIfMissing,
-    doesPathExist,
-    listDirectory,
-    renameFile,
- )
-
 import TahoeLAFS.Storage.API (
     AllocateBuckets (..),
     AllocationResult (..),
     CBORSet (..),
-    LeaseSecret,
     Offset,
-    QueryRange,
     ReadTestWriteResult (ReadTestWriteResult, readData, success),
     ReadTestWriteVectors (ReadTestWriteVectors),
     ShareData,
@@ -79,12 +61,14 @@ import TahoeLAFS.Storage.API (
     WriteVector (WriteVector),
     shareNumber,
  )
-
 import qualified TahoeLAFS.Storage.API as Storage
-
 import TahoeLAFS.Storage.Backend (
     Backend (..),
     ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten),
+ )
+import Prelude hiding (
+    readFile,
+    writeFile,
  )
 
 newtype FilesystemBackend = FilesystemBackend FilePath
@@ -108,7 +92,7 @@ maxMutableShareSize = 69_105 * 1_000 * 1_000 * 1_000 * 1_000
 --  base-32 chars).
 
 instance Backend FilesystemBackend where
-    version (FilesystemBackend path) = do
+    version (FilesystemBackend _path) = do
         -- Hard-code some arbitrary amount of space.  There is a statvfs
         -- package that can inspect the system and tell us a more correct
         -- answer but it is somewhat unmaintained and fails to build in some
@@ -127,7 +111,7 @@ instance Backend FilesystemBackend where
                         }
                 }
 
-    createImmutableStorageIndex backend storageIndex secrets params = do
+    createImmutableStorageIndex backend storageIndex _secrets params = do
         let exists = haveShare backend storageIndex
         (alreadyHave, allocated) <- partitionM exists (shareNumbers params)
         allocatev backend storageIndex allocated
@@ -244,15 +228,6 @@ storageStartSegment [] = fail "illegal short storage index"
 storageStartSegment [_] = storageStartSegment []
 storageStartSegment (a : b : _) = [a, b]
 
--- Create a space to write data for an incoming share.
-allocate ::
-    FilesystemBackend ->
-    StorageIndex ->
-    ShareNumber ->
-    IO ()
-allocate backend storageIndex shareNumber' =
-    allocatev backend storageIndex [shareNumber']
-
 -- Create spaces to write data for several incoming shares.
 allocatev ::
     FilesystemBackend ->
@@ -260,8 +235,8 @@ allocatev ::
     [ShareNumber] ->
     IO ()
 allocatev _backend _storageIndex [] = return ()
-allocatev (FilesystemBackend root) storageIndex (shareNumber : rest) =
-    let sharePath = incomingPathOf root storageIndex shareNumber
+allocatev (FilesystemBackend root) storageIndex (shareNum : rest) =
+    let sharePath = incomingPathOf root storageIndex shareNum
         shareDirectory = takeDirectory sharePath
         createParents = True
      in do

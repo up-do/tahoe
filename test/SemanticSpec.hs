@@ -51,7 +51,6 @@ import Test.QuickCheck (
  )
 
 import Test.QuickCheck.Monadic (
-    assert,
     monadicIO,
     pre,
     run,
@@ -59,7 +58,6 @@ import Test.QuickCheck.Monadic (
 
 import Data.ByteString (
     ByteString,
-    concat,
     length,
     map,
  )

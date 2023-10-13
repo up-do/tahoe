@@ -15,25 +15,20 @@ import Data.Map.Strict (
     fromList,
  )
 
-import qualified Data.Set as Set
 import Network.HTTP.Types (
     ByteRanges,
  )
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult,
-    CBOR,
     CBORSet (..),
     CorruptionDetails,
     LeaseSecret,
-    Offset,
     QueryRange,
-    ReadResult,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
     ShareData,
     ShareNumber,
-    Size,
     SlotSecrets,
     StorageIndex,
     TestWriteVectors (..),
@@ -75,7 +70,7 @@ writeMutableShare ::
     ShareData ->
     Maybe ByteRanges ->
     IO ()
-writeMutableShare b secrets storageIndex shareNumber shareData Nothing = do
+writeMutableShare b _secrets storageIndex shareNumber shareData Nothing = do
     let testWriteVectors =
             fromList
                 [

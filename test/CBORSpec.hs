@@ -48,8 +48,10 @@ spec = do
         it "works for CBORSet" $
             deserialise (serialise cborSet) `shouldBe` cborSet
 
-readRes = "strict bytestring" :: BS.ByteString
+readRes :: BS.ByteString
+readRes = "strict bytestring"
 
+cborSet :: CBORSet ShareNumber
 cborSet = CBORSet (Set.fromList $ ShareNumber <$> [1, 2, 3])
 
 testAV :: ApplicationVersion

@@ -3,20 +3,9 @@ module TahoeLAFS.Storage.Backend.Memory (
     memoryBackend,
 ) where
 
-import Prelude hiding (
-    lookup,
-    map,
- )
-
-import Network.HTTP.Types (
-    ByteRanges,
- )
-
 import Control.Exception (
     throwIO,
  )
-import Data.Maybe (fromMaybe)
-
 import Data.IORef (
     IORef,
     atomicModifyIORef',
@@ -27,7 +16,6 @@ import Data.IORef (
 import Data.Map.Strict (
     Map,
     adjust,
-    filterWithKey,
     fromList,
     insert,
     keys,
@@ -35,10 +23,9 @@ import Data.Map.Strict (
     map,
     toList,
  )
+import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
-
 import TahoeLAFS.Storage.API (
-    AllocateBuckets,
     AllocationResult (..),
     CBORSet (..),
     CorruptionDetails,
@@ -58,10 +45,13 @@ import TahoeLAFS.Storage.API (
     WriteVector (..),
     shareNumbers,
  )
-
 import TahoeLAFS.Storage.Backend (
     Backend (..),
     ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten),
+ )
+import Prelude hiding (
+    lookup,
+    map,
  )
 
 type ShareStorage = Map StorageIndex (Map ShareNumber ShareData)
@@ -121,7 +111,7 @@ instance Backend MemoryBackend where
                 , writev <- write testWritev'
                 ]
 
-    createImmutableStorageIndex _backend _idx secrets params =
+    createImmutableStorageIndex _backend _idx _secrets params =
         return
             AllocationResult
                 { alreadyHave = mempty

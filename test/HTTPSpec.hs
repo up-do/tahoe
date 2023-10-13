@@ -4,45 +4,32 @@ module HTTPSpec (
     spec,
 ) where
 
-import Prelude hiding (
-    replicate,
- )
-
-import qualified Data.Map.Strict as Map
-import qualified Data.Vector as Vector
-import GHC.Int (
-    Int64,
- )
-
-import Data.Aeson.Types (
-    Value (Array, Number, String),
- )
-
 import Data.Aeson (
     encode,
  )
-
-import Data.ByteString (
-    ByteString,
+import Data.Aeson.Types (
+    Value (Array, Number, String),
  )
-
 import qualified Data.ByteString.Lazy as L
-
+import qualified Data.Map.Strict as Map
+import qualified Data.Vector as Vector
 import Network.HTTP.Types.Method (
     methodGet,
     methodPatch,
     methodPost,
-    methodPut,
  )
-
+import TahoeLAFS.Storage.Backend.Null (
+    NullBackend (NullBackend),
+ )
+import TahoeLAFS.Storage.Server (
+    app,
+ )
 import Test.Hspec (
     Spec,
     describe,
     it,
  )
-
 import Test.Hspec.Wai (
-    WaiSession,
     matchBody,
     matchHeaders,
     request,
@@ -50,21 +37,11 @@ import Test.Hspec.Wai (
     with,
     (<:>),
  )
-
 import Test.Hspec.Wai.Matcher (
     bodyEquals,
  )
-
-import Network.Wai.Test (
-    SResponse,
- )
-
-import TahoeLAFS.Storage.Backend.Null (
-    NullBackend (NullBackend),
- )
-
-import TahoeLAFS.Storage.Server (
-    app,
+import Prelude hiding (
+    replicate,
  )
 
 -- WaiSession changed incompatibly between hspec-wai 0.9.2 and 0.11.1.  We
@@ -122,10 +99,6 @@ corruptionJSON =
 sharesResultJSON :: L.ByteString
 -- Simple enough I won't go through Aeson here
 sharesResultJSON = "[]"
-
-readResultJSON :: L.ByteString
--- Simple, again.
-readResultJSON = "{}"
 
 spec :: Spec
 spec = with (return $ app NullBackend) $

@@ -9,62 +9,50 @@ import Control.Exception (
     throw,
  )
 import Control.Monad.IO.Class (
-    MonadIO,
     liftIO,
  )
 import Data.Maybe (fromMaybe)
-
-import TahoeLAFS.Storage.API (
-    AllocateBuckets,
-    AllocationResult (..),
-    CBORSet (..),
-    CorruptionDetails,
-    LeaseSecret,
-    Offset,
-    QueryRange,
-    ReadResult,
-    ReadTestWriteResult (..),
-    ReadTestWriteVectors,
-    ShareData,
-    ShareNumber,
-    Size,
-    StorageAPI,
-    StorageIndex,
-    Version (..),
-    api,
- )
-
-import qualified TahoeLAFS.Storage.Backend as Backend
-import TahoeLAFS.Storage.Backend.Filesystem (
-    FilesystemBackend (FilesystemBackend),
- )
-
-import Servant (
-    Handler,
-    Server,
-    serve,
-    (:<|>) (..),
- )
-
 import Network.HTTP.Types (
-    ByteRange,
     ByteRanges,
  )
-
 import Network.Wai (
     Application,
  )
-
 import Network.Wai.Handler.Warp (
     Port,
     defaultSettings,
     runSettings,
     setPort,
  )
-
 import Network.Wai.Handler.WarpTLS (
     runTLS,
     tlsSettings,
+ )
+import Servant (
+    Handler,
+    Server,
+    serve,
+    (:<|>) (..),
+ )
+import TahoeLAFS.Storage.API (
+    AllocateBuckets,
+    AllocationResult (..),
+    CBORSet (..),
+    CorruptionDetails,
+    LeaseSecret,
+    QueryRange,
+    ReadTestWriteResult (..),
+    ReadTestWriteVectors,
+    ShareData,
+    ShareNumber,
+    StorageAPI,
+    StorageIndex,
+    Version (..),
+    api,
+ )
+import qualified TahoeLAFS.Storage.Backend as Backend
+import TahoeLAFS.Storage.Backend.Filesystem (
+    FilesystemBackend (FilesystemBackend),
  )
 
 version :: Backend.Backend b => b -> Handler Version

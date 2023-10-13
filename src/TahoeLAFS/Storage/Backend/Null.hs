@@ -4,24 +4,13 @@ module TahoeLAFS.Storage.Backend.Null (
     NullBackend (NullBackend),
 ) where
 
+import qualified Data.Set as Set
 import TahoeLAFS.Storage.API (
-    AllocateBuckets,
     AllocationResult (..),
-    ApplicationVersion,
     CBORSet (..),
-    CorruptionDetails,
-    Offset,
-    QueryRange,
-    ReadResult,
-    ShareData,
-    ShareNumber,
-    Size,
-    StorageIndex,
     Version (..),
     Version1Parameters (..),
  )
-
-import qualified Data.Set as Set
 import TahoeLAFS.Storage.Backend (
     Backend (..),
  )

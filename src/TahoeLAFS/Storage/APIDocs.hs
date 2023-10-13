@@ -25,7 +25,7 @@ import Servant (
 import Servant.Docs (
     DocCapture (DocCapture),
     DocQueryParam (DocQueryParam),
-    ParamKind (List, Normal),
+    ParamKind (List),
     ToCapture (toCapture),
     ToParam (toParam),
     ToSample (toSamples),
@@ -36,16 +36,13 @@ import Servant.Docs (
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets),
     AllocationResult (AllocationResult),
-    ApplicationVersion,
     CorruptionDetails (CorruptionDetails),
-    Offset,
     ReadResult,
     ReadTestWriteResult (ReadTestWriteResult),
     ReadTestWriteVectors (ReadTestWriteVectors),
     ReadVector,
     ShareData,
     ShareNumber (ShareNumber),
-    SlotSecrets (SlotSecrets),
     StorageIndex,
     TestOperator (Eq),
     TestVector (TestVector),
@@ -53,10 +50,6 @@ import TahoeLAFS.Storage.API (
     Version (Version),
     Version1Parameters (Version1Parameters),
     WriteVector (WriteVector),
-    leaseCancelSecretLength,
-    leaseRenewSecretLength,
-    renewSecretLength,
-    writeEnablerSecretLength,
  )
 
 instance ToCapture (Capture "storage_index" StorageIndex) where
