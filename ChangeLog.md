@@ -1,5 +1,11 @@
 # Changelog for tahoe-great-black-swamp
 
+## 0.4.0.0
+
+* ``TahoeLAFS.Storage.Backend.Backend`` has received a number of incompatible
+   changes to bring it up-to-date with the latest upstream Great Black Swamp
+   specification.
+
 ## 0.3.1.0
 
 * ``TahoeLAFS.Storage.Client.runGBS`` is a new high-level API for performing an interaction with a GBS server.
