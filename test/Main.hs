@@ -35,6 +35,7 @@ import Test.Hspec (
     describe,
     hspec,
     it,
+    parallel,
     runIO,
     shouldBe,
     shouldReturn,
@@ -45,9 +46,16 @@ import Test.Hspec.Expectations (
  )
 
 import Test.QuickCheck (
+    Arbitrary (arbitrary),
+    Gen,
+    NonNegative (getNonNegative),
+    Positive (getPositive),
     Property,
+    Result (numDiscarded),
     forAll,
     property,
+    shuffle,
+    sublistOf,
  )
 
 import Test.QuickCheck.Monadic (
@@ -112,7 +120,17 @@ import qualified Network.HTTP.Types as HTTP
 import qualified System.IO as IO
 
 main :: IO ()
-main = hspec $ describe "S3" spec
+main = hspec . parallel . describe "S3" $ spec
+
+newtype ShareNumbers = ShareNumbers [ShareNumber] deriving (Eq, Ord, Show)
+
+instance Arbitrary ShareNumbers where
+    arbitrary = ShareNumbers . fmap ShareNumber <$> nums
+      where
+        nums =
+            arbitrary
+                >>= (shuffle . enumFromTo 0) . getNonNegative
+                >>= \(num : rest) -> (num :) <$> sublistOf rest
 
 spec :: Spec
 spec = do
@@ -192,12 +210,10 @@ alreadyHavePlusAllocatedImm ::
     Backend b =>
     b -> -- The backend on which to operate
     StorageIndex -> -- The storage index to use
-    [ShareNumber] -> -- The share numbers to allocate
+    ShareNumbers -> -- The share numbers to allocate
     Size -> -- The size of each share
     Property
-alreadyHavePlusAllocatedImm backend storageIndex shareNumbers size = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
+alreadyHavePlusAllocatedImm backend storageIndex (ShareNumbers shareNumbers) size = monadicIO $ do
     result <- run $ createImmutableStorageIndex backend storageIndex $ AllocateBuckets "renew" "cancel" shareNumbers size
     when (alreadyHave result ++ allocated result /= shareNumbers) $
         fail
@@ -214,12 +230,10 @@ alreadyHavePlusAllocatedMut ::
     Backend b =>
     b -> -- The backend on which to operate
     StorageIndex -> -- The storage index to use
-    [ShareNumber] -> -- The share numbers to allocate
+    ShareNumbers -> -- The share numbers to allocate
     Size -> -- The size of each share
     Property
-alreadyHavePlusAllocatedMut backend storageIndex shareNumbers size = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
+alreadyHavePlusAllocatedMut backend storageIndex (ShareNumbers shareNumbers) size = monadicIO $ do
     result <- run $ createMutableStorageIndex backend storageIndex $ AllocateBuckets "renew" "cancel" shareNumbers size
     when (alreadyHave result ++ allocated result /= shareNumbers) $
         fail
@@ -236,12 +250,10 @@ immutableWriteAndEnumerateShares ::
     Backend b =>
     b ->
     StorageIndex ->
-    [ShareNumber] ->
+    ShareNumbers ->
     ByteString ->
     Property
-immutableWriteAndEnumerateShares backend storageIndex shareNumbers shareSeed = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
+immutableWriteAndEnumerateShares backend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = shareSeed <$ shareNumbers -- Prelude.map (permuteShare shareSeed) shareNumbers
     let size = fromIntegral (Data.ByteString.length shareSeed)
     let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
@@ -257,12 +269,10 @@ immutableWriteAndRewriteShare ::
     Backend b =>
     b ->
     StorageIndex ->
-    [ShareNumber] ->
+    ShareNumbers ->
     ByteString ->
     Property
-immutableWriteAndRewriteShare backend storageIndex shareNumbers shareSeed = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
+immutableWriteAndRewriteShare backend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let size = fromIntegral (Data.ByteString.length shareSeed)
     let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
     let aShareNumber = head shareNumbers
@@ -281,12 +291,10 @@ immutableWriteAndReadShare ::
     Backend b =>
     b ->
     StorageIndex ->
-    [ShareNumber] ->
+    ShareNumbers ->
     ByteString ->
     Property
-immutableWriteAndReadShare backend storageIndex shareNumbers shareSeed = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
+immutableWriteAndReadShare backend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
     let size = fromIntegral (Data.ByteString.length shareSeed)
     let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
@@ -302,12 +310,10 @@ mutableWriteAndEnumerateShares ::
     Backend b =>
     b ->
     StorageIndex ->
-    [ShareNumber] ->
+    ShareNumbers ->
     ByteString ->
     Property
-mutableWriteAndEnumerateShares backend storageIndex shareNumbers shareSeed = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
+mutableWriteAndEnumerateShares backend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
     let size = fromIntegral (Data.ByteString.length shareSeed)
     let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
@@ -322,13 +328,6 @@ mutableWriteAndEnumerateShares backend storageIndex shareNumbers shareSeed = mon
     (CBORSet readShareNumbers) <- run $ getMutableShareNumbers backend storageIndex
     when (readShareNumbers /= Set.fromList shareNumbers) $
         fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
-
-isUnique :: Ord a => [a] -> Bool
-isUnique xs = Prelude.length xs == Prelude.length (Set.toList $ Set.fromList xs)
-
--- XXX null ?
-hasElements :: [a] -> Bool
-hasElements = not . null
 
 permuteShare :: ByteString -> ShareNumber -> ByteString
 permuteShare seed number =

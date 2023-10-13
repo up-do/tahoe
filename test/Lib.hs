@@ -24,6 +24,7 @@ import qualified Data.Text as Text
 import Test.QuickCheck (
     Arbitrary (arbitrary),
     Gen,
+    listOf,
     suchThatMap,
     vectorOf,
  )
@@ -42,15 +43,13 @@ gen10String = vectorOf 10 arbitrary
 
 gen10ByteString :: Gen ByteString
 gen10ByteString =
-    suchThatMap (vectorOf 10 (arbitrary :: Gen Word8)) (Just . pack)
+    pack <$> vectorOf 10 (arbitrary :: Gen Word8)
 
 genStorageIndex :: Gen StorageIndex
-genStorageIndex =
-    suchThatMap gen10ByteString (Just . b32encode)
+genStorageIndex = b32encode <$> gen10ByteString
 
 positiveIntegers :: Gen Integer
-positiveIntegers =
-    suchThatMap (arbitrary :: Gen Integer) (Just . abs)
+positiveIntegers = abs <$> (arbitrary :: Gen Integer)
 
 instance Arbitrary ShareNumber where
     arbitrary = suchThatMap positiveIntegers shareNumber

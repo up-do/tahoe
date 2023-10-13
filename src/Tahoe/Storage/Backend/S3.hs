@@ -215,7 +215,6 @@ class Backend b where
     readMutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     getMutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     adviseCorruptMutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
-
 -}
 
 adjust' :: Ord k => (v -> (Maybe v, b)) -> k -> Map.Map k v -> (Map k v, Maybe b)
