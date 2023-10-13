@@ -17,7 +17,7 @@ import Control.Exception (throwIO)
 import Control.Lens (set, view, (?~), (^.))
 import Control.Monad (void)
 import Control.Monad.IO.Class
-import Data.Bifunctor (Bifunctor (first, second))
+import Data.Bifunctor (Bifunctor (first))
 import qualified Data.ByteString as B
 import Data.IORef
 import Data.List.NonEmpty (NonEmpty ((:|)))
@@ -27,7 +27,6 @@ import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
-import Debug.Trace (trace)
 import Network.HTTP.Types (ByteRange (ByteRangeFrom))
 import TahoeLAFS.Storage.API
 import TahoeLAFS.Storage.Backend (Backend (..), ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten))
@@ -201,16 +200,7 @@ storageIndexPrefix :: T.Text -> StorageIndex -> T.Text
 storageIndexPrefix prefix si = T.concat [prefix, "/allocated/", Text.pack si, "/"]
 
 {-
-TODO: fill in more methods
-1. writeImmutableShare
-2. readImmutableShare
-would give us a round-trip
-the flow is
-1. create immutable storage index
-2. write immutable share
-3. read immutable share
-
-the class that needs methods implemented:
+the remaining methods to implement:
 class Backend b where
     version :: b -> IO Version
 
@@ -218,13 +208,7 @@ class Backend b where
     -- given storage index.
     renewLease :: b -> StorageIndex -> [LeaseSecret] -> IO ()
 
-    createImmutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
-
-    -- May throw ImmutableShareAlreadyWritten
-    writeImmutableShare :: b -> StorageIndex -> ShareNumber -> ShareData -> Maybe ByteRanges -> IO ()
     adviseCorruptImmutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
-    getImmutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
-    readImmutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
 
     createMutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
     readvAndTestvAndWritev :: b -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
