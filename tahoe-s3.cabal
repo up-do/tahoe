@@ -147,6 +147,7 @@ test-suite tahoe-s3-test
     , directory
     , hspec
     , hspec-expectations
+    , http-types
     , lens
     , QuickCheck
     , quickcheck-instances

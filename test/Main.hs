@@ -1,9 +1,12 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
 
 import Control.Monad (
+    guard,
+    unless,
     void,
     when,
  )
@@ -21,20 +24,20 @@ import GHC.Word (
  )
 
 import qualified Data.Set as Set
+import qualified Data.Text as T
 
-import Control.Exception
-
-import Control.Lens ((.~), (?~), (^.))
+import Control.Lens (view, (.~), (?~), (^.), _Just)
 import Test.Hspec (
     Spec,
     SpecWith,
     around,
-    before,
     context,
     describe,
     hspec,
     it,
-    parallel,
+    runIO,
+    shouldBe,
+    shouldReturn,
     shouldThrow,
  )
 import Test.Hspec.Expectations (
@@ -56,20 +59,16 @@ import Test.QuickCheck.Monadic (
 
 import Data.ByteString (
     ByteString,
-    concat,
     length,
     map,
  )
 
-import Data.List (
-    sort,
- )
-
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets),
+    AllocationResult (AllocationResult),
     CBORSet (..),
     ShareData,
-    ShareNumber,
+    ShareNumber (ShareNumber),
     Size,
     SlotSecrets (..),
     StorageIndex,
@@ -94,7 +93,7 @@ import TahoeLAFS.Storage.Backend (
 import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import Tahoe.Storage.Backend.S3 (
-    S3Backend (S3Backend),
+    S3Backend (S3Backend, s3BackendBucket, s3BackendEnv, s3BackendPrefix, s3BackendState),
     newS3Backend,
  )
 
@@ -103,20 +102,14 @@ import Lib (
     genStorageIndex,
  )
 
-import TahoeLAFS.Storage.Backend.Memory (
-    MemoryBackend,
-    memoryBackend,
- )
-
 import Amazonka (runResourceT)
-import qualified Amazonka.S3 as AWS
 import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_key)
+import qualified Amazonka.S3.Lens as S3
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Data.Maybe (fromMaybe)
+import Data.IORef (readIORef)
+import Data.Maybe (catMaybes)
+import qualified Network.HTTP.Types as HTTP
 import qualified System.IO as IO
-import TahoeLAFS.Storage.Backend.Filesystem (
-    FilesystemBackend (FilesystemBackend),
- )
 
 main :: IO ()
 main = hspec $ describe "S3" spec
@@ -127,10 +120,22 @@ spec = do
         Test.Hspec.around (withBackend s3Backend) storageSpec
 
 -- The specification for a storage backend.
-storageSpec :: Backend b => SpecWith b
+storageSpec :: (Backend b, b ~ S3Backend) => SpecWith b
 storageSpec =
     context "v1" $ do
         context "immutable" $ do
+            it "simple upload works" $ \backend -> do
+                let storageIndex = "aaaaaaaaaaaaaaaa"
+                    shareData = "Hello world"
+
+                alloc <- createImmutableStorageIndex backend storageIndex (AllocateBuckets "" "" [ShareNumber 0] (fromIntegral $ Data.ByteString.length shareData))
+                alloc `shouldBe` AllocationResult [] [ShareNumber 0]
+
+                write <- writeImmutableShare backend storageIndex (ShareNumber 0) shareData Nothing
+                write `shouldBe` ()
+
+                readIORef (s3BackendState backend) `shouldReturn` mempty
+
             describe "allocate a storage index" $
                 it "accounts for all allocated share numbers" $ \backend ->
                     property $
@@ -165,17 +170,15 @@ class Mess m where
     cleanup :: m -> IO ()
 
 instance Mess S3Backend where
-    cleanup (S3Backend env bucketName _) = runResourceT $ do
-        resp <- AWS.send env (S3.newListObjects bucketName)
-        let objectKeysM = (S3.newObjectIdentifier . (^. object_key) <$>) <$> (resp ^. listObjectsResponse_contents)
-        maybe
-            (pure ())
-            ( \case
-                [] -> pure ()
-                objectKeys -> void $ AWS.send env (S3.newDeleteObjects bucketName (delete_objects .~ objectKeys $ S3.newDelete))
-            )
-            objectKeysM
-        void $ AWS.send env (S3.newDeleteBucket bucketName)
+    -- Delete all objects with a prefix matching this backend.  Leave the
+    -- bucket alone in case there are other objects unrelated to this bucket
+    -- in it.
+    cleanup (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) = runResourceT $ do
+        resp <- AWS.send s3BackendEnv (S3.listObjects_prefix ?~ s3BackendPrefix $ S3.newListObjects s3BackendBucket)
+        let objectKeys = catMaybes . traverse (S3.newObjectIdentifier . (^. object_key) <$>) $ resp ^. listObjectsResponse_contents
+
+        unless (null objectKeys) . void $
+            AWS.send s3BackendEnv (S3.newDeleteObjects s3BackendBucket (delete_objects .~ objectKeys $ S3.newDelete))
 
 withBackend :: (Mess b, Backend b) => IO b -> ((b -> IO ()) -> IO ())
 withBackend b action = do
@@ -246,7 +249,7 @@ immutableWriteAndEnumerateShares backend storageIndex shareNumbers shareSeed = m
     run $ writeShares (writeImmutableShare backend storageIndex) (zip shareNumbers permutedShares)
     readShareNumbers <- run $ getImmutableShareNumbers backend storageIndex
     when (readShareNumbers /= (CBORSet . Set.fromList $ shareNumbers)) $
-        fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
+        fail (show readShareNumbers ++ " /= " ++ (show . CBORSet . Set.fromList) shareNumbers)
 
 -- Immutable share data written to the shares of a given storage index cannot
 -- be rewritten by a subsequent writeImmutableShare operation.
@@ -345,24 +348,51 @@ writeShares write ((shareNumber, shareData) : rest) = do
     writeShares write rest
 
 s3Backend :: IO S3Backend
-s3Backend = do
+s3Backend = runResourceT $ do
     let setLocalEndpoint = AWS.setEndpoint False "127.0.0.1" 9000
         setAddressingStyle s = s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}
 
     logger <- AWS.newLogger AWS.Debug IO.stdout
 
     env <- AWS.newEnv AWS.discover
-    let loggedEnv = env{AWS.logger = logger}
+    let loggedEnv = env -- {AWS.logger = logger}
         pathEnv = AWS.overrideService setAddressingStyle loggedEnv
         localEnv = AWS.overrideService setLocalEndpoint pathEnv
         env' = localEnv
 
-    bucket <- try $ AWS.runResourceT $ AWS.send env' (S3.newCreateBucket name)
+    bucket <- AWS.sendEither env' (S3.newCreateBucket name)
     case bucket of
-        Left (AWS.ServiceError _se) -> pure ()
-        Right _ -> pure ()
-        xxx -> error $ show xxx
-    -- newS3Backend newfoo name
-    newS3Backend env' name
+        -- AWS accepts duplicate create as long as you are the creator of the
+        -- existing bucket.  MinIO returns a 409 Conflict response in that
+        -- case.
+        Left (AWS.ServiceError err) -> if HTTP.statusCode (err ^. AWS.serviceError_status) == 409 then pure () else error (show err)
+        Left err -> error (show err)
+        Right _ -> do
+            exists <- AWS.await env' S3.newBucketExists (S3.newHeadBucket name)
+            guard (exists == AWS.AcceptSuccess)
+
+    prefix <- unusedPrefixFrom env' name $ T.singleton <$> ['a' .. 'z']
+    liftIO $ newS3Backend env' name prefix
   where
     name = S3.BucketName "45336944-25bf-4fb1-8e82-9ba2631bda67"
+
+    unusedPrefixFrom _ _ [] = error "Could not find an unused prefix"
+    unusedPrefixFrom env bucket (letter : more) = do
+        contents <- (^. listObjectsResponse_contents . _Just) <$> AWS.send env (S3.newListObjects bucket)
+        let keys = T.pack . show . view object_key <$> contents
+        if any (prefix `T.isPrefixOf`) keys
+            then unusedPrefixFrom env bucket more
+            else do
+                -- Create a placeholder so we will immediately consider this
+                -- prefix used.  This is still race-y still we look before we
+                -- leap but the alternative is screwing with a bunch of
+                -- complex AWS locking configuration that I don't feel like
+                -- doing, especially just for this test suite which will
+                -- mostly not have anything to race against anyway.
+                void $ AWS.send env (S3.newPutObject bucket (S3.ObjectKey prefix) (AWS.toBody ("placeholder" :: String)))
+
+                -- Then just return the letter and let the backend put in a
+                -- separator if it wants to.
+                pure letter
+      where
+        prefix = letter <> "/"
