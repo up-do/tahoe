@@ -12,6 +12,7 @@ import qualified Amazonka.S3 as S3
 import Amazonka.S3.CreateMultipartUpload (createMultipartUploadResponse_uploadId)
 import Amazonka.S3.Lens (completeMultipartUpload_multipartUpload, listObjectsResponse_contents, listObjects_prefix, object_key)
 import qualified Amazonka.S3.Lens as S3
+import Conduit (sinkList)
 import Control.Lens (set, view, (?~), (^.))
 import Control.Monad (void)
 import Control.Monad.IO.Class
@@ -184,6 +185,12 @@ instance Backend S3Backend where
                         _ -> Nothing
                   where
                     parsed = T.split (== '/') (view (object_key . S3._ObjectKey) obj)
+
+    readImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum range = runResourceT $ do
+        resp <- AWS.send s3BackendEnv (S3.newGetObject s3BackendBucket objectKey)
+        B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
+      where
+        objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
 
 storageIndexShareNumberToObjectKey :: T.Text -> StorageIndex -> ShareNumber -> S3.ObjectKey
 storageIndexShareNumberToObjectKey prefix si (ShareNumber sn) =
