@@ -52,15 +52,15 @@ class Backend b where
     -- given storage index.
     renewLease :: b -> StorageIndex -> [LeaseSecret] -> IO ()
 
-    createImmutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
+    createImmutableStorageIndex :: b -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
 
     -- May throw ImmutableShareAlreadyWritten
-    writeImmutableShare :: b -> StorageIndex -> ShareNumber -> ShareData -> Maybe ByteRanges -> IO ()
+    writeImmutableShare :: b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> Maybe ByteRanges -> IO ()
+    abortImmutableUpload :: b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
     adviseCorruptImmutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
     getImmutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     readImmutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
 
-    createMutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
     readvAndTestvAndWritev :: b -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readMutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     getMutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
@@ -88,13 +88,13 @@ writeMutableShare b secrets storageIndex shareNumber shareData Nothing = do
                                 , shareData = shareData
                                 }
                             ]
+                        , newLength = Nothing -- XXX expose this?
                         }
                     )
                 ]
     let vectors =
             ReadTestWriteVectors
-                { secrets = secrets
-                , testWriteVectors = testWriteVectors
+                { testWriteVectors = testWriteVectors
                 , readVector = mempty
                 }
     result <- readvAndTestvAndWritev b storageIndex vectors

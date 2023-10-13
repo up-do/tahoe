@@ -65,6 +65,7 @@ import TahoeLAFS.Storage.API (
     AllocateBuckets (..),
     AllocationResult (..),
     CBORSet (..),
+    LeaseSecret,
     Offset,
     QueryRange,
     ReadTestWriteResult (ReadTestWriteResult, readData, success),
@@ -126,8 +127,7 @@ instance Backend FilesystemBackend where
                         }
                 }
 
-    createImmutableStorageIndex :: FilesystemBackend -> StorageIndex -> AllocateBuckets -> IO AllocationResult
-    createImmutableStorageIndex backend storageIndex params = do
+    createImmutableStorageIndex backend storageIndex secrets params = do
         let exists = haveShare backend storageIndex
         (alreadyHave, allocated) <- partitionM exists (shareNumbers params)
         allocatev backend storageIndex allocated
@@ -141,8 +141,7 @@ instance Backend FilesystemBackend where
     -- TODO Make sure the share storage was allocated.
     -- TODO Don't allow target of rename to exist.
     -- TODO Concurrency
-    writeImmutableShare :: FilesystemBackend -> StorageIndex -> ShareNumber -> ShareData -> Maybe ByteRanges -> IO ()
-    writeImmutableShare (FilesystemBackend root) storageIndex shareNumber' shareData Nothing = do
+    writeImmutableShare (FilesystemBackend root) storageIndex shareNumber' _secrets shareData Nothing = do
         alreadyHave <- haveShare (FilesystemBackend root) storageIndex shareNumber'
         if alreadyHave
             then throwIO ImmutableShareAlreadyWritten
@@ -154,7 +153,6 @@ instance Backend FilesystemBackend where
                 createDirectoryIfMissing createParents $ takeDirectory finalSharePath
                 renameFile incomingSharePath finalSharePath
 
-    getImmutableShareNumbers :: FilesystemBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getImmutableShareNumbers (FilesystemBackend root) storageIndex = do
         let storageIndexPath = pathOfStorageIndex root storageIndex
         storageIndexChildren <-
@@ -167,21 +165,18 @@ instance Backend FilesystemBackend where
 
     -- TODO Handle ranges.
     -- TODO Make sure the share storage was allocated.
-    readImmutableShare :: FilesystemBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO Storage.ShareData
     readImmutableShare (FilesystemBackend root) storageIndex shareNum _qr =
         let _storageIndexPath = pathOfStorageIndex root storageIndex
             readShare = readFile . pathOfShare root storageIndex
          in readShare shareNum
-
-    createMutableStorageIndex = createImmutableStorageIndex
 
     getMutableShareNumbers = getImmutableShareNumbers
 
     readvAndTestvAndWritev
         (FilesystemBackend root)
         storageIndex
-        (ReadTestWriteVectors _secrets testWritev _readv) = do
-            -- TODO implement readv and testv parts.  implement secrets part.
+        (ReadTestWriteVectors testWritev _readv) = do
+            -- TODO implement readv and testv parts.
             mapM_ (applyWriteVectors root storageIndex) $ toList testWritev
             return
                 ReadTestWriteResult

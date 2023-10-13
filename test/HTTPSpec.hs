@@ -30,6 +30,7 @@ import qualified Data.ByteString.Lazy as L
 
 import Network.HTTP.Types.Method (
     methodGet,
+    methodPatch,
     methodPost,
     methodPut,
  )
@@ -86,9 +87,9 @@ postJSON path =
         [("Content-Type", "application/json"), ("Accept", "application/json")]
 
 -- putShare :: ByteString -> Int64 -> WaiSession st SResponse
-putShare path size =
+patchShare path size =
     request
-        methodPut
+        methodPatch
         path
         [("Content-Type", "application/octet-stream"), ("Accept", "application/json")]
         (L.replicate size 0xdd)
@@ -145,9 +146,9 @@ spec = with (return $ app NullBackend) $
                         , matchBody = bodyEquals allocateResultJSON
                         }
 
-        describe "PUT /storage/v1/immutable/abcdefgh/1" $ do
+        describe "PATCH /storage/v1/immutable/abcdefgh/1" $ do
             it "responds with CREATED" $
-                putShare "/storage/v1/immutable/abcdefgh/1" 512 `shouldRespondWith` 201
+                patchShare "/storage/v1/immutable/abcdefgh/1" 512 `shouldRespondWith` 201
 
         describe "POST /storage/v1/immutable/abcdefgh/1/corrupt" $ do
             it "responds with OK" $

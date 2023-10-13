@@ -71,16 +71,19 @@ version :: Backend.Backend b => b -> Handler Version
 version backend =
     liftIO (Backend.version backend)
 
-renewLease :: (MonadIO m, Backend.Backend b) => b -> StorageIndex -> Maybe [LeaseSecret] -> m ()
+renewLease :: Backend.Backend b => b -> StorageIndex -> Maybe [LeaseSecret] -> Handler ()
 renewLease backend storageIndex secrets = liftIO (Backend.renewLease backend storageIndex (fromMaybe [] secrets))
 
-createImmutableStorageIndex :: Backend.Backend b => b -> StorageIndex -> AllocateBuckets -> Handler AllocationResult
-createImmutableStorageIndex backend storage_index params =
-    liftIO (Backend.createImmutableStorageIndex backend storage_index params)
+createImmutableStorageIndex :: Backend.Backend b => b -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> Handler AllocationResult
+createImmutableStorageIndex backend storageIndex secrets params =
+    liftIO (Backend.createImmutableStorageIndex backend storageIndex secrets params)
 
-writeImmutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> ShareData -> Maybe ByteRanges -> Handler ()
-writeImmutableShare backend storage_index share_number share_data content_ranges =
-    liftIO (Backend.writeImmutableShare backend storage_index share_number share_data content_ranges)
+writeImmutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> Maybe ByteRanges -> Handler ()
+writeImmutableShare backend storage_index share_number secrets share_data content_ranges =
+    liftIO (Backend.writeImmutableShare backend storage_index share_number secrets share_data content_ranges)
+
+abortImmutableUpload :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> Handler ()
+abortImmutableUpload backend storageIndex shareNum secrets = liftIO (Backend.abortImmutableUpload backend storageIndex shareNum secrets)
 
 adviseCorruptImmutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> CorruptionDetails -> Handler ()
 adviseCorruptImmutableShare backend storage_index share_number details =
@@ -95,10 +98,6 @@ readImmutableShare backend storage_index share_number qr =
     -- TODO Need to return NO CONTENT if the result is empty.
     -- TODO Need to make sure content-range is set in the header otherwise
     liftIO (Backend.readImmutableShare backend storage_index share_number qr)
-
-createMutableStorageIndex :: Backend.Backend b => b -> StorageIndex -> AllocateBuckets -> Handler AllocationResult
-createMutableStorageIndex backend storage_index params =
-    liftIO (Backend.createMutableStorageIndex backend storage_index params)
 
 readvAndTestvAndWritev :: Backend.Backend b => b -> StorageIndex -> ReadTestWriteVectors -> Handler ReadTestWriteResult
 readvAndTestvAndWritev backend storage_index vectors =
@@ -138,6 +137,7 @@ app backend =
             :<|> renewLease backend
             :<|> createImmutableStorageIndex backend
             :<|> writeImmutableShare backend
+            :<|> abortImmutableUpload backend
             :<|> readImmutableShare backend
             :<|> getImmutableShareNumbers backend
             :<|> adviseCorruptImmutableShare backend

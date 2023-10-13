@@ -80,7 +80,6 @@ import TahoeLAFS.Storage.API (
 import TahoeLAFS.Storage.Backend (
     Backend (
         createImmutableStorageIndex,
-        createMutableStorageIndex,
         getImmutableShareNumbers,
         getMutableShareNumbers,
         readImmutableShare,
@@ -140,29 +139,7 @@ alreadyHavePlusAllocatedImm ::
 alreadyHavePlusAllocatedImm backend storageIndex shareNumbers size = monadicIO $ do
     pre (isUnique shareNumbers)
     pre (hasElements shareNumbers)
-    result <- run $ createImmutableStorageIndex backend storageIndex $ AllocateBuckets "renew" "cancel" shareNumbers size
-    when (alreadyHave result ++ allocated result /= shareNumbers) $
-        fail
-            ( show (alreadyHave result)
-                ++ " ++ "
-                ++ show (allocated result)
-                ++ " /= "
-                ++ show shareNumbers
-            )
-
--- In the result of creating a mutable storage index, the sum of
--- ``alreadyHave`` and ``allocated`` equals ``shareNumbers`` from the input.
-alreadyHavePlusAllocatedMut ::
-    Backend b =>
-    b -> -- The backend on which to operate
-    StorageIndex -> -- The storage index to use
-    [ShareNumber] -> -- The share numbers to allocate
-    Size -> -- The size of each share
-    Property
-alreadyHavePlusAllocatedMut backend storageIndex shareNumbers size = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
-    result <- run $ createMutableStorageIndex backend storageIndex $ AllocateBuckets "renew" "cancel" shareNumbers size
+    result <- run $ createImmutableStorageIndex backend storageIndex Nothing $ AllocateBuckets shareNumbers size
     when (alreadyHave result ++ allocated result /= shareNumbers) $
         fail
             ( show (alreadyHave result)
@@ -186,9 +163,9 @@ immutableWriteAndEnumerateShares backend storageIndex shareNumbers shareSeed = m
     pre (hasElements shareNumbers)
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
     let size = fromIntegral (Data.ByteString.length shareSeed)
-    let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
-    _result <- run $ createImmutableStorageIndex backend storageIndex allocate
-    run $ writeShares (writeImmutableShare backend storageIndex) (zip shareNumbers permutedShares)
+    let allocate = AllocateBuckets shareNumbers size
+    _result <- run $ createImmutableStorageIndex backend storageIndex Nothing allocate
+    run $ writeShares (\sn -> writeImmutableShare backend storageIndex sn Nothing) (zip shareNumbers permutedShares)
     readShareNumbers <- run $ getImmutableShareNumbers backend storageIndex
     when (readShareNumbers /= (CBORSet . Set.fromList $ shareNumbers)) $
         fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
@@ -206,13 +183,12 @@ immutableWriteAndRewriteShare backend storageIndex shareNumbers shareSeed = mona
     pre (isUnique shareNumbers)
     pre (hasElements shareNumbers)
     let size = fromIntegral (Data.ByteString.length shareSeed)
-    let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
+    let allocate = AllocateBuckets shareNumbers size
     let aShareNumber = head shareNumbers
     let aShare = permuteShare shareSeed aShareNumber
-    let write =
-            writeImmutableShare backend storageIndex aShareNumber aShare Nothing
+    let write = writeImmutableShare backend storageIndex aShareNumber Nothing aShare Nothing
     run $ do
-        _ <- createImmutableStorageIndex backend storageIndex allocate
+        _ <- createImmutableStorageIndex backend storageIndex Nothing allocate
         write
         write `shouldThrow` (const True :: Selector ImmutableShareAlreadyWritten)
 
@@ -231,9 +207,9 @@ immutableWriteAndReadShare backend storageIndex shareNumbers shareSeed = monadic
     pre (hasElements shareNumbers)
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
     let size = fromIntegral (Data.ByteString.length shareSeed)
-    let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
-    _result <- run $ createImmutableStorageIndex backend storageIndex allocate
-    run $ writeShares (writeImmutableShare backend storageIndex) (zip shareNumbers permutedShares)
+    let allocate = AllocateBuckets shareNumbers size
+    _result <- run $ createImmutableStorageIndex backend storageIndex Nothing allocate
+    run $ writeShares (\sn -> writeImmutableShare backend storageIndex sn Nothing) (zip shareNumbers permutedShares)
     readShares' <- run $ mapM (\sn -> readImmutableShare backend storageIndex sn Nothing) shareNumbers
     when (permutedShares /= readShares') $
         fail (show permutedShares ++ " /= " ++ show readShares')
@@ -251,15 +227,12 @@ mutableWriteAndEnumerateShares backend storageIndex shareNumbers shareSeed = mon
     pre (isUnique shareNumbers)
     pre (hasElements shareNumbers)
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-    let size = fromIntegral (Data.ByteString.length shareSeed)
-    let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
     let nullSecrets =
             SlotSecrets
                 { writeEnabler = ""
                 , leaseRenew = ""
                 , leaseCancel = ""
                 }
-    _result <- run $ createMutableStorageIndex backend storageIndex allocate
     run $ writeShares (writeMutableShare backend nullSecrets storageIndex) (zip shareNumbers permutedShares)
     (CBORSet readShareNumbers) <- run $ getMutableShareNumbers backend storageIndex
     when (readShareNumbers /= Set.fromList shareNumbers) $
@@ -289,11 +262,6 @@ storageSpec =
                         forAll genStorageIndex (immutableWriteAndRewriteShare backend)
 
         context "mutable" $ do
-            describe "allocate a storage index" $ do
-                it "accounts for all allocated share numbers" $ \backend ->
-                    property $
-                        forAll genStorageIndex (alreadyHavePlusAllocatedMut backend)
-
             describe "write a share" $ do
                 it "returns the share numbers that were written" $ \backend ->
                     property $

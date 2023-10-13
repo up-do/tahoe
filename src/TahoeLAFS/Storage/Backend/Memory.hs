@@ -42,6 +42,7 @@ import TahoeLAFS.Storage.API (
     AllocationResult (..),
     CBORSet (..),
     CorruptionDetails,
+    LeaseSecret,
     Offset,
     QueryRange,
     ReadResult,
@@ -89,14 +90,6 @@ instance Backend MemoryBackend where
                         }
                 }
 
-    createMutableStorageIndex :: MemoryBackend -> StorageIndex -> AllocateBuckets -> IO AllocationResult
-    createMutableStorageIndex _backend _storageIndex params =
-        return
-            AllocationResult
-                { alreadyHave = mempty
-                , allocated = shareNumbers params
-                }
-
     getMutableShareNumbers :: MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getMutableShareNumbers backend storageIndex = do
         shares' <- readIORef $ mutableShares backend
@@ -109,8 +102,8 @@ instance Backend MemoryBackend where
     readvAndTestvAndWritev
         backend
         storageIndex
-        (ReadTestWriteVectors _secrets testWritev _readv) = do
-            -- TODO implement readv and testv parts.  implement secrets part.
+        (ReadTestWriteVectors testWritev _readv) = do
+            -- TODO implement readv and testv parts.
             let shares = mutableShares backend
             modifyIORef shares $ addShares storageIndex (shares' testWritev)
             return
@@ -128,16 +121,14 @@ instance Backend MemoryBackend where
                 , writev <- write testWritev'
                 ]
 
-    createImmutableStorageIndex :: MemoryBackend -> StorageIndex -> AllocateBuckets -> IO AllocationResult
-    createImmutableStorageIndex _backend _idx params =
+    createImmutableStorageIndex _backend _idx secrets params =
         return
             AllocationResult
                 { alreadyHave = mempty
                 , allocated = shareNumbers params
                 }
 
-    writeImmutableShare :: MemoryBackend -> StorageIndex -> ShareNumber -> ShareData -> Maybe ByteRanges -> IO ()
-    writeImmutableShare backend storageIndex shareNumber shareData Nothing = do
+    writeImmutableShare backend storageIndex shareNumber _secrets shareData Nothing = do
         -- shares <- readIORef (immutableShares backend) -- XXX uh, is this right?!
         changed <- atomicModifyIORef' (immutableShares backend) $
             \shares ->
@@ -151,18 +142,15 @@ instance Backend MemoryBackend where
         if changed
             then return ()
             else throwIO ImmutableShareAlreadyWritten
-    writeImmutableShare _ _ _ _ _ = error "writeImmutableShare got bad input"
+    writeImmutableShare _ _ _ _ _ _ = error "writeImmutableShare got bad input"
 
-    adviseCorruptImmutableShare :: MemoryBackend -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
     adviseCorruptImmutableShare _backend _ _ _ =
         return mempty
 
-    getImmutableShareNumbers :: MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getImmutableShareNumbers backend storageIndex = do
         shares' <- readIORef $ immutableShares backend
         return $ CBORSet . Set.fromList $ maybe [] keys $ lookup storageIndex shares'
 
-    readImmutableShare :: MemoryBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     readImmutableShare backend storageIndex shareNum _qr = do
         shares' <- readIORef $ immutableShares backend
         let result = case lookup storageIndex shares' of
