@@ -13,6 +13,7 @@ import Amazonka.S3.CreateMultipartUpload (createMultipartUploadResponse_uploadId
 import Amazonka.S3.Lens (completeMultipartUpload_multipartUpload, listObjectsResponse_contents, listObjects_prefix, object_key)
 import qualified Amazonka.S3.Lens as S3
 import Conduit (sinkList)
+import Control.Exception (throwIO)
 import Control.Lens (set, view, (?~), (^.))
 import Control.Monad (void)
 import Control.Monad.IO.Class
@@ -29,7 +30,7 @@ import qualified Data.Text as Text
 import Debug.Trace (trace)
 import Network.HTTP.Types (ByteRange (ByteRangeFrom))
 import TahoeLAFS.Storage.API
-import TahoeLAFS.Storage.Backend (Backend (..))
+import TahoeLAFS.Storage.Backend (Backend (..), ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten))
 import Text.Read (readMaybe)
 
 -- Where's my Cow?
@@ -147,7 +148,7 @@ instance Backend S3Backend where
         let stateKey = (storageIndex, shareNum)
         uploadInfo <- liftIO $ atomicModifyIORef s3BackendState (adjust' (first Just . startUpload) stateKey)
         case uploadInfo of
-            Nothing -> error "not uploading"
+            Nothing -> throwIO ImmutableShareAlreadyWritten
             Just (PartNumber partNum', uploadId) -> runResourceT $ do
                 let objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
                     uploadPart = S3.newUploadPart s3BackendBucket objKey partNum' uploadId (AWS.toBody shareData)
