@@ -80,6 +80,7 @@ library
     , http-client
     , http-types
     , lens
+    , memory
     , mtl
     , text
 

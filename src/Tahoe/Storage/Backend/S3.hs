@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -16,10 +17,17 @@ import Conduit (sinkList)
 import Control.Exception (throwIO)
 import Control.Lens (set, view, (?~), (^.))
 import Control.Monad (void)
-import Control.Monad.IO.Class
+import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Bifunctor (Bifunctor (first))
+import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
-import Data.IORef
+import Data.IORef (
+    IORef,
+    atomicModifyIORef,
+    modifyIORef',
+    newIORef,
+    readIORef,
+ )
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -28,12 +36,32 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Network.HTTP.Types (ByteRange (ByteRangeFrom))
-import TahoeLAFS.Storage.API
-import TahoeLAFS.Storage.Backend (Backend (..), ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten))
+import TahoeLAFS.Storage.API (
+    AllocateBuckets (AllocateBuckets, allocatedSize, shareNumbers),
+    AllocationResult (AllocationResult, allocated, alreadyHave),
+    CBORSet (CBORSet),
+    LeaseSecret (Upload),
+    ReadTestWriteResult (ReadTestWriteResult),
+    ShareNumber (..),
+    StorageIndex,
+    UploadSecret,
+ )
+import TahoeLAFS.Storage.Backend (
+    Backend (
+        abortImmutableUpload,
+        createImmutableStorageIndex,
+        getImmutableShareNumbers,
+        readImmutableShare,
+        readvAndTestvAndWritev,
+        writeImmutableShare
+    ),
+    WriteImmutableError (
+        ImmutableShareAlreadyWritten,
+        IncorrectUploadSecret
+    ),
+    withUploadSecret,
+ )
 import Text.Read (readMaybe)
-
--- Where's my Cow?
-type AllocatedShares = Map (StorageIndex, ShareNumber) UploadState
 
 newtype PartNumber = PartNumber Int
     deriving newtype (Eq)
@@ -50,12 +78,26 @@ data UploadPart
         }
     deriving (Eq, Show)
 
+-- Where's my Cow? -- Terry Pratchett
+
 data UploadState = UploadState
     { uploadStateSize :: Integer
     , uploadParts :: [UploadPart]
     , uploadResponse :: S3.CreateMultipartUploadResponse
+    , uploadSecret :: UploadSecret
     }
     deriving (Eq, Show)
+
+-- | where's mah parts? Here they are!
+type AllocatedShares = Map (StorageIndex, ShareNumber) UploadState
+
+-- | This saves in-progress uploads so we can finish or abort
+data S3Backend = S3Backend
+    { s3BackendEnv :: AWS.Env
+    , s3BackendBucket :: S3.BucketName
+    , s3BackendPrefix :: T.Text
+    , s3BackendState :: IORef AllocatedShares
+    }
 
 -- | Add another part upload to the given state and return the part number and upload id to use with it.
 startUpload :: UploadState -> (UploadState, (PartNumber, T.Text))
@@ -92,13 +134,6 @@ finishUpload finishedPartNum finishedPartSize response u@UploadState{uploadState
       where
         completed = S3.newCompletedPart partNum <$> (partResp ^. S3.uploadPartResponse_eTag)
 
-data S3Backend = S3Backend
-    { s3BackendEnv :: AWS.Env
-    , s3BackendBucket :: S3.BucketName
-    , s3BackendPrefix :: T.Text
-    , s3BackendState :: IORef AllocatedShares
-    }
-
 {- | Instantiate a new S3 backend which will interact with objects in the
  given bucket using the given AWS Env.
 -}
@@ -121,29 +156,31 @@ newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
   `shares/<storage index>/<share number>`.
 -}
 instance Backend S3Backend where
-    createImmutableStorageIndex (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex (AllocateBuckets{shareNumbers, allocatedSize})
+    createImmutableStorageIndex (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex mbLeaseSecret (AllocateBuckets{shareNumbers, allocatedSize})
         -- The maximum S3 object size is 5 BT
         | allocatedSize > 5 * 1024 * 1024 * 1024 * 1024 = error "blub"
-        | otherwise = runResourceT $ do
-            -- switch to sendEither when more brain is available
-            -- XXX Check to see if we already have local state related to this upload
-            -- XXX Check to see if S3 already has state related to this upload
-            -- XXX Use thread-safe primitives so the server can be multithreaded
-            let objectKeys = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex <$> shareNumbers
-                uploadCreates = S3.newCreateMultipartUpload s3BackendBucket <$> objectKeys
-            -- XXX HOW TO HANDLE FAILURE? this AWS.send should really be AWS.sendEither !
-            -- and then we handle errors that we can
-            multipartUploadResponse <- mapM (fmap (UploadState allocatedSize []) . AWS.send s3BackendEnv) uploadCreates
-            let keys = zip (repeat storageIndex) shareNumbers :: [(StorageIndex, ShareNumber)]
-                newMap = Map.fromList $ zip keys multipartUploadResponse
-            -- don't send anything that's already there
-            liftIO $ modifyIORef s3BackendState (newMap `Map.union`)
-            pure $ AllocationResult{alreadyHave = [], allocated = shareNumbers}
+        | otherwise = withUploadSecret mbLeaseSecret $ \uploadSecret ->
+            runResourceT $
+                do
+                    -- switch to sendEither when more brain is available
+                    -- XXX Check to see if we already have local state related to this upload
+                    -- XXX Check to see if S3 already has state related to this upload
+                    -- XXX Use thread-safe primitives so the server can be multithreaded
+                    let objectKeys = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex <$> shareNumbers
+                        uploadCreates = S3.newCreateMultipartUpload s3BackendBucket <$> objectKeys
+                    -- XXX HOW TO HANDLE FAILURE? this AWS.send should really be AWS.sendEither !
+                    -- and then we handle errors that we can
+                    multipartUploadResponse <- mapM (fmap (flip (UploadState allocatedSize []) uploadSecret) . AWS.send s3BackendEnv) uploadCreates
+                    let keys = zip (repeat storageIndex) shareNumbers :: [(StorageIndex, ShareNumber)]
+                        newMap = Map.fromList $ zip keys multipartUploadResponse
+                    -- don't send anything that's already there
+                    liftIO $ modifyIORef' s3BackendState (newMap `Map.union`)
+                    pure $ AllocationResult{alreadyHave = [], allocated = shareNumbers}
 
-    writeImmutableShare s3 storageIndex shareNum shareData Nothing = do
+    writeImmutableShare s3 storageIndex shareNum mbLeaseSecret shareData Nothing = do
         -- If no range is given, this is the whole thing.
-        writeImmutableShare s3 storageIndex shareNum shareData (Just [ByteRangeFrom 0])
-    writeImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum shareData (Just byteRanges) = do
+        writeImmutableShare s3 storageIndex shareNum mbLeaseSecret shareData (Just [ByteRangeFrom 0])
+    writeImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum mbLeaseSecret shareData (Just byteRanges) = do
         let stateKey = (storageIndex, shareNum)
         uploadInfo <- liftIO $ atomicModifyIORef s3BackendState (adjust' (first Just . startUpload) stateKey)
         case uploadInfo of
@@ -166,6 +203,14 @@ instance Backend S3Backend where
 
                         void $ AWS.send s3BackendEnv completeMultipartUpload
                     Just (False, _) -> pure ()
+
+    abortImmutableUpload :: S3Backend -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
+    abortImmutableUpload (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum mbLeaseSecret = do
+        thing <- readIORef s3BackendState
+        let leaseSecret = uploadSecret <$> Map.lookup (storageIndex, shareNum) thing :: Maybe UploadSecret
+        -- XXX WOW THIS IS WRONG, COME BACK AND FIX IT PLEASE
+        -- TODO: tell s3 we're done with it plz
+        if (validUploadSecret leaseSecret mbLeaseSecret) then pure () else throwIO IncorrectUploadSecret
 
     getImmutableShareNumbers (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = runResourceT $ do
         resp <- AWS.send s3BackendEnv (set listObjects_prefix (Just . storageIndexPrefix s3BackendPrefix $ storageIndex) $ S3.newListObjects s3BackendBucket)
@@ -192,7 +237,7 @@ instance Backend S3Backend where
       where
         objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
 
-    readvAndTestvAndWritev S3Backend{} storageIndex vectors = do
+    readvAndTestvAndWritev S3Backend{} storageIndex vectors = pure $ ReadTestWriteResult False mempty
 
 storageIndexShareNumberToObjectKey :: T.Text -> StorageIndex -> ShareNumber -> S3.ObjectKey
 storageIndexShareNumberToObjectKey prefix si (ShareNumber sn) =
@@ -225,3 +270,7 @@ adjust' f k m = case Map.lookup k m of
     Just v -> (Map.update (const newV) k m, Just result)
       where
         (newV, result) = f v
+
+validUploadSecret :: Maybe UploadSecret -> Maybe [LeaseSecret] -> Bool
+validUploadSecret (Just us1) (Just [Upload us2]) = constEq us1 us2
+validUploadSecret _ _ = False

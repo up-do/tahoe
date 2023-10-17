@@ -29,39 +29,38 @@ import qualified Data.Text as T
 import Control.Lens (view, (.~), (?~), (^.), _Just)
 import Test.Hspec (
     Spec,
-    SpecWith,
-    around,
     context,
     describe,
     hspec,
     it,
     parallel,
-    runIO,
-    shouldBe,
-    shouldReturn,
     shouldThrow,
  )
-import Test.Hspec.Expectations (
-    Selector,
- )
 
+import TahoeLAFS.Storage.API (
+    AllocateBuckets (AllocateBuckets),
+    AllocationResult (AllocationResult, allocated, alreadyHave),
+    CBORSet (CBORSet),
+    LeaseSecret (Upload),
+    ShareData,
+    ShareNumber (..),
+    Size,
+    SlotSecrets (SlotSecrets, leaseCancel, leaseRenew, writeEnabler),
+    StorageIndex,
+    toInteger,
+ )
 import Test.QuickCheck (
     Arbitrary (arbitrary),
-    Gen,
     NonNegative (getNonNegative),
-    Positive (getPositive),
+    Positive (Positive),
     Property,
-    Result (numDiscarded),
+    Testable (property),
     forAll,
-    property,
     shuffle,
     sublistOf,
  )
-
 import Test.QuickCheck.Monadic (
-    assert,
     monadicIO,
-    pre,
     run,
  )
 
@@ -71,37 +70,27 @@ import Data.ByteString (
     map,
  )
 
-import TahoeLAFS.Storage.API (
-    AllocateBuckets (AllocateBuckets),
-    AllocationResult (AllocationResult),
-    CBORSet (..),
-    ShareData,
-    ShareNumber (ShareNumber),
-    Size,
-    SlotSecrets (..),
-    StorageIndex,
-    allocated,
-    alreadyHave,
-    toInteger,
- )
-
 import TahoeLAFS.Storage.Backend (
     Backend (
+        abortImmutableUpload,
         createImmutableStorageIndex,
-        createMutableStorageIndex,
         getImmutableShareNumbers,
         getMutableShareNumbers,
         readImmutableShare,
         writeImmutableShare
     ),
-    ImmutableShareAlreadyWritten,
+    WriteImmutableError (
+        ImmutableShareAlreadyWritten,
+        IncorrectUploadSecret,
+        MissingUploadSecret
+    ),
     writeMutableShare,
  )
 
 import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import Tahoe.Storage.Backend.S3 (
-    S3Backend (S3Backend, s3BackendBucket, s3BackendEnv, s3BackendPrefix, s3BackendState),
+    S3Backend (S3Backend, s3BackendBucket, s3BackendEnv, s3BackendPrefix),
     newS3Backend,
  )
 
@@ -114,7 +103,6 @@ import Amazonka (runResourceT)
 import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_key)
 import qualified Amazonka.S3.Lens as S3
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Data.IORef (readIORef)
 import Data.Maybe (catMaybes)
 import qualified Network.HTTP.Types as HTTP
 import qualified System.IO as IO
@@ -134,54 +122,68 @@ instance Arbitrary ShareNumbers where
 
 spec :: Spec
 spec = do
-    Test.Hspec.context "filesystem" $
-        Test.Hspec.around (withBackend s3Backend) storageSpec
+    storageSpec s3Backend
 
 -- The specification for a storage backend.
-storageSpec :: (Backend b, b ~ S3Backend) => SpecWith b
-storageSpec =
+storageSpec :: (Backend b, Mess b) => IO b -> Spec
+storageSpec makeBackend =
     context "v1" $ do
         context "immutable" $ do
-            it "simple upload works" $ \backend -> do
-                let storageIndex = "aaaaaaaaaaaaaaaa"
-                    shareData = "Hello world"
-
-                alloc <- createImmutableStorageIndex backend storageIndex (AllocateBuckets "" "" [ShareNumber 0] (fromIntegral $ Data.ByteString.length shareData))
-                alloc `shouldBe` AllocationResult [] [ShareNumber 0]
-
-                write <- writeImmutableShare backend storageIndex (ShareNumber 0) shareData Nothing
-                write `shouldBe` ()
-
-                readIORef (s3BackendState backend) `shouldReturn` mempty
-
             describe "allocate a storage index" $
-                it "accounts for all allocated share numbers" $ \backend ->
+                it "accounts for all allocated share numbers" $
                     property $
-                        forAll genStorageIndex (alreadyHavePlusAllocatedImm backend)
+                        forAll genStorageIndex (alreadyHavePlusAllocatedImm makeBackend)
 
-            context "write a share" $ do
-                it "returns the share numbers that were written" $ \backend ->
-                    property $
-                        forAll genStorageIndex (immutableWriteAndEnumerateShares backend)
+        context "write a share" $ do
+            it "disallows writes without an upload secret" $
+                property $
+                    withBackend makeBackend $ \backend -> do
+                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
+                        writeImmutableShare backend "storageindex" (ShareNumber 0) Nothing "fooooo" Nothing `shouldThrow` (== MissingUploadSecret)
 
-                it "returns the written data when requested" $ \backend ->
-                    property $
-                        forAll genStorageIndex (immutableWriteAndReadShare backend)
+            it "disallows writes without a matching upload secret" $
+                property $
+                    withBackend makeBackend $ \backend -> do
+                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
+                        -- Supply the wrong secret as an upload secret and the
+                        -- right secret marked for some other use - this
+                        -- should still fail.
+                        writeImmutableShare backend "storageindex" (ShareNumber 0) (Just [Upload "wrongsecret"]) "fooooo" Nothing `shouldThrow` (== IncorrectUploadSecret)
 
-                it "cannot be written more than once" $ \backend ->
-                    property $
-                        forAll genStorageIndex (immutableWriteAndRewriteShare backend)
+            it "disallows aborts without an upload secret" $
+                property $
+                    withBackend makeBackend $ \backend -> do
+                        abortImmutableUpload backend "storageindex" (ShareNumber 0) Nothing `shouldThrow` (== MissingUploadSecret)
+
+            it "disallows aborts without a matching upload secret" $
+                property $
+                    withBackend makeBackend $ \backend -> do
+                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
+                        abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [Upload "wrongsecret"]) `shouldThrow` (== IncorrectUploadSecret)
+
+            it "allows aborts with a matching upload secret" $
+                property $
+                    withBackend makeBackend $ \backend -> do
+                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
+                        abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [Upload "thesecret"])
+
+            it "returns the share numbers that were written" $
+                property $
+                    forAll genStorageIndex (immutableWriteAndEnumerateShares makeBackend)
+
+            it "returns the written data when requested" $
+                property $
+                    forAll genStorageIndex (immutableWriteAndReadShare makeBackend)
+
+            it "cannot be written more than once" $
+                property $
+                    forAll genStorageIndex (immutableWriteAndRewriteShare makeBackend)
 
         context "mutable" $ do
-            describe "allocate a storage index" $ do
-                it "accounts for all allocated share numbers" $ \backend ->
-                    property $
-                        forAll genStorageIndex (alreadyHavePlusAllocatedMut backend)
-
             describe "write a share" $ do
-                it "returns the share numbers that were written" $ \backend ->
+                it "returns the share numbers that were written" $
                     property $
-                        forAll genStorageIndex (mutableWriteAndEnumerateShares backend)
+                        forAll genStorageIndex (mutableWriteAndEnumerateShares makeBackend)
 
 class Mess m where
     -- Cleanup resources belonging to m
@@ -204,130 +206,119 @@ withBackend b action = do
     action backend
     cleanup backend
 
--- In the result of creating an immutable storage index, the sum of
--- ``alreadyHave`` and ``allocated`` equals ``shareNumbers`` from the input.
 alreadyHavePlusAllocatedImm ::
-    Backend b =>
-    b -> -- The backend on which to operate
+    (Backend b, Mess b) =>
+    IO b -> -- The backend on which to operate
     StorageIndex -> -- The storage index to use
     ShareNumbers -> -- The share numbers to allocate
-    Size -> -- The size of each share
+    Positive Size -> -- The size of each share
     Property
-alreadyHavePlusAllocatedImm backend storageIndex (ShareNumbers shareNumbers) size = monadicIO $ do
-    result <- run $ createImmutableStorageIndex backend storageIndex $ AllocateBuckets "renew" "cancel" shareNumbers size
-    when (alreadyHave result ++ allocated result /= shareNumbers) $
-        fail
-            ( show (alreadyHave result)
-                ++ " ++ "
-                ++ show (allocated result)
-                ++ " /= "
-                ++ show shareNumbers
-            )
-
--- In the result of creating a mutable storage index, the sum of
--- ``alreadyHave`` and ``allocated`` equals ``shareNumbers`` from the input.
-alreadyHavePlusAllocatedMut ::
-    Backend b =>
-    b -> -- The backend on which to operate
-    StorageIndex -> -- The storage index to use
-    ShareNumbers -> -- The share numbers to allocate
-    Size -> -- The size of each share
-    Property
-alreadyHavePlusAllocatedMut backend storageIndex (ShareNumbers shareNumbers) size = monadicIO $ do
-    result <- run $ createMutableStorageIndex backend storageIndex $ AllocateBuckets "renew" "cancel" shareNumbers size
-    when (alreadyHave result ++ allocated result /= shareNumbers) $
-        fail
-            ( show (alreadyHave result)
-                ++ " ++ "
-                ++ show (allocated result)
-                ++ " /= "
-                ++ show shareNumbers
-            )
+alreadyHavePlusAllocatedImm makeBackend storageIndex (ShareNumbers shareNumbers) (Positive size) = monadicIO $
+    run $
+        withBackend makeBackend $ \backend -> do
+            result <- createImmutableStorageIndex backend storageIndex (Just [Upload "hello world"]) $ AllocateBuckets shareNumbers size
+            when (alreadyHave result ++ allocated result /= shareNumbers) $
+                fail
+                    ( show (alreadyHave result)
+                        ++ " ++ "
+                        ++ show (allocated result)
+                        ++ " /= "
+                        ++ show shareNumbers
+                    )
 
 -- The share numbers of immutable share data written to the shares of a given
 -- storage index can be retrieved.
 immutableWriteAndEnumerateShares ::
-    Backend b =>
-    b ->
+    (Backend b, Mess b) =>
+    IO b ->
     StorageIndex ->
     ShareNumbers ->
     ByteString ->
     Property
-immutableWriteAndEnumerateShares backend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
-    let permutedShares = shareSeed <$ shareNumbers -- Prelude.map (permuteShare shareSeed) shareNumbers
-    let size = fromIntegral (Data.ByteString.length shareSeed)
-    let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
-    _result <- run $ createImmutableStorageIndex backend storageIndex allocate
-    run $ writeShares (writeImmutableShare backend storageIndex) (zip shareNumbers permutedShares)
-    readShareNumbers <- run $ getImmutableShareNumbers backend storageIndex
-    when (readShareNumbers /= (CBORSet . Set.fromList $ shareNumbers)) $
-        fail (show readShareNumbers ++ " /= " ++ (show . CBORSet . Set.fromList) shareNumbers)
+immutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
+    let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
+        size = fromIntegral (Data.ByteString.length shareSeed)
+        allocate = AllocateBuckets shareNumbers size
+    run $
+        withBackend makeBackend $ \backend -> do
+            void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
+            writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) (zip shareNumbers permutedShares)
+            readShareNumbers <- getImmutableShareNumbers backend storageIndex
+            when (readShareNumbers /= (CBORSet . Set.fromList $ shareNumbers)) $
+                fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
+  where
+    uploadSecret = Just [Upload "hello"]
 
 -- Immutable share data written to the shares of a given storage index cannot
 -- be rewritten by a subsequent writeImmutableShare operation.
 immutableWriteAndRewriteShare ::
-    Backend b =>
-    b ->
+    (Backend b, Mess b) =>
+    IO b ->
     StorageIndex ->
     ShareNumbers ->
     ByteString ->
     Property
-immutableWriteAndRewriteShare backend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
+immutableWriteAndRewriteShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let size = fromIntegral (Data.ByteString.length shareSeed)
-    let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
-    let aShareNumber = head shareNumbers
-    let aShare = permuteShare shareSeed aShareNumber
-    let write =
-            writeImmutableShare backend storageIndex aShareNumber aShare Nothing
-    run $ do
-        _ <- createImmutableStorageIndex backend storageIndex allocate
-        write
-        write `shouldThrow` (const True :: Selector ImmutableShareAlreadyWritten)
+        allocate = AllocateBuckets shareNumbers size
+        aShareNumber = head shareNumbers
+        aShare = permuteShare shareSeed aShareNumber
+    run $
+        withBackend makeBackend $ \backend -> do
+            void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
+            let write = writeImmutableShare backend storageIndex aShareNumber uploadSecret aShare Nothing
+            write
+            write `shouldThrow` (== ImmutableShareAlreadyWritten)
+  where
+    uploadSecret = Just [Upload "hello"]
 
 -- Immutable share data written to the shares of a given storage index can be
 -- retrieved verbatim and associated with the same share numbers as were
 -- specified during writing.
 immutableWriteAndReadShare ::
-    Backend b =>
-    b ->
+    (Backend b, Mess b) =>
+    IO b ->
     StorageIndex ->
     ShareNumbers ->
     ByteString ->
     Property
-immutableWriteAndReadShare backend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
+immutableWriteAndReadShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
     let size = fromIntegral (Data.ByteString.length shareSeed)
-    let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
-    _result <- run $ createImmutableStorageIndex backend storageIndex allocate
-    run $ writeShares (writeImmutableShare backend storageIndex) (zip shareNumbers permutedShares)
-    readShares' <- run $ mapM (\sn -> readImmutableShare backend storageIndex sn Nothing) shareNumbers
-    when (permutedShares /= readShares') $
-        fail (show permutedShares ++ " /= " ++ show readShares')
+    let allocate = AllocateBuckets shareNumbers size
+    run $
+        withBackend makeBackend $ \backend -> do
+            void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
+            writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) (zip shareNumbers permutedShares)
+            readShares' <- mapM (\sn -> readImmutableShare backend storageIndex sn Nothing) shareNumbers
+            when (permutedShares /= readShares') $
+                fail (show permutedShares ++ " /= " ++ show readShares')
+  where
+    uploadSecret = Just [Upload "hello"]
 
 -- The share numbers of mutable share data written to the shares of a given
 -- storage index can be retrieved.
 mutableWriteAndEnumerateShares ::
-    Backend b =>
-    b ->
+    (Backend b, Mess b) =>
+    IO b ->
     StorageIndex ->
     ShareNumbers ->
     ByteString ->
     Property
-mutableWriteAndEnumerateShares backend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
+mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-    let size = fromIntegral (Data.ByteString.length shareSeed)
-    let allocate = AllocateBuckets "renew" "cancel" shareNumbers size
     let nullSecrets =
             SlotSecrets
                 { writeEnabler = ""
                 , leaseRenew = ""
                 , leaseCancel = ""
                 }
-    _result <- run $ createMutableStorageIndex backend storageIndex allocate
-    run $ writeShares (writeMutableShare backend nullSecrets storageIndex) (zip shareNumbers permutedShares)
-    (CBORSet readShareNumbers) <- run $ getMutableShareNumbers backend storageIndex
-    when (readShareNumbers /= Set.fromList shareNumbers) $
-        fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
+    run $
+        withBackend makeBackend $ \backend -> do
+            writeShares (writeMutableShare backend nullSecrets storageIndex) (zip shareNumbers permutedShares)
+            (CBORSet readShareNumbers) <- getMutableShareNumbers backend storageIndex
+            when (readShareNumbers /= Set.fromList shareNumbers) $
+                fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
 
 permuteShare :: ByteString -> ShareNumber -> ByteString
 permuteShare seed number =
@@ -351,7 +342,7 @@ s3Backend = runResourceT $ do
     let setLocalEndpoint = AWS.setEndpoint False "127.0.0.1" 9000
         setAddressingStyle s = s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}
 
-    logger <- AWS.newLogger AWS.Debug IO.stdout
+    _logger <- AWS.newLogger AWS.Debug IO.stdout
 
     env <- AWS.newEnv AWS.discover
     let loggedEnv = env -- {AWS.logger = logger}
