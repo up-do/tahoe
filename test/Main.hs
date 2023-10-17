@@ -7,7 +7,7 @@ import Test.Hspec.Runner (
 import Spec (
     spec,
  )
+import Test.Hspec (parallel)
 
 main :: IO ()
-main = do
-    hspec spec
+main = hspec . parallel $ spec
