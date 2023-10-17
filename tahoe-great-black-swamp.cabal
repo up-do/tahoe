@@ -69,7 +69,6 @@ common common-opts
     , filepath              >=1.4.2    && <1.5
     , foldl                 >=1.4.6    && <1.5
     , http-types            >=0.12.3   && <0.13
-    , lens
     , primitive             >=0.7.0.1  && <0.8
     , safe-exceptions       >=0.1.7.1  && <0.2
     , text                  >=1.2.3.1  && <1.3

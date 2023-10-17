@@ -7,9 +7,7 @@ module TahoeLAFS.Storage.Backend.Memory (
 
 import Control.Exception (
     throw,
-    throwIO,
  )
-import Control.Lens (at, ix, over)
 import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
 import Data.IORef (
