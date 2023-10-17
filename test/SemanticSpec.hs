@@ -35,15 +35,10 @@ import System.IO.Temp (
 
 import Test.Hspec (
     Spec,
-    around,
-    before,
     context,
     describe,
     it,
     shouldThrow,
- )
-import Test.Hspec.Expectations (
-    Selector,
  )
 
 import Test.QuickCheck (
@@ -82,6 +77,7 @@ import TahoeLAFS.Storage.API (
 
 import TahoeLAFS.Storage.Backend (
     Backend (
+        abortImmutableUpload,
         createImmutableStorageIndex,
         getImmutableShareNumbers,
         getMutableShareNumbers,
@@ -281,6 +277,23 @@ storageSpec makeBackend =
                         -- right secret marked for some other use - this
                         -- should still fail.
                         writeImmutableShare backend "storageindex" (ShareNumber 0) (Just [Upload "wrongsecret"]) "fooooo" Nothing `shouldThrow` (== IncorrectUploadSecret)
+
+            it "disallows aborts without an upload secret" $
+                property $
+                    withBackend makeBackend $ \backend -> do
+                        abortImmutableUpload backend "storageindex" (ShareNumber 0) Nothing `shouldThrow` (== MissingUploadSecret)
+
+            it "disallows aborts without a matching upload secret" $
+                property $
+                    withBackend makeBackend $ \backend -> do
+                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
+                        abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [Upload "wrongsecret"]) `shouldThrow` (== IncorrectUploadSecret)
+
+            it "allows aborts with a matching upload secret" $
+                property $
+                    withBackend makeBackend $ \backend -> do
+                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
+                        abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [Upload "thesecret"])
 
             it "returns the share numbers that were written" $
                 property $

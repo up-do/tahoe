@@ -133,8 +133,8 @@ abort storageIndex shareNumber abortSecret b@MemoryBackend{memoryBackendBuckets}
     abortIt bucket@Bucket{bucketShares} = bucket{bucketShares = Map.update abortIt' shareNumber bucketShares}
 
     abortIt' :: Share -> Maybe Share
-    abortIt' s@(Uploading existingSecret _) = if constEq existingSecret abortSecret then Nothing else Just s
-    abortIt' x = Just x
+    abortIt' (Uploading existingSecret _) = if constEq existingSecret abortSecret then Nothing else throw IncorrectUploadSecret
+    abortIt' _ = throw ImmutableShareAlreadyWritten
 
 writeImm ::
     StorageIndex ->

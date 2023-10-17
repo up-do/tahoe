@@ -148,6 +148,12 @@ instance Backend FilesystemBackend where
                     removeFile (secretPath incomingSharePath)
                     renameFile incomingSharePath finalSharePath
 
+    abortImmutableUpload (FilesystemBackend root) storageIndex shareNumber' secrets =
+        withUploadSecret secrets $ \uploadSecret -> do
+            let incomingSharePath = incomingPathOf root storageIndex shareNumber'
+            checkUploadSecret incomingSharePath uploadSecret
+            removeFile incomingSharePath
+
     getImmutableShareNumbers (FilesystemBackend root) storageIndex = do
         let storageIndexPath = pathOfStorageIndex root storageIndex
         storageIndexChildren <-
