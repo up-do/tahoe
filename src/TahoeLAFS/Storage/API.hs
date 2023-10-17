@@ -38,6 +38,8 @@ module TahoeLAFS.Storage.API (
     TestOperator (..),
     StorageAPI,
     LeaseSecret (..),
+    UploadSecret,
+    isUploadSecret,
     api,
     renewSecretLength,
     writeEnablerSecretLength,
@@ -97,9 +99,9 @@ import Servant (
     Post,
     PostCreated,
     Proxy (Proxy),
-    QueryParams,
+    Put,
     ReqBody,
-    StdMethod (PUT),
+    StdMethod (PATCH),
     Verb,
     (:<|>),
     (:>),
@@ -117,8 +119,6 @@ import Web.HttpApiData (
 import Prelude hiding (
     toInteger,
  )
-
-type PutCreated = Verb 'PUT 201
 
 tahoeJSONOptions :: Options
 tahoeJSONOptions =
@@ -143,8 +143,6 @@ type Offset = Integer
 type QueryRange = Maybe ByteRanges
 
 -- TODO These should probably all be byte strings instead.
-type RenewSecret = String
-type CancelSecret = String
 type StorageIndex = String
 type ShareData = B.ByteString
 
@@ -351,11 +349,8 @@ instance ToJSON Version where
 instance FromJSON Version where
     parseJSON = genericParseJSON tahoeJSONOptions
 
--- XXX Remove the secret fields from this record.
 data AllocateBuckets = AllocateBuckets
-    { renewSecret :: RenewSecret
-    , cancelSecret :: CancelSecret
-    , shareNumbers :: [ShareNumber]
+    { shareNumbers :: [ShareNumber]
     , allocatedSize :: Size
     }
     deriving (Show, Eq, Generic)
@@ -413,7 +408,12 @@ instance ToHttpApiData ByteRanges where
     toUrlPiece _ = error "Cannot serialize ByteRanges to URL piece"
     toQueryParam _ = error "Cannot serialize ByteRanges to query params"
 
-data LeaseSecret = Renew B.ByteString | Cancel B.ByteString | Upload B.ByteString | Write B.ByteString
+type UploadSecret = B.ByteString
+
+data LeaseSecret = Renew B.ByteString | Cancel B.ByteString | Upload UploadSecret | Write B.ByteString
+
+isUploadSecret (Upload _) = True
+isUploadSecret _ = False
 
 instance FromHttpApiData LeaseSecret where
     parseHeader bs =
@@ -451,26 +451,33 @@ instance ToHttpApiData [LeaseSecret] where
     toUrlPiece _ = error "Cannot serialize [LeaseSecret] to URL piece"
     toQueryParam _ = error "Cannot serialize [LeaseSecret] to query params"
 
+-- Request authorization information
+type Authz = Header "X-Tahoe-Authorization" [LeaseSecret]
+
 -- GET .../version
 -- Retrieve information about the server version and behavior
 type GetVersion = "version" :> Get '[CBOR, JSON] Version
 
 -- PUT .../lease/:storage_index
-type RenewLease = "lease" :> Capture "storage_index" StorageIndex :> Header "X-Tahoe-Authorization" [LeaseSecret] :> Get '[CBOR, JSON] ()
+type RenewLease = "lease" :> Capture "storage_index" StorageIndex :> Authz :> Get '[CBOR, JSON] ()
 
 -- POST .../immutable/:storage_index
 -- Initialize a new immutable storage index
-type CreateImmutableStorageIndex = "immutable" :> Capture "storage_index" StorageIndex :> ReqBody '[CBOR, JSON] AllocateBuckets :> PostCreated '[CBOR, JSON] AllocationResult
+type CreateImmutableStorageIndex = "immutable" :> Capture "storage_index" StorageIndex :> Authz :> ReqBody '[CBOR, JSON] AllocateBuckets :> PostCreated '[CBOR, JSON] AllocationResult
 
 --
--- PUT .../immutable/:storage_index/:share_number
+-- PATCH .../immutable/:storage_index/:share_number
 -- Write data for an immutable share to an allocated storage index
 --
 -- Note this accepts JSON to facilitate code generation by servant-py.  This
 -- is total nonsense and supplying JSON here will almost certainly break.
 -- At some point hopefully we'll fix servant-py to not need this and then
 -- fix the signature here.
-type WriteImmutableShareData = "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> ReqBody '[OctetStream, JSON] ShareData :> Header "Content-Range" ByteRanges :> PutCreated '[CBOR, JSON] ()
+type WriteImmutableShareData = "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Authz :> ReqBody '[OctetStream, JSON] ShareData :> Header "Content-Range" ByteRanges :> Verb 'PATCH 201 '[CBOR, JSON] ()
+
+-- PUT .../immutable/:storage_index/:share_number/unstableSort
+-- Cancel an incomplete immutable share upload.
+type AbortImmutableUpload = "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> "abort" :> Authz :> Put '[JSON] ()
 
 -- POST .../immutable/:storage_index/:share_number/corrupt
 -- Advise the server of a corrupt share data
@@ -485,7 +492,7 @@ type GetShareNumbers = Capture "storage_index" StorageIndex :> "shares" :> Get '
 -- Read from an immutable storage index, possibly from multiple shares, possibly limited to certain ranges
 type ReadImmutableShareData = "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Header "Content-Range" ByteRanges :> Get '[OctetStream, JSON] ShareData
 
--- POST /v1/mutable/:storage_index/read-test-write
+-- POST .../v1/mutable/:storage_index/read-test-write
 -- General purpose read-test-and-write operation.
 type ReadTestWrite = "mutable" :> Capture "storage_index" StorageIndex :> "read-test-write" :> ReqBody '[CBOR, JSON] ReadTestWriteVectors :> Post '[CBOR, JSON] ReadTestWriteResult
 
@@ -501,6 +508,7 @@ type StorageAPI =
                 -- Immutables
                 :<|> CreateImmutableStorageIndex
                 :<|> WriteImmutableShareData
+                :<|> AbortImmutableUpload
                 :<|> ReadImmutableShareData
                 :<|> "immutable" :> GetShareNumbers
                 :<|> "immutable" :> AdviseCorrupt
@@ -541,8 +549,7 @@ instance FromJSON ReadTestWriteResult where
     parseJSON = genericParseJSON tahoeJSONOptions
 
 data ReadTestWriteVectors = ReadTestWriteVectors
-    { secrets :: SlotSecrets
-    , testWriteVectors :: Map ShareNumber TestWriteVectors
+    { testWriteVectors :: Map ShareNumber TestWriteVectors
     , readVector :: [ReadVector]
     }
     deriving (Show, Eq, Generic)
@@ -574,6 +581,7 @@ instance FromJSON ReadVector where
 data TestWriteVectors = TestWriteVectors
     { test :: [TestVector]
     , write :: [WriteVector]
+    , newLength :: Maybe Integer
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 

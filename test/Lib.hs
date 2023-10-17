@@ -6,6 +6,7 @@ module Lib (
     positiveIntegers,
     b32encode,
     b32decode,
+    ShareNumbers (..),
 ) where
 
 import Data.Word (
@@ -24,6 +25,9 @@ import qualified Data.Text as Text
 import Test.QuickCheck (
     Arbitrary (arbitrary),
     Gen,
+    NonNegative (getNonNegative),
+    shuffle,
+    sublistOf,
     suchThatMap,
     vectorOf,
  )
@@ -32,7 +36,7 @@ import Test.QuickCheck (
 import Test.QuickCheck.Instances.ByteString ()
 
 import TahoeLAFS.Storage.API (
-    ShareNumber,
+    ShareNumber (..),
     StorageIndex,
     shareNumber,
  )
@@ -52,9 +56,6 @@ positiveIntegers :: Gen Integer
 positiveIntegers =
     suchThatMap (arbitrary :: Gen Integer) (Just . abs)
 
-instance Arbitrary ShareNumber where
-    arbitrary = suchThatMap positiveIntegers shareNumber
-
 b32table :: ByteString
 b32table = "abcdefghijklmnopqrstuvwxyz234567"
 
@@ -64,3 +65,16 @@ b32encode = Text.unpack . Base32.toText . Base32.fromBytes b32table
 b32decode :: String -> ByteString
 b32decode base32 =
     Base32.toBytes b32table $ Base32.fromText b32table $ Text.pack base32
+
+newtype ShareNumbers = ShareNumbers [ShareNumber] deriving (Eq, Ord, Show)
+
+{- | An Arbitrary instance that guarantees ShareNumbers are unique and
+   non-empty (without invoking discard).
+-}
+instance Arbitrary ShareNumbers where
+    arbitrary = ShareNumbers . fmap ShareNumber <$> nums
+      where
+        nums =
+            arbitrary
+                >>= (shuffle . enumFromTo 0) . getNonNegative
+                >>= \(num : rest) -> (num :) <$> sublistOf rest

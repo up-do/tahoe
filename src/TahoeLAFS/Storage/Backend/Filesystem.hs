@@ -9,35 +9,37 @@ module TahoeLAFS.Storage.Backend.Filesystem (
     incomingPathOf,
 ) where
 
-import Prelude hiding (
-    readFile,
-    writeFile,
+import Control.Exception (
+    throwIO,
+    tryJust,
  )
-
+import Control.Monad (unless)
+import Data.Bifunctor (Bifunctor (bimap))
+import Data.ByteArray (constEq)
 import Data.ByteString (
     hPut,
     readFile,
     writeFile,
  )
-import qualified Data.Set as Set
-import Network.HTTP.Types (
-    ByteRanges,
+import qualified Data.List
+import Data.Map.Strict (
+    toList,
  )
-
-import Control.Exception (
-    throwIO,
-    tryJust,
- )
-
 import Data.Maybe (
     mapMaybe,
  )
-
-import Data.Map.Strict (
-    fromList,
-    toList,
+import qualified Data.Set as Set
+import System.Directory (
+    createDirectoryIfMissing,
+    doesPathExist,
+    listDirectory,
+    removeFile,
+    renameFile,
  )
-
+import System.FilePath (
+    takeDirectory,
+    (</>),
+ )
 import System.IO (
     Handle,
     IOMode (ReadWriteMode),
@@ -48,42 +50,32 @@ import System.IO (
 import System.IO.Error (
     isDoesNotExistError,
  )
-
-import System.FilePath (
-    takeDirectory,
-    (</>),
- )
-
-import System.Directory (
-    createDirectoryIfMissing,
-    doesPathExist,
-    listDirectory,
-    renameFile,
- )
-
 import TahoeLAFS.Storage.API (
     AllocateBuckets (..),
     AllocationResult (..),
     CBORSet (..),
     Offset,
-    QueryRange,
     ReadTestWriteResult (ReadTestWriteResult, readData, success),
     ReadTestWriteVectors (ReadTestWriteVectors),
     ShareData,
     ShareNumber,
     StorageIndex,
     TestWriteVectors (write),
+    UploadSecret,
     Version (..),
     Version1Parameters (..),
     WriteVector (WriteVector),
     shareNumber,
  )
-
 import qualified TahoeLAFS.Storage.API as Storage
-
 import TahoeLAFS.Storage.Backend (
     Backend (..),
-    ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten),
+    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret),
+    withUploadSecret,
+ )
+import Prelude hiding (
+    readFile,
+    writeFile,
  )
 
 newtype FilesystemBackend = FilesystemBackend FilePath
@@ -107,7 +99,7 @@ maxMutableShareSize = 69_105 * 1_000 * 1_000 * 1_000 * 1_000
 --  base-32 chars).
 
 instance Backend FilesystemBackend where
-    version (FilesystemBackend path) = do
+    version (FilesystemBackend _path) = do
         -- Hard-code some arbitrary amount of space.  There is a statvfs
         -- package that can inspect the system and tell us a more correct
         -- answer but it is somewhat unmaintained and fails to build in some
@@ -126,35 +118,42 @@ instance Backend FilesystemBackend where
                         }
                 }
 
-    createImmutableStorageIndex :: FilesystemBackend -> StorageIndex -> AllocateBuckets -> IO AllocationResult
-    createImmutableStorageIndex backend storageIndex params = do
-        let exists = haveShare backend storageIndex
-        (alreadyHave, allocated) <- partitionM exists (shareNumbers params)
-        allocatev backend storageIndex allocated
-        return
-            AllocationResult
-                { alreadyHave = alreadyHave
-                , allocated = allocated
-                }
+    createImmutableStorageIndex backend storageIndex secrets params =
+        withUploadSecret secrets $ \uploadSecret -> do
+            let exists = haveShare backend storageIndex
+            (alreadyHave, allocated) <- partitionM exists (shareNumbers params)
+            mapM_ (flip (allocate backend storageIndex) uploadSecret) allocated
+            return
+                AllocationResult
+                    { alreadyHave = alreadyHave
+                    , allocated = allocated
+                    }
 
     -- TODO Handle ranges.
     -- TODO Make sure the share storage was allocated.
     -- TODO Don't allow target of rename to exist.
     -- TODO Concurrency
-    writeImmutableShare :: FilesystemBackend -> StorageIndex -> ShareNumber -> ShareData -> Maybe ByteRanges -> IO ()
-    writeImmutableShare (FilesystemBackend root) storageIndex shareNumber' shareData Nothing = do
-        alreadyHave <- haveShare (FilesystemBackend root) storageIndex shareNumber'
-        if alreadyHave
-            then throwIO ImmutableShareAlreadyWritten
-            else do
-                let finalSharePath = pathOfShare root storageIndex shareNumber'
-                let incomingSharePath = incomingPathOf root storageIndex shareNumber'
-                writeFile incomingSharePath shareData
-                let createParents = True
-                createDirectoryIfMissing createParents $ takeDirectory finalSharePath
-                renameFile incomingSharePath finalSharePath
+    writeImmutableShare (FilesystemBackend root) storageIndex shareNumber' secrets shareData Nothing =
+        withUploadSecret secrets $ \uploadSecret -> do
+            alreadyHave <- haveShare (FilesystemBackend root) storageIndex shareNumber'
+            if alreadyHave
+                then throwIO ImmutableShareAlreadyWritten
+                else do
+                    let finalSharePath = pathOfShare root storageIndex shareNumber'
+                    let incomingSharePath = incomingPathOf root storageIndex shareNumber'
+                    checkUploadSecret incomingSharePath uploadSecret
+                    writeFile incomingSharePath shareData
+                    let createParents = True
+                    createDirectoryIfMissing createParents $ takeDirectory finalSharePath
+                    removeFile (secretPath incomingSharePath)
+                    renameFile incomingSharePath finalSharePath
 
-    getImmutableShareNumbers :: FilesystemBackend -> StorageIndex -> IO (CBORSet ShareNumber)
+    abortImmutableUpload (FilesystemBackend root) storageIndex shareNumber' secrets =
+        withUploadSecret secrets $ \uploadSecret -> do
+            let incomingSharePath = incomingPathOf root storageIndex shareNumber'
+            checkUploadSecret incomingSharePath uploadSecret
+            removeFile incomingSharePath
+
     getImmutableShareNumbers (FilesystemBackend root) storageIndex = do
         let storageIndexPath = pathOfStorageIndex root storageIndex
         storageIndexChildren <-
@@ -167,21 +166,18 @@ instance Backend FilesystemBackend where
 
     -- TODO Handle ranges.
     -- TODO Make sure the share storage was allocated.
-    readImmutableShare :: FilesystemBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO Storage.ShareData
     readImmutableShare (FilesystemBackend root) storageIndex shareNum _qr =
         let _storageIndexPath = pathOfStorageIndex root storageIndex
             readShare = readFile . pathOfShare root storageIndex
          in readShare shareNum
-
-    createMutableStorageIndex = createImmutableStorageIndex
 
     getMutableShareNumbers = getImmutableShareNumbers
 
     readvAndTestvAndWritev
         (FilesystemBackend root)
         storageIndex
-        (ReadTestWriteVectors _secrets testWritev _readv) = do
-            -- TODO implement readv and testv parts.  implement secrets part.
+        (ReadTestWriteVectors testWritev _readv) = do
+            -- TODO implement readv and testv parts.
             mapM_ (applyWriteVectors root storageIndex) $ toList testWritev
             return
                 ReadTestWriteResult
@@ -249,41 +245,29 @@ storageStartSegment [] = fail "illegal short storage index"
 storageStartSegment [_] = storageStartSegment []
 storageStartSegment (a : b : _) = [a, b]
 
--- Create a space to write data for an incoming share.
+-- Create spaces to write data for several incoming shares.
 allocate ::
     FilesystemBackend ->
     StorageIndex ->
     ShareNumber ->
+    UploadSecret ->
     IO ()
-allocate backend storageIndex shareNumber' =
-    allocatev backend storageIndex [shareNumber']
-
--- Create spaces to write data for several incoming shares.
-allocatev ::
-    FilesystemBackend ->
-    StorageIndex ->
-    [ShareNumber] ->
-    IO ()
-allocatev _backend _storageIndex [] = return ()
-allocatev (FilesystemBackend root) storageIndex (shareNumber : rest) =
-    let sharePath = incomingPathOf root storageIndex shareNumber
+allocate (FilesystemBackend root) storageIndex shareNum secret =
+    let sharePath = incomingPathOf root storageIndex shareNum
         shareDirectory = takeDirectory sharePath
         createParents = True
      in do
             createDirectoryIfMissing createParents shareDirectory
+            writeFile (secretPath sharePath) secret
             writeFile sharePath ""
-            allocatev (FilesystemBackend root) storageIndex rest
             return ()
 
+secretPath = (<> ".secret")
+
+checkUploadSecret :: FilePath -> UploadSecret -> IO ()
+checkUploadSecret sharePath uploadSecret = do
+    matches <- constEq uploadSecret <$> readFile (secretPath sharePath)
+    unless matches (throwIO IncorrectUploadSecret)
+
 partitionM :: Monad m => (a -> m Bool) -> [a] -> m ([a], [a])
-partitionM pred' items = do
-    (yes, no) <- partitionM' pred' items [] []
-    -- re-reverse them to maintain input order
-    return (reverse yes, reverse no)
-  where
-    partitionM' _ [] yes no = return (yes, no)
-    partitionM' pred'' (item : rest) yes no = do
-        result <- pred'' item
-        if result
-            then partitionM' pred'' rest (item : yes) no
-            else partitionM' pred'' rest yes (item : no)
+partitionM pred' items = bimap (fst <$>) (fst <$>) . Data.List.partition snd . zip items <$> mapM pred' items

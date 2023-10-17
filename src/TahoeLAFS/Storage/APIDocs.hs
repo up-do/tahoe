@@ -18,15 +18,14 @@ import Data.Map (
  )
 
 import Servant (
-    Capture (..),
-    Optional,
+    Capture,
     QueryParams,
  )
 
 import Servant.Docs (
     DocCapture (DocCapture),
     DocQueryParam (DocQueryParam),
-    ParamKind (List, Normal),
+    ParamKind (List),
     ToCapture (toCapture),
     ToParam (toParam),
     ToSample (toSamples),
@@ -37,16 +36,13 @@ import Servant.Docs (
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets),
     AllocationResult (AllocationResult),
-    ApplicationVersion,
     CorruptionDetails (CorruptionDetails),
-    Offset,
     ReadResult,
     ReadTestWriteResult (ReadTestWriteResult),
     ReadTestWriteVectors (ReadTestWriteVectors),
     ReadVector,
     ShareData,
     ShareNumber (ShareNumber),
-    SlotSecrets (SlotSecrets),
     StorageIndex,
     TestOperator (Eq),
     TestVector (TestVector),
@@ -54,10 +50,6 @@ import TahoeLAFS.Storage.API (
     Version (Version),
     Version1Parameters (Version1Parameters),
     WriteVector (WriteVector),
-    leaseCancelSecretLength,
-    leaseRenewSecretLength,
-    renewSecretLength,
-    writeEnablerSecretLength,
  )
 
 instance ToCapture (Capture "storage_index" StorageIndex) where
@@ -87,8 +79,6 @@ instance ToSample AllocateBuckets where
     toSamples _ =
         singleSample
             ( AllocateBuckets
-                (example renewSecretLength "a")
-                (example renewSecretLength "b")
                 [ShareNumber 1, ShareNumber 3]
                 1024
             )
@@ -114,7 +104,6 @@ instance ToSample ReadTestWriteVectors where
     toSamples _ =
         singleSample $
             ReadTestWriteVectors
-                (SlotSecrets (example writeEnablerSecretLength "c") (example leaseRenewSecretLength "d") (example leaseCancelSecretLength "e"))
                 sampleTestWriteVectors
                 sampleReadVector
 
@@ -126,7 +115,14 @@ instance ToSample ReadTestWriteResult where
 sampleTestWriteVectors :: Map ShareNumber TestWriteVectors
 sampleTestWriteVectors =
     fromList
-        [(ShareNumber 0, TestWriteVectors [TestVector 32 33 Eq "x"] [WriteVector 32 "y"])]
+        [
+            ( ShareNumber 0
+            , TestWriteVectors
+                [TestVector 32 33 Eq "x"]
+                [WriteVector 32 "y"]
+                (Just 100)
+            )
+        ]
 
 sampleReadVector :: [ReadVector]
 sampleReadVector = mempty

@@ -1,22 +1,15 @@
+{-# LANGUAGE FlexibleInstances #-}
+
 module TahoeLAFS.Storage.Backend.Memory (
     MemoryBackend (MemoryBackend),
     memoryBackend,
 ) where
 
-import Prelude hiding (
-    lookup,
-    map,
- )
-
-import Network.HTTP.Types (
-    ByteRanges,
- )
-
 import Control.Exception (
-    throwIO,
+    throw,
  )
-import Data.Maybe (fromMaybe)
-
+import Data.ByteArray (constEq)
+import qualified Data.ByteString as B
 import Data.IORef (
     IORef,
     atomicModifyIORef',
@@ -27,7 +20,6 @@ import Data.IORef (
 import Data.Map.Strict (
     Map,
     adjust,
-    filterWithKey,
     fromList,
     insert,
     keys,
@@ -35,16 +27,13 @@ import Data.Map.Strict (
     map,
     toList,
  )
+import qualified Data.Map.Strict as Map
+import Data.Maybe (isNothing)
 import qualified Data.Set as Set
-
 import TahoeLAFS.Storage.API (
-    AllocateBuckets,
+    AllocateBuckets (AllocateBuckets),
     AllocationResult (..),
     CBORSet (..),
-    CorruptionDetails,
-    Offset,
-    QueryRange,
-    ReadResult,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
     ShareData,
@@ -52,32 +41,134 @@ import TahoeLAFS.Storage.API (
     Size,
     StorageIndex,
     TestWriteVectors (..),
+    UploadSecret,
     Version (..),
     Version1Parameters (..),
     WriteVector (..),
     shareNumbers,
  )
-
 import TahoeLAFS.Storage.Backend (
     Backend (..),
-    ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten),
+    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret, ShareNotAllocated, ShareSizeMismatch),
+    withUploadSecret,
+ )
+import Prelude hiding (
+    lookup,
+    map,
  )
 
+data Share = Complete ShareData | Uploading UploadSecret ShareData deriving (Show)
+
+data Bucket = Bucket
+    { bucketSize :: Size
+    , bucketShares :: Map ShareNumber Share
+    }
+    deriving (Show)
+
 type ShareStorage = Map StorageIndex (Map ShareNumber ShareData)
-type BucketStorage = Map StorageIndex (Map ShareNumber (Size, ShareData))
 
 data MemoryBackend = MemoryBackend
-    { immutableShares :: IORef ShareStorage -- Completely written immutable shares
-    , mutableShares :: IORef ShareStorage -- Completely written mutable shares
-    , buckets :: IORef BucketStorage -- In-progress immutable share uploads
+    { memoryBackendBuckets :: Map StorageIndex Bucket -- Completely or partially written immutable share data
+    , mutableShares :: ShareStorage -- Completely written mutable shares
     }
+
+getShareNumbers :: StorageIndex -> MemoryBackend -> CBORSet ShareNumber
+getShareNumbers storageIndex backend = shareSet
+  where
+    shareSet = CBORSet . Set.fromList $ shareNumbers
+    shareNumbers = case Map.lookup storageIndex (memoryBackendBuckets backend) of
+        Nothing -> mempty
+        Just bucket -> Map.keys . bucketShares $ bucket
+
+-- Attempt to allocate space at a certain storage index for some numbered
+-- shares.  The space is only allocated if there is not yet any data for those
+-- share numbers at that storage index.  The modified backend and a report of
+-- the allocation done are returned.
+allocate ::
+    -- | The storage index at which to attempt the allocation.
+    StorageIndex ->
+    -- | The share numbers to attempt to allocate.
+    [ShareNumber] ->
+    -- | A shared secret authorizing write attempts to the allocated shares.
+    UploadSecret ->
+    -- | The size in bytes to allocate for each share.
+    Size ->
+    -- | The backend in which to do the allocation.
+    MemoryBackend ->
+    -- | The modified backend and the results of the allocation.
+    (MemoryBackend, AllocationResult)
+allocate storageIndex shareNumbers uploadSecret size backend@MemoryBackend{memoryBackendBuckets}
+    | maybe size bucketSize existing /= size = throw ShareSizeMismatch
+    | otherwise =
+        ( backend{memoryBackendBuckets = updated}
+        , result
+        )
+  where
+    existing = Map.lookup storageIndex memoryBackendBuckets
+    updated = Map.insertWith mergeBuckets storageIndex newBucket memoryBackendBuckets
+
+    alreadyHave = maybe [] (Map.keys . bucketShares) existing
+    allocated = filter (`notElem` alreadyHave) shareNumbers
+    result = AllocationResult alreadyHave allocated
+
+    -- Merge two buckets given precedence to the right-hand bucket for overlap.
+    mergeBuckets (Bucket _ newShares) (Bucket _ oldShares) = Bucket size (newShares <> oldShares)
+
+    -- The bucket we would allocate if there were no relevant existing state.
+    newBucket = Bucket size (Map.fromList (zip shareNumbers (repeat newUpload)))
+    newUpload = Uploading uploadSecret ""
+
+abort ::
+    StorageIndex ->
+    ShareNumber ->
+    UploadSecret ->
+    MemoryBackend ->
+    (MemoryBackend, ())
+abort storageIndex shareNumber abortSecret b@MemoryBackend{memoryBackendBuckets} = (b{memoryBackendBuckets = updated memoryBackendBuckets}, ())
+  where
+    updated :: Map StorageIndex Bucket -> Map StorageIndex Bucket
+    updated = Map.adjust abortIt storageIndex
+
+    abortIt :: Bucket -> Bucket
+    abortIt bucket@Bucket{bucketShares} = bucket{bucketShares = Map.update abortIt' shareNumber bucketShares}
+
+    abortIt' :: Share -> Maybe Share
+    abortIt' (Uploading existingSecret _) = if constEq existingSecret abortSecret then Nothing else throw IncorrectUploadSecret
+    abortIt' _ = throw ImmutableShareAlreadyWritten
+
+writeImm ::
+    StorageIndex ->
+    ShareNumber ->
+    B.ByteString ->
+    B.ByteString ->
+    MemoryBackend ->
+    (MemoryBackend, ())
+writeImm storageIndex shareNum uploadSecret newData b@MemoryBackend{memoryBackendBuckets}
+    | isNothing share = throw ShareNotAllocated
+    | otherwise = (b{memoryBackendBuckets = updated}, ())
+  where
+    bucket = Map.lookup storageIndex memoryBackendBuckets
+    share = bucket >>= Map.lookup shareNum . bucketShares
+    size = bucketSize <$> bucket
+    updated = Map.adjust (\bkt -> bkt{bucketShares = Map.adjust writeToShare shareNum (bucketShares bkt)}) storageIndex memoryBackendBuckets
+
+    writeToShare :: Share -> Share
+    writeToShare (Complete _) = throw ImmutableShareAlreadyWritten
+    writeToShare (Uploading existingSecret existingData)
+        | authorized =
+            (if Just True == (complete existingData newData <$> size) then Complete else Uploading existingSecret) (existingData <> newData)
+        | otherwise = throw IncorrectUploadSecret
+      where
+        authorized = constEq existingSecret uploadSecret
+
+    complete x y = (B.length x + B.length y ==) . fromIntegral
 
 instance Show MemoryBackend where
     show _ = "<MemoryBackend>"
 
-instance Backend MemoryBackend where
+instance Backend (IORef MemoryBackend) where
     version backend = do
-        totalSize <- totalShareSize backend
+        totalSize <- readIORef backend >>= totalShareSize
         return
             Version
                 { applicationVersion = "(memory)"
@@ -89,30 +180,21 @@ instance Backend MemoryBackend where
                         }
                 }
 
-    createMutableStorageIndex :: MemoryBackend -> StorageIndex -> AllocateBuckets -> IO AllocationResult
-    createMutableStorageIndex _backend _storageIndex params =
-        return
-            AllocationResult
-                { alreadyHave = mempty
-                , allocated = shareNumbers params
-                }
-
-    getMutableShareNumbers :: MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
+    getMutableShareNumbers :: IORef MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getMutableShareNumbers backend storageIndex = do
-        shares' <- readIORef $ mutableShares backend
+        shares' <- mutableShares <$> readIORef backend
         return $
             CBORSet . Set.fromList $
                 maybe [] keys $
                     lookup storageIndex shares'
 
-    readvAndTestvAndWritev :: MemoryBackend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
+    readvAndTestvAndWritev :: IORef MemoryBackend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev
         backend
         storageIndex
-        (ReadTestWriteVectors _secrets testWritev _readv) = do
-            -- TODO implement readv and testv parts.  implement secrets part.
-            let shares = mutableShares backend
-            modifyIORef shares $ addShares storageIndex (shares' testWritev)
+        (ReadTestWriteVectors testWritev _readv) = do
+            -- TODO implement readv and testv parts.
+            modifyIORef backend $ \m@MemoryBackend{mutableShares} -> m{mutableShares = addShares storageIndex (shares' testWritev) mutableShares}
             return
                 ReadTestWriteResult
                     { success = True
@@ -128,55 +210,42 @@ instance Backend MemoryBackend where
                 , writev <- write testWritev'
                 ]
 
-    createImmutableStorageIndex :: MemoryBackend -> StorageIndex -> AllocateBuckets -> IO AllocationResult
-    createImmutableStorageIndex _backend _idx params =
-        return
-            AllocationResult
-                { alreadyHave = mempty
-                , allocated = shareNumbers params
-                }
+    createImmutableStorageIndex backend storageIndex secrets (AllocateBuckets shareNums size) =
+        withUploadSecret secrets $ \secret ->
+            atomicModifyIORef' backend (allocate storageIndex shareNums secret size)
 
-    writeImmutableShare :: MemoryBackend -> StorageIndex -> ShareNumber -> ShareData -> Maybe ByteRanges -> IO ()
-    writeImmutableShare backend storageIndex shareNumber shareData Nothing = do
-        -- shares <- readIORef (immutableShares backend) -- XXX uh, is this right?!
-        changed <- atomicModifyIORef' (immutableShares backend) $
-            \shares ->
-                case lookup storageIndex shares >>= lookup shareNumber of
-                    Just _ ->
-                        -- It is not allowed to write new data for an immutable share that
-                        -- has already been written.
-                        (shares, False)
-                    Nothing ->
-                        (addShares storageIndex [(shareNumber, shareData)] shares, True)
-        if changed
-            then return ()
-            else throwIO ImmutableShareAlreadyWritten
-    writeImmutableShare _ _ _ _ _ = error "writeImmutableShare got bad input"
+    abortImmutableUpload backend storageIndex shareNumber secrets =
+        withUploadSecret secrets $ \secret ->
+            atomicModifyIORef' backend (abort storageIndex shareNumber secret)
 
-    adviseCorruptImmutableShare :: MemoryBackend -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
+    writeImmutableShare backend storageIndex shareNumber secrets shareData Nothing = do
+        withUploadSecret secrets $ \secret ->
+            atomicModifyIORef' backend (writeImm storageIndex shareNumber secret shareData)
+    writeImmutableShare _ _ _ _ _ _ = error "writeImmutableShare got bad input"
+
     adviseCorruptImmutableShare _backend _ _ _ =
         return mempty
 
-    getImmutableShareNumbers :: MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
-    getImmutableShareNumbers backend storageIndex = do
-        shares' <- readIORef $ immutableShares backend
-        return $ CBORSet . Set.fromList $ maybe [] keys $ lookup storageIndex shares'
+    getImmutableShareNumbers backend storageIndex = getShareNumbers storageIndex <$> readIORef backend
 
-    readImmutableShare :: MemoryBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     readImmutableShare backend storageIndex shareNum _qr = do
-        shares' <- readIORef $ immutableShares backend
-        let result = case lookup storageIndex shares' of
-                Nothing -> mempty
-                Just shares'' -> lookup shareNum shares''
-        pure $ fromMaybe mempty result
+        buckets <- memoryBackendBuckets <$> readIORef backend
+        case lookup storageIndex buckets of
+            Nothing -> pure mempty
+            Just bucket -> case lookup shareNum (bucketShares bucket) of
+                Just (Complete shareData) -> pure shareData
+                _ -> pure mempty
 
 totalShareSize :: MemoryBackend -> IO Size
 totalShareSize backend = do
-    imm <- readIORef $ immutableShares backend
-    mut <- readIORef $ mutableShares backend
-    let immSize = sum $ map length imm
+    let imm = memoryBackendBuckets backend
+        mut = mutableShares backend
+    let immSize = sum $ map bucketTotalSize imm
     let mutSize = sum $ map length mut
-    return $ toInteger $ immSize + mutSize
+    return $ toInteger $ immSize + fromIntegral mutSize
+
+bucketTotalSize :: Bucket -> Size
+bucketTotalSize Bucket{bucketSize, bucketShares} = bucketSize * fromIntegral (Map.size bucketShares)
 
 addShares :: StorageIndex -> [(ShareNumber, ShareData)] -> ShareStorage -> ShareStorage
 addShares _storageIndex [] shareStorage = shareStorage
@@ -190,9 +259,6 @@ addShares storageIndex ((shareNumber, shareData) : rest) shareStorage =
                 addShare' = insert shareNumber shareData
      in addShares storageIndex rest added
 
-memoryBackend :: IO MemoryBackend
+memoryBackend :: IO (IORef MemoryBackend)
 memoryBackend = do
-    immutableShares <- newIORef mempty
-    mutableShares <- newIORef mempty
-    buckets <- newIORef mempty
-    return $ MemoryBackend immutableShares mutableShares buckets
+    newIORef $ MemoryBackend mempty mempty

@@ -155,17 +155,19 @@ addAuthorization swissnum req =
 
     addHeader :: Header -> [Header] -> [Header]
     addHeader (name, value) [] = [(name, value)]
-    addHeader (name, value) (o@(name', value') : xs)
+    addHeader (name, value) (o@(name', _) : xs)
         | name == name' = o : xs
         | otherwise = o : addHeader (name, value) xs
 
 addAuthorizationPrint :: T.Text -> Request -> IO Request
 addAuthorizationPrint swissnum req = do
-    print "Before"
+    p "Before"
     print req
-    print "--------"
+    p "--------"
     r <- addAuthorization swissnum req
-    print "After"
+    p "After"
     print r
-    print "--------"
+    p "--------"
     pure r
+  where
+    p = print :: String -> IO ()

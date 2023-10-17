@@ -11,6 +11,7 @@ module TahoeLAFS.Storage.Client (
     -- Immutable operations
     createImmutableStorageIndex,
     writeImmutableShare,
+    abortImmutableUpload,
     readImmutableShare,
     getImmutableShareNumbers,
     adviseCorruptImmutableShare,
@@ -63,6 +64,7 @@ newApi = Proxy
         :<|> renewLease
         :<|> createImmutableStorageIndex
         :<|> writeImmutableShare
+        :<|> abortImmutableUpload
         :<|> readImmutableShare
         :<|> getImmutableShareNumbers
         :<|> adviseCorruptImmutableShare

@@ -4,44 +4,32 @@ module HTTPSpec (
     spec,
 ) where
 
-import Prelude hiding (
-    replicate,
- )
-
-import qualified Data.Map.Strict as Map
-import qualified Data.Vector as Vector
-import GHC.Int (
-    Int64,
- )
-
-import Data.Aeson.Types (
-    Value (Array, Number, String),
- )
-
 import Data.Aeson (
     encode,
  )
-
-import Data.ByteString (
-    ByteString,
+import Data.Aeson.Types (
+    Value (Array, Number, String),
  )
-
 import qualified Data.ByteString.Lazy as L
-
+import qualified Data.Map.Strict as Map
+import qualified Data.Vector as Vector
 import Network.HTTP.Types.Method (
     methodGet,
+    methodPatch,
     methodPost,
-    methodPut,
  )
-
+import TahoeLAFS.Storage.Backend.Null (
+    NullBackend (NullBackend),
+ )
+import TahoeLAFS.Storage.Server (
+    app,
+ )
 import Test.Hspec (
     Spec,
     describe,
     it,
  )
-
 import Test.Hspec.Wai (
-    WaiSession,
     matchBody,
     matchHeaders,
     request,
@@ -49,21 +37,11 @@ import Test.Hspec.Wai (
     with,
     (<:>),
  )
-
 import Test.Hspec.Wai.Matcher (
     bodyEquals,
  )
-
-import Network.Wai.Test (
-    SResponse,
- )
-
-import TahoeLAFS.Storage.Backend.Null (
-    NullBackend (NullBackend),
- )
-
-import TahoeLAFS.Storage.Server (
-    app,
+import Prelude hiding (
+    replicate,
  )
 
 -- WaiSession changed incompatibly between hspec-wai 0.9.2 and 0.11.1.  We
@@ -86,9 +64,9 @@ postJSON path =
         [("Content-Type", "application/json"), ("Accept", "application/json")]
 
 -- putShare :: ByteString -> Int64 -> WaiSession st SResponse
-putShare path size =
+patchShare path size =
     request
-        methodPut
+        methodPatch
         path
         [("Content-Type", "application/octet-stream"), ("Accept", "application/json")]
         (L.replicate size 0xdd)
@@ -122,10 +100,6 @@ sharesResultJSON :: L.ByteString
 -- Simple enough I won't go through Aeson here
 sharesResultJSON = "[]"
 
-readResultJSON :: L.ByteString
--- Simple, again.
-readResultJSON = "{}"
-
 spec :: Spec
 spec = with (return $ app NullBackend) $
     describe "v1" $ do
@@ -145,9 +119,9 @@ spec = with (return $ app NullBackend) $
                         , matchBody = bodyEquals allocateResultJSON
                         }
 
-        describe "PUT /storage/v1/immutable/abcdefgh/1" $ do
+        describe "PATCH /storage/v1/immutable/abcdefgh/1" $ do
             it "responds with CREATED" $
-                putShare "/storage/v1/immutable/abcdefgh/1" 512 `shouldRespondWith` 201
+                patchShare "/storage/v1/immutable/abcdefgh/1" 512 `shouldRespondWith` 201
 
         describe "POST /storage/v1/immutable/abcdefgh/1/corrupt" $ do
             it "responds with OK" $

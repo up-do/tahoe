@@ -4,24 +4,13 @@ module TahoeLAFS.Storage.Backend.Null (
     NullBackend (NullBackend),
 ) where
 
+import qualified Data.Set as Set
 import TahoeLAFS.Storage.API (
-    AllocateBuckets,
     AllocationResult (..),
-    ApplicationVersion,
     CBORSet (..),
-    CorruptionDetails,
-    Offset,
-    QueryRange,
-    ReadResult,
-    ShareData,
-    ShareNumber,
-    Size,
-    StorageIndex,
     Version (..),
     Version1Parameters (..),
  )
-
-import qualified Data.Set as Set
 import TahoeLAFS.Storage.Backend (
     Backend (..),
  )
@@ -42,8 +31,7 @@ instance Backend NullBackend where
                         }
                 }
 
-    createImmutableStorageIndex :: NullBackend -> StorageIndex -> AllocateBuckets -> IO AllocationResult
-    createImmutableStorageIndex NullBackend _ _ =
+    createImmutableStorageIndex NullBackend _ _ _ =
         return
             AllocationResult
                 { alreadyHave = mempty
@@ -53,13 +41,10 @@ instance Backend NullBackend where
     writeImmutableShare NullBackend _ _ _ _ =
         return mempty
 
-    adviseCorruptImmutableShare :: NullBackend -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
     adviseCorruptImmutableShare NullBackend _ _ _ =
         return mempty
 
-    getImmutableShareNumbers :: NullBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getImmutableShareNumbers NullBackend _ =
         return (CBORSet $ Set.fromList [])
 
-    readImmutableShare :: NullBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     readImmutableShare NullBackend _ _ _ = mempty

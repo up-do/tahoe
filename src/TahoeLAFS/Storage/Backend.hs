@@ -2,48 +2,52 @@
 
 module TahoeLAFS.Storage.Backend (
     Backend (..),
-    ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten),
+    WriteImmutableError (..),
     writeMutableShare,
+    withUploadSecret,
 ) where
 
 import Control.Exception (
     Exception,
     throw,
+    throwIO,
  )
 
 import Data.Map.Strict (
     fromList,
  )
 
-import qualified Data.Set as Set
 import Network.HTTP.Types (
     ByteRanges,
  )
 import TahoeLAFS.Storage.API (
     AllocateBuckets,
     AllocationResult,
-    CBOR,
     CBORSet (..),
     CorruptionDetails,
-    LeaseSecret,
-    Offset,
+    LeaseSecret (Upload),
     QueryRange,
-    ReadResult,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
     ShareData,
     ShareNumber,
-    Size,
     SlotSecrets,
     StorageIndex,
     TestWriteVectors (..),
+    UploadSecret,
     Version,
     WriteVector (..),
+    isUploadSecret,
  )
 
-data ImmutableShareAlreadyWritten = ImmutableShareAlreadyWritten
-    deriving (Show)
-instance Exception ImmutableShareAlreadyWritten
+data WriteImmutableError
+    = MissingUploadSecret
+    | ShareSizeMismatch
+    | ImmutableShareAlreadyWritten
+    | ShareNotAllocated
+    | IncorrectUploadSecret
+    deriving (Ord, Eq, Show)
+instance Exception WriteImmutableError
 
 class Backend b where
     version :: b -> IO Version
@@ -52,15 +56,15 @@ class Backend b where
     -- given storage index.
     renewLease :: b -> StorageIndex -> [LeaseSecret] -> IO ()
 
-    createImmutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
+    createImmutableStorageIndex :: b -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
 
     -- May throw ImmutableShareAlreadyWritten
-    writeImmutableShare :: b -> StorageIndex -> ShareNumber -> ShareData -> Maybe ByteRanges -> IO ()
+    writeImmutableShare :: b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> Maybe ByteRanges -> IO ()
+    abortImmutableUpload :: b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
     adviseCorruptImmutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
     getImmutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     readImmutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
 
-    createMutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
     readvAndTestvAndWritev :: b -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readMutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     getMutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
@@ -75,7 +79,7 @@ writeMutableShare ::
     ShareData ->
     Maybe ByteRanges ->
     IO ()
-writeMutableShare b secrets storageIndex shareNumber shareData Nothing = do
+writeMutableShare b _secrets storageIndex shareNumber shareData Nothing = do
     let testWriteVectors =
             fromList
                 [
@@ -88,13 +92,13 @@ writeMutableShare b secrets storageIndex shareNumber shareData Nothing = do
                                 , shareData = shareData
                                 }
                             ]
+                        , newLength = Nothing -- XXX expose this?
                         }
                     )
                 ]
     let vectors =
             ReadTestWriteVectors
-                { secrets = secrets
-                , testWriteVectors = testWriteVectors
+                { testWriteVectors = testWriteVectors
                 , readVector = mempty
                 }
     result <- readvAndTestvAndWritev b storageIndex vectors
@@ -105,3 +109,9 @@ writeMutableShare _ _ _ _ _ _ = error "writeMutableShare got bad input"
 
 data WriteRefused = WriteRefused deriving (Show, Eq)
 instance Exception WriteRefused
+
+withUploadSecret :: Maybe [LeaseSecret] -> (UploadSecret -> IO a) -> IO a
+withUploadSecret ss f =
+    case filter isUploadSecret <$> ss of
+        Just [Upload s] -> f s
+        _ -> throwIO MissingUploadSecret
