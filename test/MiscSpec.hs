@@ -23,21 +23,24 @@ import qualified Data.ByteString as BS
 
 import Test.QuickCheck (
     Arbitrary (arbitrary),
-    Gen,
     forAll,
     property,
-    vectorOf,
+    suchThatMap,
  )
 
 import TahoeLAFS.Storage.API (
+    ShareNumber,
+    shareNumber,
     toInteger,
  )
 
+-- We also get the Arbitrary ShareNumber instance from here.
 -- We also get the Arbitrary ShareNumber instance from here.
 import Lib (
     b32decode,
     b32encode,
     genStorageIndex,
+    positiveIntegers,
  )
 
 import TahoeLAFS.Storage.Backend.Filesystem (
@@ -47,15 +50,18 @@ import TahoeLAFS.Storage.Backend.Filesystem (
     storageStartSegment,
  )
 
+instance Arbitrary ShareNumber where
+    arbitrary = suchThatMap positiveIntegers shareNumber
+
 spec :: Spec
 spec = do
     describe "partitionM" $
         it "handles empty lists" $
-            partitionM (\e -> return True) ([] :: [(Integer, Integer)]) `shouldBe` Just ([], [])
+            partitionM (const $ pure True) ([] :: [(Integer, Integer)]) `shouldBe` Just ([], [])
 
     describe "partitionM" $
         it "puts matching elements in the first list and non-matching in the second" $
-            partitionM (return . even) [5, 5, 6, 7, 8, 8]
+            partitionM (return . even) [5 :: Int, 5, 6, 7, 8, 8]
                 `shouldBe` Just ([6, 8, 8], [5, 5, 7])
 
     describe "storageStartSegment" $
@@ -68,9 +74,9 @@ spec = do
             property $
                 forAll
                     genStorageIndex
-                    ( \storageIndex shareNumber ->
-                        pathOfShare "/foo" storageIndex shareNumber
-                            `shouldBe` printf "/foo/shares/%s/%s/%d" (take 2 storageIndex) storageIndex (toInteger shareNumber)
+                    ( \storageIndex shareNum ->
+                        pathOfShare "/foo" storageIndex shareNum
+                            `shouldBe` printf "/foo/shares/%s/%s/%d" (take 2 storageIndex) storageIndex (toInteger shareNum)
                     )
 
     describe "incomingPathOf" $
@@ -78,9 +84,9 @@ spec = do
             property $
                 forAll
                     genStorageIndex
-                    ( \storageIndex shareNumber ->
-                        incomingPathOf "/foo" storageIndex shareNumber
-                            `shouldBe` printf "/foo/shares/incoming/%s/%s/%d" (take 2 storageIndex) storageIndex (toInteger shareNumber)
+                    ( \storageIndex shareNum ->
+                        incomingPathOf "/foo" storageIndex shareNum
+                            `shouldBe` printf "/foo/shares/incoming/%s/%s/%d" (take 2 storageIndex) storageIndex (toInteger shareNum)
                     )
 
     describe "incomingPathOf vs pathOfShare" $
@@ -88,9 +94,9 @@ spec = do
             property $
                 forAll
                     genStorageIndex
-                    ( \storageIndex shareNumber ->
-                        let path = pathOfShare "/foo" storageIndex shareNumber
-                            incoming = incomingPathOf "/foo" storageIndex shareNumber
+                    ( \storageIndex shareNum ->
+                        let path = pathOfShare "/foo" storageIndex shareNum
+                            incoming = incomingPathOf "/foo" storageIndex shareNum
                          in path `shouldNotBe` incoming
                     )
 

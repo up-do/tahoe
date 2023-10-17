@@ -92,6 +92,7 @@ import Data.IORef (IORef)
 
 -- We also get the Arbitrary ShareNumber instance from here.
 import Lib (
+    ShareNumbers (..),
     genStorageIndex,
  )
 
@@ -103,13 +104,6 @@ import TahoeLAFS.Storage.Backend.Memory (
 import TahoeLAFS.Storage.Backend.Filesystem (
     FilesystemBackend (FilesystemBackend),
  )
-
-isUnique :: Ord a => [a] -> Bool
-isUnique xs = Prelude.length xs == Prelude.length (Set.toList $ Set.fromList xs)
-
--- XXX null ?
-hasElements :: [a] -> Bool
-hasElements = not . null
 
 permuteShare :: ByteString -> ShareNumber -> ByteString
 permuteShare seed number =
@@ -132,12 +126,10 @@ alreadyHavePlusAllocatedImm ::
     (Backend b, Mess b) =>
     IO b -> -- The backend on which to operate
     StorageIndex -> -- The storage index to use
-    [ShareNumber] -> -- The share numbers to allocate
+    ShareNumbers -> -- The share numbers to allocate
     Positive Size -> -- The size of each share
     Property
-alreadyHavePlusAllocatedImm makeBackend storageIndex shareNumbers (Positive size) = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
+alreadyHavePlusAllocatedImm makeBackend storageIndex (ShareNumbers shareNumbers) (Positive size) = monadicIO $
     run $
         withBackend makeBackend $ \backend -> do
             result <- createImmutableStorageIndex backend storageIndex (Just [Upload "hello world"]) $ AllocateBuckets shareNumbers size
@@ -156,12 +148,10 @@ immutableWriteAndEnumerateShares ::
     (Backend b, Mess b) =>
     IO b ->
     StorageIndex ->
-    [ShareNumber] ->
+    ShareNumbers ->
     ByteString ->
     Property
-immutableWriteAndEnumerateShares makeBackend storageIndex shareNumbers shareSeed = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
+immutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
         size = fromIntegral (Data.ByteString.length shareSeed)
         allocate = AllocateBuckets shareNumbers size
@@ -181,12 +171,10 @@ immutableWriteAndRewriteShare ::
     (Backend b, Mess b) =>
     IO b ->
     StorageIndex ->
-    [ShareNumber] ->
+    ShareNumbers ->
     ByteString ->
     Property
-immutableWriteAndRewriteShare makeBackend storageIndex shareNumbers shareSeed = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
+immutableWriteAndRewriteShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let size = fromIntegral (Data.ByteString.length shareSeed)
         allocate = AllocateBuckets shareNumbers size
         aShareNumber = head shareNumbers
@@ -207,12 +195,10 @@ immutableWriteAndReadShare ::
     (Backend b, Mess b) =>
     IO b ->
     StorageIndex ->
-    [ShareNumber] ->
+    ShareNumbers ->
     ByteString ->
     Property
-immutableWriteAndReadShare makeBackend storageIndex shareNumbers shareSeed = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
+immutableWriteAndReadShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
     let size = fromIntegral (Data.ByteString.length shareSeed)
     let allocate = AllocateBuckets shareNumbers size
@@ -232,12 +218,10 @@ mutableWriteAndEnumerateShares ::
     (Backend b, Mess b) =>
     IO b ->
     StorageIndex ->
-    [ShareNumber] ->
+    ShareNumbers ->
     ByteString ->
     Property
-mutableWriteAndEnumerateShares makeBackend storageIndex shareNumbers shareSeed = monadicIO $ do
-    pre (isUnique shareNumbers)
-    pre (hasElements shareNumbers)
+mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
     let nullSecrets =
             SlotSecrets
