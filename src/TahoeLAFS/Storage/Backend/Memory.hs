@@ -28,18 +28,12 @@ import Data.Map.Strict (
     toList,
  )
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe, isJust, isNothing)
+import Data.Maybe (isNothing)
 import qualified Data.Set as Set
-import Debug.Trace (trace, traceShow, traceShowId)
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets),
     AllocationResult (..),
     CBORSet (..),
-    CorruptionDetails,
-    LeaseSecret (Upload),
-    Offset,
-    QueryRange,
-    ReadResult,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
     ShareData,
@@ -51,12 +45,11 @@ import TahoeLAFS.Storage.API (
     Version (..),
     Version1Parameters (..),
     WriteVector (..),
-    isUploadSecret,
     shareNumbers,
  )
 import TahoeLAFS.Storage.Backend (
     Backend (..),
-    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret, MissingUploadSecret, ShareNotAllocated, ShareSizeMismatch),
+    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret, ShareNotAllocated, ShareSizeMismatch),
     withUploadSecret,
  )
 import Prelude hiding (
