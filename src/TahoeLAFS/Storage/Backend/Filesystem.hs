@@ -64,7 +64,7 @@ import TahoeLAFS.Storage.API (
 import qualified TahoeLAFS.Storage.API as Storage
 import TahoeLAFS.Storage.Backend (
     Backend (..),
-    ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten),
+    WriteImmutableError (ImmutableShareAlreadyWritten),
  )
 import Prelude hiding (
     readFile,

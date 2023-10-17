@@ -2,7 +2,7 @@
 
 module TahoeLAFS.Storage.Backend (
     Backend (..),
-    ImmutableShareAlreadyWritten (ImmutableShareAlreadyWritten),
+    WriteImmutableError (..),
     writeMutableShare,
 ) where
 
@@ -36,9 +36,14 @@ import TahoeLAFS.Storage.API (
     WriteVector (..),
  )
 
-data ImmutableShareAlreadyWritten = ImmutableShareAlreadyWritten
-    deriving (Show)
-instance Exception ImmutableShareAlreadyWritten
+data WriteImmutableError
+    = MissingUploadSecret
+    | ShareSizeMismatch
+    | ImmutableShareAlreadyWritten
+    | ShareNotAllocated
+    | IncorrectUploadSecret
+    deriving (Ord, Eq, Show)
+instance Exception WriteImmutableError
 
 class Backend b where
     version :: b -> IO Version

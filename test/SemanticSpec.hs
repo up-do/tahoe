@@ -10,6 +10,7 @@ import Prelude hiding (
  )
 
 import Control.Monad (
+    void,
     when,
  )
 
@@ -170,11 +171,13 @@ immutableWriteAndEnumerateShares makeBackend storageIndex shareNumbers shareSeed
         allocate = AllocateBuckets shareNumbers size
     run $
         withBackend makeBackend $ \backend -> do
-            _result <- createImmutableStorageIndex backend storageIndex Nothing allocate
-            writeShares (\sn -> writeImmutableShare backend storageIndex sn Nothing) (zip shareNumbers permutedShares)
+            void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
+            writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) (zip shareNumbers permutedShares)
             readShareNumbers <- getImmutableShareNumbers backend storageIndex
             when (readShareNumbers /= (CBORSet . Set.fromList $ shareNumbers)) $
                 fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
+  where
+    uploadSecret = Just [Upload "hello"]
 
 -- Immutable share data written to the shares of a given storage index cannot
 -- be rewritten by a subsequent writeImmutableShare operation.
@@ -194,10 +197,12 @@ immutableWriteAndRewriteShare makeBackend storageIndex shareNumbers shareSeed = 
         aShare = permuteShare shareSeed aShareNumber
     run $
         withBackend makeBackend $ \backend -> do
-            let write = writeImmutableShare backend storageIndex aShareNumber Nothing aShare Nothing
-            _ <- createImmutableStorageIndex backend storageIndex Nothing allocate
+            void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
+            let write = writeImmutableShare backend storageIndex aShareNumber uploadSecret aShare Nothing
             write
             write `shouldThrow` (== ImmutableShareAlreadyWritten)
+  where
+    uploadSecret = Just [Upload "hello"]
 
 -- Immutable share data written to the shares of a given storage index can be
 -- retrieved verbatim and associated with the same share numbers as were
@@ -217,11 +222,13 @@ immutableWriteAndReadShare makeBackend storageIndex shareNumbers shareSeed = mon
     let allocate = AllocateBuckets shareNumbers size
     run $
         withBackend makeBackend $ \backend -> do
-            _result <- createImmutableStorageIndex backend storageIndex Nothing allocate
-            writeShares (\sn -> writeImmutableShare backend storageIndex sn Nothing) (zip shareNumbers permutedShares)
+            void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
+            writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) (zip shareNumbers permutedShares)
             readShares' <- mapM (\sn -> readImmutableShare backend storageIndex sn Nothing) shareNumbers
             when (permutedShares /= readShares') $
                 fail (show permutedShares ++ " /= " ++ show readShares')
+  where
+    uploadSecret = Just [Upload "hello"]
 
 -- The share numbers of mutable share data written to the shares of a given
 -- storage index can be retrieved.
@@ -264,16 +271,16 @@ storageSpec makeBackend =
                 property $
                     withBackend makeBackend $ \backend -> do
                         AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
-                        writeImmutableShare backend "storageindex" (ShareNumber 0) Nothing "fooooo" Nothing `shouldThrow` (== IncorrectUploadSecret)
+                        writeImmutableShare backend "storageindex" (ShareNumber 0) Nothing "fooooo" Nothing `shouldThrow` (== MissingUploadSecret)
 
             it "disallows writes without a matching upload secret" $
                 property $
                     withBackend makeBackend $ \backend -> do
                         AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
                         -- Supply the wrong secret as an upload secret and the
-                        -- right secret marked for some other use - this should
-                        -- still fail.
-                        writeImmutableShare backend "storageindex" (ShareNumber 0) (Just [Upload "wrongsecret", Renew "thesecret"]) "fooooo" Nothing `shouldThrow` (== IncorrectUploadSecret)
+                        -- right secret marked for some other use - this
+                        -- should still fail.
+                        writeImmutableShare backend "storageindex" (ShareNumber 0) (Just [Upload "wrongsecret"]) "fooooo" Nothing `shouldThrow` (== IncorrectUploadSecret)
 
             it "returns the share numbers that were written" $
                 property $
