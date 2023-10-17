@@ -4,11 +4,13 @@ module TahoeLAFS.Storage.Backend (
     Backend (..),
     WriteImmutableError (..),
     writeMutableShare,
+    withUploadSecret,
 ) where
 
 import Control.Exception (
     Exception,
     throw,
+    throwIO,
  )
 
 import Data.Map.Strict (
@@ -23,7 +25,7 @@ import TahoeLAFS.Storage.API (
     AllocationResult,
     CBORSet (..),
     CorruptionDetails,
-    LeaseSecret,
+    LeaseSecret (Upload),
     QueryRange,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
@@ -32,8 +34,10 @@ import TahoeLAFS.Storage.API (
     SlotSecrets,
     StorageIndex,
     TestWriteVectors (..),
+    UploadSecret,
     Version,
     WriteVector (..),
+    isUploadSecret,
  )
 
 data WriteImmutableError
@@ -105,3 +109,9 @@ writeMutableShare _ _ _ _ _ _ = error "writeMutableShare got bad input"
 
 data WriteRefused = WriteRefused deriving (Show, Eq)
 instance Exception WriteRefused
+
+withUploadSecret :: Maybe [LeaseSecret] -> (UploadSecret -> IO a) -> IO a
+withUploadSecret ss f =
+    case filter isUploadSecret <$> ss of
+        Just [Upload s] -> f s
+        _ -> throwIO MissingUploadSecret

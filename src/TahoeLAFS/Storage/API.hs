@@ -38,6 +38,7 @@ module TahoeLAFS.Storage.API (
     TestOperator (..),
     StorageAPI,
     LeaseSecret (..),
+    UploadSecret,
     isUploadSecret,
     api,
     renewSecretLength,
@@ -407,7 +408,9 @@ instance ToHttpApiData ByteRanges where
     toUrlPiece _ = error "Cannot serialize ByteRanges to URL piece"
     toQueryParam _ = error "Cannot serialize ByteRanges to query params"
 
-data LeaseSecret = Renew B.ByteString | Cancel B.ByteString | Upload B.ByteString | Write B.ByteString
+type UploadSecret = B.ByteString
+
+data LeaseSecret = Renew B.ByteString | Cancel B.ByteString | Upload UploadSecret | Write B.ByteString
 
 isUploadSecret (Upload _) = True
 isUploadSecret _ = False

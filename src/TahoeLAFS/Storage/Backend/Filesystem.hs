@@ -13,6 +13,8 @@ import Control.Exception (
     throwIO,
     tryJust,
  )
+import Control.Monad (unless, when)
+import Data.ByteArray (constEq)
 import Data.ByteString (
     hPut,
     readFile,
@@ -29,6 +31,7 @@ import System.Directory (
     createDirectoryIfMissing,
     doesPathExist,
     listDirectory,
+    removeFile,
     renameFile,
  )
 import System.FilePath (
@@ -56,6 +59,7 @@ import TahoeLAFS.Storage.API (
     ShareNumber,
     StorageIndex,
     TestWriteVectors (write),
+    UploadSecret,
     Version (..),
     Version1Parameters (..),
     WriteVector (WriteVector),
@@ -64,7 +68,8 @@ import TahoeLAFS.Storage.API (
 import qualified TahoeLAFS.Storage.API as Storage
 import TahoeLAFS.Storage.Backend (
     Backend (..),
-    WriteImmutableError (ImmutableShareAlreadyWritten),
+    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret),
+    withUploadSecret,
  )
 import Prelude hiding (
     readFile,
@@ -111,31 +116,35 @@ instance Backend FilesystemBackend where
                         }
                 }
 
-    createImmutableStorageIndex backend storageIndex _secrets params = do
-        let exists = haveShare backend storageIndex
-        (alreadyHave, allocated) <- partitionM exists (shareNumbers params)
-        allocatev backend storageIndex allocated
-        return
-            AllocationResult
-                { alreadyHave = alreadyHave
-                , allocated = allocated
-                }
+    createImmutableStorageIndex backend storageIndex secrets params =
+        withUploadSecret secrets $ \uploadSecret -> do
+            let exists = haveShare backend storageIndex
+            (alreadyHave, allocated) <- partitionM exists (shareNumbers params)
+            mapM_ (flip (allocate backend storageIndex) uploadSecret) allocated
+            return
+                AllocationResult
+                    { alreadyHave = alreadyHave
+                    , allocated = allocated
+                    }
 
     -- TODO Handle ranges.
     -- TODO Make sure the share storage was allocated.
     -- TODO Don't allow target of rename to exist.
     -- TODO Concurrency
-    writeImmutableShare (FilesystemBackend root) storageIndex shareNumber' _secrets shareData Nothing = do
-        alreadyHave <- haveShare (FilesystemBackend root) storageIndex shareNumber'
-        if alreadyHave
-            then throwIO ImmutableShareAlreadyWritten
-            else do
-                let finalSharePath = pathOfShare root storageIndex shareNumber'
-                let incomingSharePath = incomingPathOf root storageIndex shareNumber'
-                writeFile incomingSharePath shareData
-                let createParents = True
-                createDirectoryIfMissing createParents $ takeDirectory finalSharePath
-                renameFile incomingSharePath finalSharePath
+    writeImmutableShare (FilesystemBackend root) storageIndex shareNumber' secrets shareData Nothing =
+        withUploadSecret secrets $ \uploadSecret -> do
+            alreadyHave <- haveShare (FilesystemBackend root) storageIndex shareNumber'
+            if alreadyHave
+                then throwIO ImmutableShareAlreadyWritten
+                else do
+                    let finalSharePath = pathOfShare root storageIndex shareNumber'
+                    let incomingSharePath = incomingPathOf root storageIndex shareNumber'
+                    checkUploadSecret incomingSharePath uploadSecret
+                    writeFile incomingSharePath shareData
+                    let createParents = True
+                    createDirectoryIfMissing createParents $ takeDirectory finalSharePath
+                    removeFile (secretPath incomingSharePath)
+                    renameFile incomingSharePath finalSharePath
 
     getImmutableShareNumbers (FilesystemBackend root) storageIndex = do
         let storageIndexPath = pathOfStorageIndex root storageIndex
@@ -229,21 +238,28 @@ storageStartSegment [_] = storageStartSegment []
 storageStartSegment (a : b : _) = [a, b]
 
 -- Create spaces to write data for several incoming shares.
-allocatev ::
+allocate ::
     FilesystemBackend ->
     StorageIndex ->
-    [ShareNumber] ->
+    ShareNumber ->
+    UploadSecret ->
     IO ()
-allocatev _backend _storageIndex [] = return ()
-allocatev (FilesystemBackend root) storageIndex (shareNum : rest) =
+allocate (FilesystemBackend root) storageIndex shareNum secret =
     let sharePath = incomingPathOf root storageIndex shareNum
         shareDirectory = takeDirectory sharePath
         createParents = True
      in do
             createDirectoryIfMissing createParents shareDirectory
+            writeFile (secretPath sharePath) secret
             writeFile sharePath ""
-            allocatev (FilesystemBackend root) storageIndex rest
             return ()
+
+secretPath = (<> ".secret")
+
+checkUploadSecret :: FilePath -> UploadSecret -> IO ()
+checkUploadSecret sharePath uploadSecret = do
+    matches <- constEq uploadSecret <$> readFile (secretPath sharePath)
+    unless matches (throwIO IncorrectUploadSecret)
 
 partitionM :: Monad m => (a -> m Bool) -> [a] -> m ([a], [a])
 partitionM pred' items = do

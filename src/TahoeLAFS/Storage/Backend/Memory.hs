@@ -49,6 +49,7 @@ import TahoeLAFS.Storage.API (
     Size,
     StorageIndex,
     TestWriteVectors (..),
+    UploadSecret,
     Version (..),
     Version1Parameters (..),
     WriteVector (..),
@@ -58,13 +59,12 @@ import TahoeLAFS.Storage.API (
 import TahoeLAFS.Storage.Backend (
     Backend (..),
     WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret, MissingUploadSecret, ShareNotAllocated, ShareSizeMismatch),
+    withUploadSecret,
  )
 import Prelude hiding (
     lookup,
     map,
  )
-
-type UploadSecret = B.ByteString
 
 data Share = Complete ShareData | Uploading UploadSecret ShareData deriving (Show)
 
@@ -244,12 +244,6 @@ instance Backend (IORef MemoryBackend) where
             Just bucket -> case lookup shareNum (bucketShares bucket) of
                 Just (Complete shareData) -> pure shareData
                 _ -> pure mempty
-
-withUploadSecret :: Maybe [LeaseSecret] -> (B.ByteString -> IO a) -> IO a
-withUploadSecret ss f =
-    case filter isUploadSecret <$> ss of
-        Just [Upload s] -> f s
-        _ -> throwIO MissingUploadSecret
 
 totalShareSize :: MemoryBackend -> IO Size
 totalShareSize backend = do
