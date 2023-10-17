@@ -13,13 +13,15 @@ import Control.Exception (
     throwIO,
     tryJust,
  )
-import Control.Monad (unless, when)
+import Control.Monad (unless)
+import Data.Bifunctor (Bifunctor (bimap))
 import Data.ByteArray (constEq)
 import Data.ByteString (
     hPut,
     readFile,
     writeFile,
  )
+import qualified Data.List
 import Data.Map.Strict (
     toList,
  )
@@ -262,14 +264,4 @@ checkUploadSecret sharePath uploadSecret = do
     unless matches (throwIO IncorrectUploadSecret)
 
 partitionM :: Monad m => (a -> m Bool) -> [a] -> m ([a], [a])
-partitionM pred' items = do
-    (yes, no) <- partitionM' pred' items [] []
-    -- re-reverse them to maintain input order
-    return (reverse yes, reverse no)
-  where
-    partitionM' _ [] yes no = return (yes, no)
-    partitionM' pred'' (item : rest) yes no = do
-        result <- pred'' item
-        if result
-            then partitionM' pred'' rest (item : yes) no
-            else partitionM' pred'' rest yes (item : no)
+partitionM pred' items = bimap (fst <$>) (fst <$>) . Data.List.partition snd . zip items <$> mapM pred' items
