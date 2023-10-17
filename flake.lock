@@ -522,16 +522,16 @@
         "tahoe-chk": "tahoe-chk"
       },
       "locked": {
-        "lastModified": 1696949119,
-        "narHash": "sha256-DSrpTLdE4tnpLzTrInWAss1fg8CHSIa+sLGtewSO3Io=",
-        "ref": "refs/tags/0.3.1.0",
-        "rev": "75aa8fe8ba655bbf7fd5025ef8dc2fed6f2ee703",
-        "revCount": 243,
+        "lastModified": 1697565223,
+        "narHash": "sha256-Vc4ZyczjaocoF6u15uDNx0VoxX9a2aMouaD3Rg1MDeQ=",
+        "ref": "release-0.4.0.0",
+        "rev": "f69ff7f62cc50b2c0d1ead0dd497c7214365eb31",
+        "revCount": 260,
         "type": "git",
         "url": "https://whetstone.private.storage/privatestorage/tahoe-great-black-swamp.git"
       },
       "original": {
-        "ref": "refs/tags/0.3.1.0",
+        "ref": "release-0.4.0.0",
         "type": "git",
         "url": "https://whetstone.private.storage/privatestorage/tahoe-great-black-swamp.git"
       }

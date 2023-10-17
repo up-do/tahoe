@@ -73,7 +73,7 @@ library
     , aeson
     , amazonka
     , amazonka-s3
-    , base                     ^>=4.14.3.0
+    , base         ^>=4.14.3.0
     , bytestring
     , conduit
     , containers
@@ -81,8 +81,10 @@ library
     , http-types
     , lens
     , mtl
-    , tahoe-great-black-swamp  >=0.3.1.0
     , text
+
+  -- TODO 0.4.0.0
+  build-depends:    tahoe-great-black-swamp >=0.3.1.0
 
   -- Directories containing source files.
   hs-source-dirs:   src

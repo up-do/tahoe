@@ -192,6 +192,8 @@ instance Backend S3Backend where
       where
         objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
 
+    readvAndTestvAndWritev S3Backend{} storageIndex vectors = do
+
 storageIndexShareNumberToObjectKey :: T.Text -> StorageIndex -> ShareNumber -> S3.ObjectKey
 storageIndexShareNumberToObjectKey prefix si (ShareNumber sn) =
     S3.ObjectKey $ T.concat [storageIndexPrefix prefix si, T.pack (show sn)]
