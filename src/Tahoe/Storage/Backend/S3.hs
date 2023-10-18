@@ -9,9 +9,9 @@ module Tahoe.Storage.Backend.S3 where
 
 import Amazonka (runResourceT)
 import qualified Amazonka as AWS
+import Amazonka.S3 (newPutObject)
 import qualified Amazonka.S3 as S3
-import Amazonka.S3.CreateMultipartUpload (createMultipartUploadResponse_uploadId)
-import Amazonka.S3.Lens (completeMultipartUpload_multipartUpload, listObjectsResponse_contents, listObjects_prefix, object_key)
+import Amazonka.S3.Lens
 import qualified Amazonka.S3.Lens as S3
 import Conduit (sinkList)
 import Control.Exception (throwIO)
@@ -42,6 +42,7 @@ import TahoeLAFS.Storage.API (
     CBORSet (CBORSet),
     LeaseSecret (Upload),
     ReadTestWriteResult (ReadTestWriteResult),
+    ReadTestWriteVectors (..),
     ShareNumber (..),
     StorageIndex,
     UploadSecret,
@@ -51,6 +52,7 @@ import TahoeLAFS.Storage.Backend (
         abortImmutableUpload,
         createImmutableStorageIndex,
         getImmutableShareNumbers,
+        getMutableShareNumbers,
         readImmutableShare,
         readvAndTestvAndWritev,
         writeImmutableShare
@@ -182,7 +184,7 @@ instance Backend S3Backend where
     writeImmutableShare s3 storageIndex shareNum mbLeaseSecret shareData Nothing = do
         -- If no range is given, this is the whole thing.
         writeImmutableShare s3 storageIndex shareNum mbLeaseSecret shareData (Just [ByteRangeFrom 0])
-    writeImmutableShare s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum mbLeaseSecret shareData (Just byteRanges) = do
+    writeImmutableShare s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum mbLeaseSecret shareData (Just _byteRanges) = do
         -- call list objects on the backend, if this share already exists, reject the new write with ImmutableShareAlreadyWritten
         CBORSet shareNumbers <- getImmutableShareNumbers s3backend storageIndex
         when (shareNum `elem` shareNumbers) $ throwIO ImmutableShareAlreadyWritten
@@ -215,8 +217,8 @@ instance Backend S3Backend where
                     Just (False, _) -> pure ()
 
     abortImmutableUpload :: S3Backend -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
-    abortImmutableUpload (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum Nothing = throwIO MissingUploadSecret
-    abortImmutableUpload (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum mbLeaseSecret = do
+    abortImmutableUpload _ _ _ Nothing = throwIO MissingUploadSecret
+    abortImmutableUpload (S3Backend{s3BackendState}) storageIndex shareNum mbLeaseSecret = do
         thing <- readIORef s3BackendState
         let leaseSecret = uploadSecret <$> Map.lookup (storageIndex, shareNum) thing :: Maybe UploadSecret
         -- XXX WOW THIS IS WRONG, COME BACK AND FIX IT PLEASE
@@ -242,13 +244,20 @@ instance Backend S3Backend where
                   where
                     parsed = T.split (== '/') (view (object_key . S3._ObjectKey) obj)
 
-    readImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum range = runResourceT $ do
+    readImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum _range = runResourceT $ do
         resp <- AWS.send s3BackendEnv (S3.newGetObject s3BackendBucket objectKey)
         B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
       where
         objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
 
-    readvAndTestvAndWritev S3Backend{} storageIndex vectors = pure $ ReadTestWriteResult False mempty
+    readvAndTestvAndWritev :: S3Backend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
+    readvAndTestvAndWritev S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex (ReadTestWriteVectors{testWriteVectors}) = do
+        -- for every ShareNumber key in ReadTestWriteVectors create an empty s3 object
+        let objectsToPut = (newPutObject s3BackendBucket . storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex <$> Map.keys testWriteVectors) <*> [""]
+        _something <- runResourceT $ mapM (AWS.send s3BackendEnv) objectsToPut
+        pure $ ReadTestWriteResult True mempty
+
+    getMutableShareNumbers = getImmutableShareNumbers
 
 storageIndexShareNumberToObjectKey :: T.Text -> StorageIndex -> ShareNumber -> S3.ObjectKey
 storageIndexShareNumberToObjectKey prefix si (ShareNumber sn) =
