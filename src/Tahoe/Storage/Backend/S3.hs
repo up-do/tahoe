@@ -10,6 +10,7 @@ module Tahoe.Storage.Backend.S3 where
 import Amazonka (runResourceT)
 import qualified Amazonka as AWS
 import Amazonka.S3 (newPutObject)
+import qualified Amazonka.S3 as AWS
 import qualified Amazonka.S3 as S3
 import Amazonka.S3.Lens
 import qualified Amazonka.S3.Lens as S3
@@ -41,22 +42,16 @@ import TahoeLAFS.Storage.API (
     AllocationResult (AllocationResult, allocated, alreadyHave),
     CBORSet (CBORSet),
     LeaseSecret (Upload),
+    QueryRange,
     ReadTestWriteResult (ReadTestWriteResult),
     ReadTestWriteVectors (..),
+    ShareData,
     ShareNumber (..),
     StorageIndex,
     UploadSecret,
  )
 import TahoeLAFS.Storage.Backend (
-    Backend (
-        abortImmutableUpload,
-        createImmutableStorageIndex,
-        getImmutableShareNumbers,
-        getMutableShareNumbers,
-        readImmutableShare,
-        readvAndTestvAndWritev,
-        writeImmutableShare
-    ),
+    Backend (..),
     WriteImmutableError (
         ImmutableShareAlreadyWritten,
         IncorrectUploadSecret,
@@ -244,6 +239,7 @@ instance Backend S3Backend where
                   where
                     parsed = T.split (== '/') (view (object_key . S3._ObjectKey) obj)
 
+    readImmutableShare :: S3Backend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     readImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum _range = runResourceT $ do
         resp <- AWS.send s3BackendEnv (S3.newGetObject s3BackendBucket objectKey)
         B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
@@ -258,6 +254,11 @@ instance Backend S3Backend where
         pure $ ReadTestWriteResult True mempty
 
     getMutableShareNumbers = getImmutableShareNumbers
+
+    readMutableShare :: S3Backend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readMutableShare (S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv}) storageIndex shareNumber _queryRange = do
+        resp <- runResourceT $ AWS.send s3BackendEnv $ AWS.newGetObject s3BackendBucket (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNumber)
+        B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
 
 storageIndexShareNumberToObjectKey :: T.Text -> StorageIndex -> ShareNumber -> S3.ObjectKey
 storageIndexShareNumberToObjectKey prefix si (ShareNumber sn) =

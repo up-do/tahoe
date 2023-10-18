@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Lib (
     gen10String,
@@ -24,7 +25,6 @@ import qualified Data.Text as Text
 import Test.QuickCheck (
     Arbitrary (arbitrary),
     Gen,
-    listOf,
     suchThatMap,
     vectorOf,
  )

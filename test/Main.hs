@@ -77,6 +77,7 @@ import TahoeLAFS.Storage.Backend (
         getImmutableShareNumbers,
         getMutableShareNumbers,
         readImmutableShare,
+        readMutableShare,
         writeImmutableShare
     ),
     WriteImmutableError (
@@ -106,6 +107,7 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Maybe (catMaybes)
 import qualified Network.HTTP.Types as HTTP
 import qualified System.IO as IO
+import Test.Hspec.Expectations (shouldBe)
 
 main :: IO ()
 main = hspec . parallel . describe "S3" $ spec
@@ -184,6 +186,9 @@ storageSpec makeBackend =
                 it "returns the share numbers that were written" $
                     property $
                         forAll genStorageIndex (mutableWriteAndEnumerateShares makeBackend)
+            it "returns the written data when requested" $
+                property $
+                    forAll genStorageIndex (mutableWriteAndReadShare makeBackend)
 
 class Mess m where
     -- Cleanup resources belonging to m
@@ -307,18 +312,28 @@ mutableWriteAndEnumerateShares ::
     Property
 mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-    let nullSecrets =
-            SlotSecrets
-                { writeEnabler = ""
-                , leaseRenew = ""
-                , leaseCancel = ""
-                }
     run $
         withBackend makeBackend $ \backend -> do
             writeShares (writeMutableShare backend nullSecrets storageIndex) (zip shareNumbers permutedShares)
             (CBORSet readShareNumbers) <- getMutableShareNumbers backend storageIndex
             when (readShareNumbers /= Set.fromList shareNumbers) $
                 fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
+
+mutableWriteAndReadShare ::
+    (Backend b, Mess b) =>
+    IO b ->
+    StorageIndex ->
+    ShareNumber ->
+    ByteString ->
+    Property
+mutableWriteAndReadShare makeBackend storageIndex aShareNumber shareSeed = monadicIO $ do
+    let aShare = permuteShare shareSeed aShareNumber
+    run $
+        withBackend makeBackend $ \backend -> do
+            let write = writeMutableShare backend nullSecrets storageIndex aShareNumber aShare Nothing
+            write
+            serverHas <- readMutableShare backend storageIndex aShareNumber Nothing
+            serverHas `shouldBe` aShare
 
 permuteShare :: ByteString -> ShareNumber -> ByteString
 permuteShare seed number =
@@ -386,3 +401,11 @@ s3Backend = runResourceT $ do
                 pure letter
       where
         prefix = letter <> "/"
+
+nullSecrets :: SlotSecrets
+nullSecrets =
+    SlotSecrets
+        { writeEnabler = ""
+        , leaseRenew = ""
+        , leaseCancel = ""
+        }
