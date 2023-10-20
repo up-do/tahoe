@@ -10,7 +10,6 @@ module Tahoe.Storage.Backend.S3 where
 import Amazonka (runResourceT)
 import qualified Amazonka as AWS
 import Amazonka.S3 (newPutObject)
-import qualified Amazonka.S3 as AWS
 import qualified Amazonka.S3 as S3
 import Amazonka.S3.Lens
 import qualified Amazonka.S3.Lens as S3
@@ -48,7 +47,9 @@ import TahoeLAFS.Storage.API (
     ShareData,
     ShareNumber (..),
     StorageIndex,
+    TestWriteVectors (TestWriteVectors, write),
     UploadSecret,
+    WriteVector (shareData),
  )
 import TahoeLAFS.Storage.Backend (
     Backend (..),
@@ -247,18 +248,28 @@ instance Backend S3Backend where
         objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
 
     readvAndTestvAndWritev :: S3Backend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
-    readvAndTestvAndWritev S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex (ReadTestWriteVectors{testWriteVectors}) = do
-        -- for every ShareNumber key in ReadTestWriteVectors create an empty s3 object
-        let objectsToPut = (newPutObject s3BackendBucket . storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex <$> Map.keys testWriteVectors) <*> [""]
-        _something <- runResourceT $ mapM (AWS.send s3BackendEnv) objectsToPut
+    readvAndTestvAndWritev S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex (ReadTestWriteVectors{testWriteVectors}) = runResourceT $ do
+        -- for every ShareNumber key in ReadTestWriteVectors create an s3
+        -- object holding the bytes from the corresponding write vector.
+        mapM_ (AWS.send s3BackendEnv) objectsToPut
         pure $ ReadTestWriteResult True mempty
+      where
+        objectsToPut = putObject <$> Map.toList testWriteVectors
+
+        putObject (sn, TestWriteVectors{write}) =
+            newPutObject
+                s3BackendBucket
+                (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex sn)
+                (AWS.toBody $ shareData $ head write) -- XXX s/head/fmap/
 
     getMutableShareNumbers = getImmutableShareNumbers
 
     readMutableShare :: S3Backend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
-    readMutableShare (S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv}) storageIndex shareNumber _queryRange = do
-        resp <- runResourceT $ AWS.send s3BackendEnv $ AWS.newGetObject s3BackendBucket (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNumber)
+    readMutableShare (S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv}) storageIndex shareNumber _queryRange = runResourceT $ do
+        resp <- AWS.send s3BackendEnv $ S3.newGetObject s3BackendBucket objKey
         B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
+      where
+        objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNumber
 
 storageIndexShareNumberToObjectKey :: T.Text -> StorageIndex -> ShareNumber -> S3.ObjectKey
 storageIndexShareNumberToObjectKey prefix si (ShareNumber sn) =

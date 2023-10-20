@@ -357,14 +357,13 @@ s3Backend = runResourceT $ do
     let setLocalEndpoint = AWS.setEndpoint False "127.0.0.1" 9000
         setAddressingStyle s = s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}
 
-    _logger <- AWS.newLogger AWS.Debug IO.stdout
+    logger <- AWS.newLogger AWS.Debug IO.stdout
 
     env <- AWS.newEnv AWS.discover
     let loggedEnv = env -- {AWS.logger = logger}
         pathEnv = AWS.overrideService setAddressingStyle loggedEnv
         localEnv = AWS.overrideService setLocalEndpoint pathEnv
         env' = localEnv
-
     bucket <- AWS.sendEither env' (S3.newCreateBucket name)
     case bucket of
         -- AWS accepts duplicate create as long as you are the creator of the
