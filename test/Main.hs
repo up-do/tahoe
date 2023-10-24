@@ -1,6 +1,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Main (main) where
 
@@ -34,6 +35,7 @@ import Test.Hspec (
     hspec,
     it,
     parallel,
+    shouldReturn,
     shouldThrow,
  )
 
@@ -47,15 +49,20 @@ import TahoeLAFS.Storage.API (
     Size,
     SlotSecrets (SlotSecrets, leaseCancel, leaseRenew, writeEnabler),
     StorageIndex,
+    WriteVector (shareData),
     toInteger,
  )
 import Test.QuickCheck (
     Arbitrary (arbitrary),
+    Gen,
     NonNegative (getNonNegative),
     Positive (Positive),
     Property,
     Testable (property),
+    chooseInteger,
     forAll,
+    listOf1,
+    oneof,
     shuffle,
     sublistOf,
  )
@@ -64,11 +71,7 @@ import Test.QuickCheck.Monadic (
     run,
  )
 
-import Data.ByteString (
-    ByteString,
-    length,
-    map,
- )
+import qualified Data.ByteString as B
 
 import TahoeLAFS.Storage.Backend (
     Backend (
@@ -105,6 +108,7 @@ import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_ke
 import qualified Amazonka.S3.Lens as S3
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Maybe (catMaybes)
+import Network.HTTP.Types (ByteRange (..))
 import qualified Network.HTTP.Types as HTTP
 import qualified System.IO as IO
 import Test.Hspec.Expectations (shouldBe)
@@ -238,11 +242,11 @@ immutableWriteAndEnumerateShares ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 immutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-        size = fromIntegral (Data.ByteString.length shareSeed)
+        size = fromIntegral (B.length shareSeed)
         allocate = AllocateBuckets shareNumbers size
     run $
         withBackend makeBackend $ \backend -> do
@@ -261,10 +265,10 @@ immutableWriteAndRewriteShare ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 immutableWriteAndRewriteShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
-    let size = fromIntegral (Data.ByteString.length shareSeed)
+    let size = fromIntegral (B.length shareSeed)
         allocate = AllocateBuckets shareNumbers size
         aShareNumber = head shareNumbers
         aShare = permuteShare shareSeed aShareNumber
@@ -285,11 +289,11 @@ immutableWriteAndReadShare ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 immutableWriteAndReadShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-    let size = fromIntegral (Data.ByteString.length shareSeed)
+    let size = fromIntegral (B.length shareSeed)
     let allocate = AllocateBuckets shareNumbers size
     run $
         withBackend makeBackend $ \backend -> do
@@ -308,7 +312,7 @@ mutableWriteAndEnumerateShares ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
@@ -319,25 +323,53 @@ mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbe
             when (readShareNumbers /= Set.fromList shareNumbers) $
                 fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
 
+data MutableWriteExample = MutableWriteExample
+    { mweShareNumber :: ShareNumber
+    , mweShareData :: [B.ByteString]
+    , mweReadRange :: Maybe [ByteRange]
+    }
+    deriving (Show)
+
+instance Arbitrary MutableWriteExample where
+    arbitrary = do
+        mweShareNumber <- arbitrary
+        mweShareData <- listOf1 arbitrary
+        mweReadRange <- byteRanges (fromIntegral . sum . fmap B.length $ mweShareData)
+        pure MutableWriteExample{..}
+
+byteRanges :: Integer -> Gen (Maybe [ByteRange])
+byteRanges dataSize =
+    oneof
+        [ pure Nothing
+        , Just . pure <$> (ByteRangeFrom <$> chooseInteger (-1, dataSize + 1))
+        , Just . pure <$> (ByteRangeFromTo <$> chooseInteger (-1, dataSize + 1) <*> chooseInteger (-1, dataSize + 1))
+        , Just . pure <$> (ByteRangeSuffix <$> chooseInteger (-1, dataSize + 1))
+        ]
+
 mutableWriteAndReadShare ::
     (Backend b, Mess b) =>
     IO b ->
     StorageIndex ->
-    ShareNumber ->
-    ByteString ->
+    MutableWriteExample ->
     Property
-mutableWriteAndReadShare makeBackend storageIndex aShareNumber shareSeed = monadicIO $ do
-    let aShare = permuteShare shareSeed aShareNumber
+mutableWriteAndReadShare makeBackend storageIndex MutableWriteExample{..} = monadicIO $ do
     run $
         withBackend makeBackend $ \backend -> do
-            let write = writeMutableShare backend nullSecrets storageIndex aShareNumber aShare Nothing
-            write
-            serverHas <- readMutableShare backend storageIndex aShareNumber Nothing
-            serverHas `shouldBe` aShare
+            mapM_ (uncurry $ writeMutableShare backend nullSecrets storageIndex mweShareNumber) (zip mweShareData (repeat Nothing))
+            readMutableShare backend storageIndex mweShareNumber mweReadRange `shouldReturn` shareRange
+  where
+    shareRange :: B.ByteString
+    shareRange = case mweReadRange of
+        Nothing -> B.concat mweShareData
+        Just ranges -> B.concat $ readRange (B.concat mweShareData) <$> ranges
 
-permuteShare :: ByteString -> ShareNumber -> ByteString
+    readRange shareData (ByteRangeFrom start) = B.drop (fromIntegral start) shareData
+    readRange shareData (ByteRangeFromTo start end) = B.take (fromIntegral $ end - start) . B.drop (fromIntegral start) $ shareData
+    readRange shareData (ByteRangeSuffix len) = B.drop (fromIntegral len - B.length shareData) shareData
+
+permuteShare :: B.ByteString -> ShareNumber -> B.ByteString
 permuteShare seed number =
-    Data.ByteString.map xor' seed
+    B.map xor' seed
   where
     xor' :: Word8 -> Word8
     xor' = xor $ fromInteger $ toInteger number
@@ -360,7 +392,7 @@ s3Backend = runResourceT $ do
     logger <- AWS.newLogger AWS.Debug IO.stdout
 
     env <- AWS.newEnv AWS.discover
-    let loggedEnv = env -- {AWS.logger = logger}
+    let loggedEnv = env{AWS.logger = logger}
         pathEnv = AWS.overrideService setAddressingStyle loggedEnv
         localEnv = AWS.overrideService setLocalEndpoint pathEnv
         env' = localEnv

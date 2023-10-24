@@ -35,7 +35,7 @@ import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
-import Network.HTTP.Types (ByteRange (ByteRangeFrom))
+import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo, ByteRangeSuffix))
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets, allocatedSize, shareNumbers),
     AllocationResult (AllocationResult, allocated, alreadyHave),
@@ -241,11 +241,19 @@ instance Backend S3Backend where
                     parsed = T.split (== '/') (view (object_key . S3._ObjectKey) obj)
 
     readImmutableShare :: S3Backend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
-    readImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum _range = runResourceT $ do
-        resp <- AWS.send s3BackendEnv (S3.newGetObject s3BackendBucket objectKey)
-        B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
+    readImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum qrange = runResourceT $ do
+        B.concat <$> sequence (readEach qrange)
       where
         objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
+
+        readEach Nothing = do
+            resp <- AWS.send s3BackendEnv (S3.newGetObject s3BackendBucket objectKey)
+            B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
+        readEach (Just ranges) = readOne <$> ranges
+
+        readOne (ByteRangeFrom start) = undefined
+        readOne (ByteRangeFromTo start end) = undefined
+        readOne (ByteRangeSuffix len) = undefined
 
     readvAndTestvAndWritev :: S3Backend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex (ReadTestWriteVectors{testWriteVectors}) = runResourceT $ do
