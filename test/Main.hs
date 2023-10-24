@@ -337,13 +337,14 @@ instance Arbitrary MutableWriteExample where
         mweReadRange <- byteRanges (fromIntegral . sum . fmap B.length $ mweShareData)
         pure MutableWriteExample{..}
 
+-- | ByteRange type lets us use illegal values like -1 but then things go poorly
 byteRanges :: Integer -> Gen (Maybe [ByteRange])
 byteRanges dataSize =
     oneof
         [ pure Nothing
-        , Just . pure <$> (ByteRangeFrom <$> chooseInteger (-1, dataSize + 1))
-        , Just . pure <$> (ByteRangeFromTo <$> chooseInteger (-1, dataSize + 1) <*> chooseInteger (-1, dataSize + 1))
-        , Just . pure <$> (ByteRangeSuffix <$> chooseInteger (-1, dataSize + 1))
+        , Just . pure <$> (ByteRangeFrom <$> chooseInteger (0, dataSize + 1))
+        , Just . pure <$> (ByteRangeFromTo <$> chooseInteger (0, dataSize + 1) <*> chooseInteger (0, dataSize + 1))
+        , Just . pure <$> (ByteRangeSuffix <$> chooseInteger (0, dataSize + 1))
         ]
 
 mutableWriteAndReadShare ::
@@ -364,7 +365,7 @@ mutableWriteAndReadShare makeBackend storageIndex MutableWriteExample{..} = mona
         Just ranges -> B.concat $ readRange (B.concat mweShareData) <$> ranges
 
     readRange shareData (ByteRangeFrom start) = B.drop (fromIntegral start) shareData
-    readRange shareData (ByteRangeFromTo start end) = B.take (fromIntegral $ end - start) . B.drop (fromIntegral start) $ shareData
+    readRange shareData (ByteRangeFromTo start end) = B.take (fromIntegral $ (end - start) + 1) . B.drop (fromIntegral start) $ shareData
     readRange shareData (ByteRangeSuffix len) = B.drop (fromIntegral len - B.length shareData) shareData
 
 permuteShare :: B.ByteString -> ShareNumber -> B.ByteString

@@ -13,7 +13,7 @@ import Amazonka.S3 (newPutObject)
 import qualified Amazonka.S3 as S3
 import Amazonka.S3.Lens
 import qualified Amazonka.S3.Lens as S3
-import Conduit (sinkList)
+import Conduit (ResourceT, sinkList)
 import Control.Exception (throwIO)
 import Control.Lens (set, view, (?~), (^.))
 import Control.Monad (unless, void, when)
@@ -21,6 +21,7 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Bifunctor (Bifunctor (first))
 import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as C8
 import Data.IORef (
     IORef,
     atomicModifyIORef,
@@ -35,7 +36,8 @@ import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
-import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo, ByteRangeSuffix))
+import Network.HTTP.Types (ByteRange (ByteRangeFrom))
+import Network.HTTP.Types.Header (renderByteRange)
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets, allocatedSize, shareNumbers),
     AllocationResult (AllocationResult, allocated, alreadyHave),
@@ -241,19 +243,21 @@ instance Backend S3Backend where
                     parsed = T.split (== '/') (view (object_key . S3._ObjectKey) obj)
 
     readImmutableShare :: S3Backend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
-    readImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum qrange = runResourceT $ do
-        B.concat <$> sequence (readEach qrange)
+    readImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum qrange =
+        runResourceT $ do
+            huh <- readEach qrange
+            pure $ B.concat huh
       where
         objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
-
+        readEach :: Maybe [ByteRange] -> ResourceT IO [ShareData]
         readEach Nothing = do
             resp <- AWS.send s3BackendEnv (S3.newGetObject s3BackendBucket objectKey)
+            pure . B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
+        readEach (Just ranges) = mapM readOne ranges
+        readOne :: ByteRange -> ResourceT IO ShareData
+        readOne br = do
+            resp <- AWS.send s3BackendEnv (set getObject_range (Just . T.pack . C8.unpack $ renderByteRange br) $ S3.newGetObject s3BackendBucket objectKey)
             B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
-        readEach (Just ranges) = readOne <$> ranges
-
-        readOne (ByteRangeFrom start) = undefined
-        readOne (ByteRangeFromTo start end) = undefined
-        readOne (ByteRangeSuffix len) = undefined
 
     readvAndTestvAndWritev :: S3Backend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex (ReadTestWriteVectors{testWriteVectors}) = runResourceT $ do
