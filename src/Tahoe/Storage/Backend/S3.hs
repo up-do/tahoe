@@ -14,7 +14,7 @@ import qualified Amazonka.S3 as S3
 import Amazonka.S3.Lens
 import qualified Amazonka.S3.Lens as S3
 import Conduit (ResourceT, sinkList)
-import Control.Exception (throwIO)
+import Control.Exception (catch, throwIO)
 import Control.Lens (set, view, (?~), (^.))
 import Control.Monad (unless, void, when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
@@ -22,6 +22,7 @@ import Data.Bifunctor (Bifunctor (first))
 import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C8
+import Data.Foldable (foldl')
 import Data.IORef (
     IORef,
     atomicModifyIORef,
@@ -36,7 +37,7 @@ import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
-import Network.HTTP.Types (ByteRange (ByteRangeFrom))
+import Network.HTTP.Types (ByteRange (ByteRangeFrom), Status (Status, statusCode))
 import Network.HTTP.Types.Header (renderByteRange)
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets, allocatedSize, shareNumbers),
@@ -259,26 +260,28 @@ instance Backend S3Backend where
         readOne :: ByteRange -> ResourceT IO ShareData
         readOne br = do
             let getObj = set getObject_range (Just . ("bytes=" <>) . T.pack . C8.unpack $ renderByteRange br) $ S3.newGetObject s3BackendBucket objectKey
-            liftIO $ do
-                print "YOOOOO"
-                print getObj
             resp <- AWS.send s3BackendEnv getObj
             B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
 
     readvAndTestvAndWritev :: S3Backend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
-    readvAndTestvAndWritev S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex (ReadTestWriteVectors{testWriteVectors}) = runResourceT $ do
-        -- for every ShareNumber key in ReadTestWriteVectors create an s3
-        -- object holding the bytes from the corresponding write vector.
-        mapM_ (AWS.send s3BackendEnv) objectsToPut
+    readvAndTestvAndWritev s3@S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex (ReadTestWriteVectors{testWriteVectors}) = do
+        -- XXX
+        -- Implement tests
+        -- Implement reads
+        -- Check results from S3
+        mapM_ (\(shareNum, testWriteVectors') -> readEverything shareNum >>= writeEverything shareNum . (`applyWriteVectors` write testWriteVectors')) (Map.toList testWriteVectors)
         pure $ ReadTestWriteResult True mempty
       where
-        objectsToPut = putObject <$> Map.toList testWriteVectors
-
-        putObject (sn, TestWriteVectors{write}) =
-            newPutObject
-                s3BackendBucket
-                (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex sn)
-                (AWS.toBody $ shareData $ head write) -- XXX s/head/fmap/
+        readEverything shareNum = readMutableShare s3 storageIndex shareNum Nothing `catch` (\(AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) -> pure "")
+        writeEverything shareNum bs =
+            runResourceT $
+                AWS.send
+                    s3BackendEnv
+                    ( newPutObject
+                        s3BackendBucket
+                        (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum)
+                        (AWS.toBody bs)
+                    )
 
     -- data ReadTestWriteVectors = ReadTestWriteVectors
     --     { testWriteVectors :: Map ShareNumber TestWriteVectors
@@ -296,8 +299,20 @@ instance Backend S3Backend where
     readMutableShare :: S3Backend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     readMutableShare = readImmutableShare
 
+{- | Given the complete bytes of a share, apply a single write vector and
+ return the modified bytes.
+-}
 applyWriteVector :: B.ByteString -> WriteVector -> B.ByteString
-applyWriteVector bs (WriteVector offset shareData) = undefined
+applyWriteVector bs (WriteVector offset shareData) =
+    prefix <> filler <> shareData <> suffix
+  where
+    prefix = B.take (fromIntegral offset) bs
+    suffix = B.drop (fromIntegral offset + B.length shareData) bs
+    filler = B.replicate (fromIntegral offset - B.length bs) 0
+
+-- | Given the complete bytes of a share, apply a
+applyWriteVectors :: Foldable f => B.ByteString -> f WriteVector -> B.ByteString
+applyWriteVectors = foldl' applyWriteVector
 
 storageIndexShareNumberToObjectKey :: T.Text -> StorageIndex -> ShareNumber -> S3.ObjectKey
 storageIndexShareNumberToObjectKey prefix si (ShareNumber sn) =

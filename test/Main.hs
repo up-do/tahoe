@@ -12,6 +12,7 @@ import Control.Monad (
     when,
  )
 import Data.Composition ((.:))
+import qualified Data.Map as Map
 import Prelude hiding (
     lookup,
     toInteger,
@@ -36,6 +37,7 @@ import Test.Hspec (
     hspec,
     it,
     parallel,
+    shouldBe,
     shouldReturn,
     shouldThrow,
  )
@@ -45,12 +47,16 @@ import TahoeLAFS.Storage.API (
     AllocationResult (AllocationResult, allocated, alreadyHave),
     CBORSet (CBORSet),
     LeaseSecret (Upload),
+    Offset,
+    ReadTestWriteResult (success),
+    ReadTestWriteVectors (ReadTestWriteVectors, readVector, testWriteVectors),
     ShareData,
     ShareNumber (..),
     Size,
     SlotSecrets (SlotSecrets, leaseCancel, leaseRenew, writeEnabler),
     StorageIndex,
-    WriteVector (shareData),
+    TestWriteVectors (TestWriteVectors, newLength, test, write),
+    WriteVector (WriteVector, shareData, writeOffset),
     toInteger,
  )
 import Test.QuickCheck (
@@ -83,6 +89,7 @@ import TahoeLAFS.Storage.Backend (
         getMutableShareNumbers,
         readImmutableShare,
         readMutableShare,
+        readvAndTestvAndWritev,
         writeImmutableShare
     ),
     WriteImmutableError (
@@ -97,6 +104,7 @@ import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import Tahoe.Storage.Backend.S3 (
     S3Backend (S3Backend, s3BackendBucket, s3BackendEnv, s3BackendPrefix),
+    applyWriteVectors,
     newS3Backend,
  )
 
@@ -108,6 +116,7 @@ import Lib (
 import Amazonka (runResourceT)
 import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_key)
 import qualified Amazonka.S3.Lens as S3
+import Control.Exception (Exception, throw)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Maybe (catMaybes)
 import Network.HTTP.Types (ByteRange (..))
@@ -133,7 +142,20 @@ spec = do
 
 -- The specification for a storage backend.
 storageSpec :: (Backend b, Mess b) => IO b -> Spec
-storageSpec makeBackend =
+storageSpec makeBackend = do
+    context "utilities" $ do
+        describe "applyWriteVectors" $ do
+            it "replaces existing bytes with new bytes" $ do
+                applyWriteVectors "abc" [WriteVector 0 "x", WriteVector 1 "y", WriteVector 2 "z"] `shouldBe` "xyz"
+            it "can extend the length of the result" $ do
+                applyWriteVectors "abc" [WriteVector 3 "xyz"] `shouldBe` "abcxyz"
+            it "fills gaps with NULs" $ do
+                applyWriteVectors "abc" [WriteVector 5 "xyz"] `shouldBe` "abc\0\0xyz"
+            it "applies writes left-to-right" $ do
+                applyWriteVectors "abc" [WriteVector 0 "x", WriteVector 0 "y"] `shouldBe` "ybc"
+            it "accepts partial overlaps" $ do
+                applyWriteVectors "abc" [WriteVector 0 "xy", WriteVector 1 "zw"] `shouldBe` "xzw"
+
     context "v1" $ do
         context "immutable" $ do
             describe "allocate a storage index" $
@@ -352,11 +374,14 @@ byteRanges dataSize =
           -- position.
           Just . (: []) .: fromTo <$> chooseInteger (0, dataSize - 1) <*> chooseInteger (0, dataSize)
         , -- A request for a certain number of bytes of suffix.
-          Just . (: []) . ByteRangeSuffix <$> chooseInteger (0, dataSize + 1)
+          Just . (: []) . ByteRangeSuffix <$> chooseInteger (1, dataSize + 1)
         ]
   where
     fromTo a b = ByteRangeFromTo a (a + b)
 
+{- | After an arbitrary number of separate writes complete to construct the
+ entire share, any range of the share's bytes can be read.
+-}
 mutableWriteAndReadShare ::
     (Backend b, Mess b) =>
     IO b ->
@@ -366,9 +391,11 @@ mutableWriteAndReadShare ::
 mutableWriteAndReadShare makeBackend storageIndex MutableWriteExample{..} = monadicIO $ do
     run $
         withBackend makeBackend $ \backend -> do
-            mapM_ (uncurry $ writeMutableShare backend nullSecrets storageIndex mweShareNumber) (zip mweShareData (repeat Nothing))
+            mapM_ (uncurry $ writeMutableShareChunk backend nullSecrets storageIndex mweShareNumber) (zip mweShareData (offsetsFor mweShareData))
             readMutableShare backend storageIndex mweShareNumber mweReadRange `shouldReturn` shareRange
   where
+    offsetsFor ranges = scanl (+) 0 $ map (fromIntegral . B.length) ranges
+
     shareRange :: B.ByteString
     shareRange = case mweReadRange of
         Nothing -> B.concat mweShareData
@@ -376,7 +403,7 @@ mutableWriteAndReadShare makeBackend storageIndex MutableWriteExample{..} = mona
 
     readRange shareData (ByteRangeFrom start) = B.drop (fromIntegral start) shareData
     readRange shareData (ByteRangeFromTo start end) = B.take (fromIntegral $ (end - start) + 1) . B.drop (fromIntegral start) $ shareData
-    readRange shareData (ByteRangeSuffix len) = B.drop (fromIntegral len - B.length shareData) shareData
+    readRange shareData (ByteRangeSuffix len) = B.drop (B.length shareData - fromIntegral len) shareData
 
 permuteShare :: B.ByteString -> ShareNumber -> B.ByteString
 permuteShare seed number =
@@ -403,7 +430,7 @@ s3Backend = runResourceT $ do
     logger <- AWS.newLogger AWS.Debug IO.stdout
 
     env <- AWS.newEnv AWS.discover
-    let loggedEnv = env{AWS.logger = logger}
+    let loggedEnv = env -- {AWS.logger = logger}
         pathEnv = AWS.overrideService setAddressingStyle loggedEnv
         localEnv = AWS.overrideService setLocalEndpoint pathEnv
         env' = localEnv
@@ -451,3 +478,31 @@ nullSecrets =
         , leaseRenew = ""
         , leaseCancel = ""
         }
+
+data WriteRefused = WriteRefused deriving (Show, Eq)
+instance Exception WriteRefused
+
+writeMutableShareChunk :: Backend b => b -> SlotSecrets -> StorageIndex -> ShareNumber -> ShareData -> Offset -> IO ()
+writeMutableShareChunk b _secrets storageIndex shareNum shareData offset = do
+    result <-
+        readvAndTestvAndWritev
+            b
+            storageIndex
+            ( ReadTestWriteVectors
+                { testWriteVectors = vectors
+                , readVector = mempty
+                }
+            )
+    if success result then pure () else throw WriteRefused
+  where
+    vectors =
+        Map.fromList
+            [
+                ( shareNum
+                , TestWriteVectors
+                    { test = []
+                    , write = [WriteVector{writeOffset = offset, shareData = shareData}]
+                    , newLength = Nothing
+                    }
+                )
+            ]
