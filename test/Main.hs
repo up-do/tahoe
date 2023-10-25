@@ -346,16 +346,16 @@ byteRanges dataSize =
           pure Nothing
         , -- A request for bytes starting from and including some zero-indexed
           -- position and running to the end of the data.
-          Just . (: []) . ByteRangeFrom <$> chooseInteger (0, dataSize + 1)
+          Just . (: []) . ByteRangeFrom <$> chooseInteger (0, dataSize - 1)
         , -- A request for bytes starting from and including some zero-indexed
           -- position and running to and including another zero-indexed
           -- position.
-          Just . (: []) .: fromTo <$> chooseInteger (0, dataSize + 1) <*> chooseInteger (0, dataSize + 1)
+          Just . (: []) .: fromTo <$> chooseInteger (0, dataSize - 1) <*> chooseInteger (0, dataSize)
         , -- A request for a certain number of bytes of suffix.
           Just . (: []) . ByteRangeSuffix <$> chooseInteger (0, dataSize + 1)
         ]
   where
-    fromTo a b = ByteRangeFromTo (min a b) (max a b)
+    fromTo a b = ByteRangeFromTo a (a + b)
 
 mutableWriteAndReadShare ::
     (Backend b, Mess b) =>
