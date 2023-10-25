@@ -51,7 +51,7 @@ import TahoeLAFS.Storage.API (
     StorageIndex,
     TestWriteVectors (TestWriteVectors, write),
     UploadSecret,
-    WriteVector (shareData),
+    WriteVector (..),
  )
 import TahoeLAFS.Storage.Backend (
     Backend (..),
@@ -157,6 +157,7 @@ newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
   `shares/<storage index>/<share number>`.
 -}
 instance Backend S3Backend where
+    createImmutableStorageIndex :: S3Backend -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
     createImmutableStorageIndex (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex mbLeaseSecret (AllocateBuckets{shareNumbers, allocatedSize})
         -- The maximum S3 object size is 5 BT
         | allocatedSize > 5 * 1024 * 1024 * 1024 * 1024 = error "blub"
@@ -178,6 +179,7 @@ instance Backend S3Backend where
                     liftIO $ modifyIORef' s3BackendState (newMap `Map.union`)
                     pure $ AllocationResult{alreadyHave = [], allocated = shareNumbers}
 
+    writeImmutableShare :: S3Backend -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> QueryRange -> IO ()
     writeImmutableShare _s3 _storageIndex _shareNum Nothing _shareData _ = throwIO MissingUploadSecret
     writeImmutableShare s3 storageIndex shareNum mbLeaseSecret shareData Nothing = do
         -- If no range is given, this is the whole thing.
@@ -278,10 +280,24 @@ instance Backend S3Backend where
                 (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex sn)
                 (AWS.toBody $ shareData $ head write) -- XXX s/head/fmap/
 
+    -- data ReadTestWriteVectors = ReadTestWriteVectors
+    --     { testWriteVectors :: Map ShareNumber TestWriteVectors
+    --     , readVector :: [ReadVector] }
+    -- data TestWriteVectors = TestWriteVectors
+    --     { test :: [TestVector]
+    --     , write :: [WriteVector]
+    --     , newLength :: Maybe Integer }
+    -- data WriteVector = WriteVector
+    --    { writeOffset :: Offset -- type Offset = Integer
+    --    , shareData :: ShareData }
+
     getMutableShareNumbers = getImmutableShareNumbers
 
     readMutableShare :: S3Backend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     readMutableShare = readImmutableShare
+
+applyWriteVector :: B.ByteString -> WriteVector -> B.ByteString
+applyWriteVector bs (WriteVector offset shareData) = undefined
 
 storageIndexShareNumberToObjectKey :: T.Text -> StorageIndex -> ShareNumber -> S3.ObjectKey
 storageIndexShareNumberToObjectKey prefix si (ShareNumber sn) =
