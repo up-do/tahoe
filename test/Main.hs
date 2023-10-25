@@ -11,6 +11,7 @@ import Control.Monad (
     void,
     when,
  )
+import Data.Composition ((.:))
 import Prelude hiding (
     lookup,
     toInteger,
@@ -60,6 +61,7 @@ import Test.QuickCheck (
     Property,
     Testable (property),
     chooseInteger,
+    elements,
     forAll,
     listOf1,
     oneof,
@@ -111,7 +113,6 @@ import Data.Maybe (catMaybes)
 import Network.HTTP.Types (ByteRange (..))
 import qualified Network.HTTP.Types as HTTP
 import qualified System.IO as IO
-import Test.Hspec.Expectations (shouldBe)
 
 main :: IO ()
 main = hspec . parallel . describe "S3" $ spec
@@ -333,7 +334,7 @@ data MutableWriteExample = MutableWriteExample
 instance Arbitrary MutableWriteExample where
     arbitrary = do
         mweShareNumber <- arbitrary
-        mweShareData <- listOf1 arbitrary
+        mweShareData <- listOf1 (B.pack <$> listOf1 arbitrary)
         mweReadRange <- byteRanges (fromIntegral . sum . fmap B.length $ mweShareData)
         pure MutableWriteExample{..}
 
@@ -341,11 +342,20 @@ instance Arbitrary MutableWriteExample where
 byteRanges :: Integer -> Gen (Maybe [ByteRange])
 byteRanges dataSize =
     oneof
-        [ pure Nothing
-        , Just . pure <$> (ByteRangeFrom <$> chooseInteger (0, dataSize + 1))
-        , Just . pure <$> (ByteRangeFromTo <$> chooseInteger (0, dataSize + 1) <*> chooseInteger (0, dataSize + 1))
-        , Just . pure <$> (ByteRangeSuffix <$> chooseInteger (0, dataSize + 1))
+        [ -- A request for all the bytes.
+          pure Nothing
+        , -- A request for bytes starting from and including some zero-indexed
+          -- position and running to the end of the data.
+          Just . (: []) . ByteRangeFrom <$> chooseInteger (0, dataSize + 1)
+        , -- A request for bytes starting from and including some zero-indexed
+          -- position and running to and including another zero-indexed
+          -- position.
+          Just . (: []) .: fromTo <$> chooseInteger (0, dataSize + 1) <*> chooseInteger (0, dataSize + 1)
+        , -- A request for a certain number of bytes of suffix.
+          Just . (: []) . ByteRangeSuffix <$> chooseInteger (0, dataSize + 1)
         ]
+  where
+    fromTo a b = ByteRangeFromTo (min a b) (max a b)
 
 mutableWriteAndReadShare ::
     (Backend b, Mess b) =>

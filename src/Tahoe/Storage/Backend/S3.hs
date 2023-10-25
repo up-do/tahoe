@@ -256,7 +256,11 @@ instance Backend S3Backend where
         readEach (Just ranges) = mapM readOne ranges
         readOne :: ByteRange -> ResourceT IO ShareData
         readOne br = do
-            resp <- AWS.send s3BackendEnv (set getObject_range (Just . T.pack . C8.unpack $ renderByteRange br) $ S3.newGetObject s3BackendBucket objectKey)
+            let getObj = set getObject_range (Just . ("bytes=" <>) . T.pack . C8.unpack $ renderByteRange br) $ S3.newGetObject s3BackendBucket objectKey
+            liftIO $ do
+                print "YOOOOO"
+                print getObj
+            resp <- AWS.send s3BackendEnv getObj
             B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
 
     readvAndTestvAndWritev :: S3Backend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
@@ -277,11 +281,7 @@ instance Backend S3Backend where
     getMutableShareNumbers = getImmutableShareNumbers
 
     readMutableShare :: S3Backend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
-    readMutableShare (S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv}) storageIndex shareNumber _queryRange = runResourceT $ do
-        resp <- AWS.send s3BackendEnv $ S3.newGetObject s3BackendBucket objKey
-        B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
-      where
-        objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNumber
+    readMutableShare = readImmutableShare
 
 storageIndexShareNumberToObjectKey :: T.Text -> StorageIndex -> ShareNumber -> S3.ObjectKey
 storageIndexShareNumberToObjectKey prefix si (ShareNumber sn) =
