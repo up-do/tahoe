@@ -36,7 +36,7 @@ import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
-import Network.HTTP.Types (ByteRange (ByteRangeFrom), Status (Status, statusCode))
+import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo), Status (Status, statusCode))
 import Network.HTTP.Types.Header (renderByteRange)
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets, allocatedSize, shareNumbers),
@@ -46,10 +46,13 @@ import TahoeLAFS.Storage.API (
     QueryRange,
     ReadTestWriteResult (ReadTestWriteResult),
     ReadTestWriteVectors (..),
+    ReadVector (ReadVector),
     ShareData,
     ShareNumber (..),
     StorageIndex,
-    TestWriteVectors (TestWriteVectors, write),
+    TestOperator (Eq),
+    TestVector (TestVector),
+    TestWriteVectors (TestWriteVectors, test, write),
     UploadSecret,
     WriteVector (..),
  )
@@ -273,15 +276,50 @@ instance Backend S3Backend where
             B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
 
     readvAndTestvAndWritev :: S3Backend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
-    readvAndTestvAndWritev s3@S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex (ReadTestWriteVectors{testWriteVectors}) = do
+    readvAndTestvAndWritev s3@S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex (ReadTestWriteVectors{readVector, testWriteVectors}) = do
         -- XXX
-        -- Implement tests
-        -- Implement reads
-        -- Check results from S3
-        mapM_ (\(shareNum, testWriteVectors') -> readEverything shareNum >>= writeEverything shareNum . (`applyWriteVectors` write testWriteVectors')) (Map.toList testWriteVectors)
-        pure $ ReadTestWriteResult True mempty
+        --
+        -- 1. Check results from S3 for errors
+        --
+        -- 2. Chunk data somehow to avoid catastrophic performance problems
+        -- from the current strategy of whole-object updates for every write.
+        readResults <- doReads
+        testResults <- doTests
+        if and . fmap and $ testResults
+            then ReadTestWriteResult True readResults <$ doWrites
+            else pure $ ReadTestWriteResult False readResults
       where
-        readEverything shareNum = readMutableShare s3 storageIndex shareNum Nothing `catch` (\(AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) -> pure "")
+        doReads = do
+            (CBORSet knownShareNumbers) <- getMutableShareNumbers s3 storageIndex
+            let shareNumberList = Set.toList knownShareNumbers
+            shareData <- sequence $ readMutableShare s3 storageIndex <$> shareNumberList <*> pure (toQueryRange readVector)
+            pure $ Map.fromList (zip shareNumberList ((: []) <$> shareData))
+
+        toQueryRange = Just . fmap toSingleRange
+          where
+            toSingleRange (ReadVector offset size) = ByteRangeFromTo offset (offset + size - 1)
+
+        doTests =
+            mapM
+                (\(shareNum, testWriteVectors') -> zipWith runTestVector (test testWriteVectors') <$> mapM (readSomeThings shareNum) (test testWriteVectors'))
+                (Map.toList testWriteVectors)
+
+        doWrites =
+            mapM_
+                (\(shareNum, testWriteVectors') -> readEverything shareNum >>= writeEverything shareNum . (`applyWriteVectors` write testWriteVectors'))
+                (Map.toList testWriteVectors)
+
+        runTestVector (TestVector _ _ Eq specimen) shareData = specimen == shareData
+        runTestVector _ _ = False
+
+        readSomeThings shareNum (TestVector offset size _ _) =
+            readMutableShare s3 storageIndex shareNum (Just [ByteRangeFromTo offset (offset + size - 1)])
+                `catch` (\(AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) -> pure "")
+
+        readEverything shareNum =
+            readMutableShare s3 storageIndex shareNum Nothing
+                `catch` (\(AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) -> pure "")
+
         writeEverything shareNum bs =
             runResourceT $
                 AWS.send

@@ -48,8 +48,9 @@ import TahoeLAFS.Storage.API (
     CBORSet (CBORSet),
     LeaseSecret (Upload),
     Offset,
-    ReadTestWriteResult (ReadTestWriteResult, success),
+    ReadResult,
     ReadTestWriteVectors (ReadTestWriteVectors, readVector, testWriteVectors),
+    ReadVector (ReadVector),
     ShareData,
     ShareNumber (..),
     Size,
@@ -69,7 +70,6 @@ import Test.QuickCheck (
     Property,
     Testable (property),
     chooseInteger,
-    elements,
     forAll,
     listOf1,
     oneof,
@@ -118,7 +118,7 @@ import Lib (
 import Amazonka (runResourceT)
 import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_key)
 import qualified Amazonka.S3.Lens as S3
-import Control.Exception (Exception, SomeException (SomeException), throw, throwIO)
+import Control.Exception (Exception, SomeException (SomeException), throw)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Maybe (catMaybes)
 import Network.HTTP.Types (ByteRange (..))
@@ -226,20 +226,31 @@ storageSpec makeBackend = do
                 it "returns the share numbers that were written" $
                     property $
                         forAll genStorageIndex (mutableWriteAndEnumerateShares makeBackend)
+
                 it "returns the written data when requested" $
                     property $
                         forAll genStorageIndex (mutableWriteAndReadShare makeBackend)
+
                 it "accepts writes for which the test condition succeeds" $
                     withBackend makeBackend $ \backend -> do
                         writeMutable backend "storageindex" (ShareNumber 0) [] [WriteVector 0 "abc"]
                         writeMutable backend "storageindex" (ShareNumber 0) [TestVector 0 3 Eq "abc"] [WriteVector 0 "xyz"]
                         readMutableShare backend "storageindex" (ShareNumber 0) Nothing `shouldReturn` "xyz"
+
                 it "rejects writes for which the test condition fails" $
                     withBackend makeBackend $ \backend -> do
                         writeMutable backend "storageindex" (ShareNumber 0) [] [WriteVector 0 "abc"]
                         writeMutable backend "storageindex" (ShareNumber 0) [TestVector 0 3 Eq "abd"] [WriteVector 0 "xyz"]
                             `shouldThrow` (\WriteRefused{} -> True)
                         readMutableShare backend "storageindex" (ShareNumber 0) Nothing `shouldReturn` "abc"
+
+                it "retrieves share data from before writes are applied" $ do
+                    withBackend makeBackend $ \backend -> do
+                        runReadTestWrite_ backend "storageindex" $ (emptyRTW `withWrite` ShareNumber 0) (WriteVector 0 "abc")
+                        runReadTestWrite backend "storageindex" ((emptyRTW `withRead` ReadVector 0 3 `withWrite` ShareNumber 0) (WriteVector 0 "xyz"))
+                            `shouldReturn` Map.fromList [(ShareNumber 0, ["abc"])]
+                        runReadTestWrite backend "storageindex" (emptyRTW `withRead` ReadVector 0 3)
+                            `shouldReturn` Map.fromList [(ShareNumber 0, ["xyz"])]
 
 class Mess m where
     -- Cleanup resources belonging to m
@@ -506,30 +517,19 @@ nullSecrets =
 data WriteRefused = WriteRefused deriving (Show, Eq)
 instance Exception WriteRefused
 
+runReadTestWrite :: Backend b => b -> StorageIndex -> ReadTestWriteVectors -> IO ReadResult
+runReadTestWrite backend storageIndex rtw = do
+    result <- readvAndTestvAndWritev backend storageIndex rtw
+    if success result then pure $ readData result else throw WriteRefused
+
+runReadTestWrite_ :: Backend b => b -> StorageIndex -> ReadTestWriteVectors -> IO ()
+runReadTestWrite_ backend storageIndex rtw = void $ runReadTestWrite backend storageIndex rtw
+
 writeMutableShareChunk :: Backend b => b -> SlotSecrets -> StorageIndex -> ShareNumber -> ShareData -> Offset -> IO ()
 writeMutableShareChunk b _secrets storageIndex shareNum shareData offset = do
-    result <-
-        readvAndTestvAndWritev
-            b
-            storageIndex
-            ( ReadTestWriteVectors
-                { testWriteVectors = vectors
-                , readVector = mempty
-                }
-            )
-    if success result then pure () else throw WriteRefused
+    void $ runReadTestWrite b storageIndex rtw
   where
-    vectors =
-        Map.fromList
-            [
-                ( shareNum
-                , TestWriteVectors
-                    { test = []
-                    , write = [WriteVector{writeOffset = offset, shareData = shareData}]
-                    , newLength = Nothing
-                    }
-                )
-            ]
+    rtw = (emptyRTW `withWrite` shareNum) WriteVector{writeOffset = offset, shareData = shareData}
 
 writeMutable ::
     Backend b =>
@@ -540,23 +540,40 @@ writeMutable ::
     [WriteVector] ->
     IO ()
 writeMutable backend storageIndex shareNum testv writev = do
-    ReadTestWriteResult{..} <-
-        readvAndTestvAndWritev
-            backend
-            storageIndex
-            ( ReadTestWriteVectors
-                { testWriteVectors =
-                    Map.fromList
-                        [
-                            ( shareNum
-                            , TestWriteVectors
-                                { newLength = Nothing
-                                , test = testv
-                                , write = writev
-                                }
-                            )
-                        ]
-                , readVector = []
-                }
-            )
-    if success then pure () else throwIO WriteRefused
+    void $ runReadTestWrite backend storageIndex rtw
+  where
+    rtw = ((emptyRTW `withTests` shareNum) testv `withWrites` shareNum) writev
+
+emptyRTW :: ReadTestWriteVectors
+emptyRTW = ReadTestWriteVectors{testWriteVectors = mempty, readVector = []}
+
+withRead :: ReadTestWriteVectors -> ReadVector -> ReadTestWriteVectors
+withRead r@ReadTestWriteVectors{..} newRead = r{readVector = newRead : readVector}
+
+withReads rtw [] = rtw
+withReads rtw@ReadTestWriteVectors{readVector} vs = rtw{readVector = vs <> readVector}
+
+withMany f rtw _ [] = rtw
+withMany f rtw shareNum (x : xs) = withMany f (f rtw shareNum x) shareNum xs
+
+withTest :: ReadTestWriteVectors -> ShareNumber -> TestVector -> ReadTestWriteVectors
+withTest r@ReadTestWriteVectors{..} shareNum newTest = r{testWriteVectors = Map.alter f shareNum testWriteVectors}
+  where
+    f Nothing = Just TestWriteVectors{test = [newTest], write = [], newLength = Nothing}
+    f (Just t) = Just t{test = newTest : test t}
+
+withTests = withMany withTest
+
+withWrite :: ReadTestWriteVectors -> ShareNumber -> WriteVector -> ReadTestWriteVectors
+withWrite r@ReadTestWriteVectors{..} shareNum newWrite = r{testWriteVectors = Map.alter f shareNum testWriteVectors}
+  where
+    f Nothing = Just TestWriteVectors{test = [], write = [newWrite], newLength = Nothing}
+    f (Just t) = Just t{write = newWrite : write t}
+
+withWrites = withMany withWrite
+
+withLength :: ReadTestWriteVectors -> ShareNumber -> Integer -> ReadTestWriteVectors
+withLength r@ReadTestWriteVectors{..} shareNum newLength = r{testWriteVectors = Map.alter f shareNum testWriteVectors}
+  where
+    f Nothing = Just TestWriteVectors{test = [], write = [], newLength = Just newLength}
+    f (Just t) = Just t{newLength = Just newLength}
