@@ -9,12 +9,10 @@ module Tahoe.Storage.Backend.S3 where
 
 import Amazonka (runResourceT)
 import qualified Amazonka as AWS
-import Amazonka.S3 (newPutObject)
 import qualified Amazonka.S3 as S3
-import Amazonka.S3.Lens
 import qualified Amazonka.S3.Lens as S3
 import Conduit (ResourceT, sinkList)
-import Control.Exception (catch, throwIO)
+import Control.Exception (catch, throw, throwIO)
 import Control.Lens (set, view, (?~), (^.))
 import Control.Monad (unless, void, when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
@@ -26,6 +24,7 @@ import Data.Foldable (foldl')
 import Data.IORef (
     IORef,
     atomicModifyIORef,
+    atomicModifyIORef',
     modifyIORef',
     newIORef,
     readIORef,
@@ -103,7 +102,7 @@ data S3Backend = S3Backend
 
 -- | Add another part upload to the given state and return the part number and upload id to use with it.
 startUpload :: UploadState -> (UploadState, (PartNumber, T.Text))
-startUpload u@UploadState{uploadParts, uploadResponse} = (u{uploadParts = UploadStarted partNum : uploadParts}, (partNum, view createMultipartUploadResponse_uploadId uploadResponse))
+startUpload u@UploadState{uploadParts, uploadResponse} = (u{uploadParts = UploadStarted partNum : uploadParts}, (partNum, view S3.createMultipartUploadResponse_uploadId uploadResponse))
   where
     partNum = PartNumber $ 1 + length uploadParts
 
@@ -211,7 +210,7 @@ instance Backend S3Backend where
                     Just (True, p : parts) -> do
                         let completedMultipartUpload = (S3.completedMultipartUpload_parts ?~ (p :| parts)) S3.newCompletedMultipartUpload
                             completeMultipartUpload =
-                                (completeMultipartUpload_multipartUpload ?~ completedMultipartUpload)
+                                (S3.completeMultipartUpload_multipartUpload ?~ completedMultipartUpload)
                                     (S3.newCompleteMultipartUpload s3BackendBucket objKey uploadId)
 
                         void $ AWS.send s3BackendEnv completeMultipartUpload
@@ -219,16 +218,26 @@ instance Backend S3Backend where
 
     abortImmutableUpload :: S3Backend -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
     abortImmutableUpload _ _ _ Nothing = throwIO MissingUploadSecret
-    abortImmutableUpload (S3Backend{s3BackendState}) storageIndex shareNum mbLeaseSecret = do
-        thing <- readIORef s3BackendState
-        let leaseSecret = uploadSecret <$> Map.lookup (storageIndex, shareNum) thing :: Maybe UploadSecret
-        -- XXX WOW THIS IS WRONG, COME BACK AND FIX IT PLEASE
-        -- TODO: tell s3 we're done with it plz
-        if validUploadSecret leaseSecret mbLeaseSecret then pure () else throwIO IncorrectUploadSecret
+    abortImmutableUpload (S3Backend{..}) storageIndex shareNum mbLeaseSecret = do
+        -- Try to find the matching upload state and discard it if the secret matches.
+        toCancel <- atomicModifyIORef' s3BackendState (adjust' internalCancel stateKey)
+        -- If we found it, also cancel the state in the S3 backend.
+        maybe (throwIO IncorrectUploadSecret) cancelMultipartUpload toCancel
+      where
+        stateKey = (storageIndex, shareNum)
+
+        cancelMultipartUpload uploadId = runResourceT $ do
+            -- XXX Check the response for errors
+            _resp <- AWS.send s3BackendEnv $ S3.newAbortMultipartUpload s3BackendBucket (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum) uploadId
+            pure ()
+
+        internalCancel u@UploadState{uploadResponse, uploadSecret}
+            | validUploadSecret (Just uploadSecret) mbLeaseSecret = (Just u, uploadResponse ^. S3.createMultipartUploadResponse_uploadId)
+            | otherwise = throw IncorrectUploadSecret
 
     getImmutableShareNumbers (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = runResourceT $ do
-        resp <- AWS.send s3BackendEnv (set listObjects_prefix (Just . storageIndexPrefix s3BackendPrefix $ storageIndex) $ S3.newListObjects s3BackendBucket)
-        case view listObjectsResponse_contents resp of
+        resp <- AWS.send s3BackendEnv (set S3.listObjects_prefix (Just . storageIndexPrefix s3BackendPrefix $ storageIndex) $ S3.newListObjects s3BackendBucket)
+        case view S3.listObjectsResponse_contents resp of
             Nothing -> pure $ CBORSet mempty
             Just objects -> pure $ CBORSet shareNumbers
               where
@@ -243,7 +252,7 @@ instance Backend S3Backend where
                                 else Nothing
                         _ -> Nothing
                   where
-                    parsed = T.split (== '/') (view (object_key . S3._ObjectKey) obj)
+                    parsed = T.split (== '/') (view (S3.object_key . S3._ObjectKey) obj)
 
     readImmutableShare :: S3Backend -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     readImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum qrange =
@@ -259,7 +268,7 @@ instance Backend S3Backend where
         readEach (Just ranges) = mapM readOne ranges
         readOne :: ByteRange -> ResourceT IO ShareData
         readOne br = do
-            let getObj = set getObject_range (Just . ("bytes=" <>) . T.pack . C8.unpack $ renderByteRange br) $ S3.newGetObject s3BackendBucket objectKey
+            let getObj = set S3.getObject_range (Just . ("bytes=" <>) . T.pack . C8.unpack $ renderByteRange br) $ S3.newGetObject s3BackendBucket objectKey
             resp <- AWS.send s3BackendEnv getObj
             B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
 
@@ -277,7 +286,7 @@ instance Backend S3Backend where
             runResourceT $
                 AWS.send
                     s3BackendEnv
-                    ( newPutObject
+                    ( S3.newPutObject
                         s3BackendBucket
                         (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum)
                         (AWS.toBody bs)
@@ -339,6 +348,11 @@ class Backend b where
     adviseCorruptMutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
 -}
 
+{- | If a map includes the given key, compute a new value and a result value for
+ the current value.  If the new computed value is Nothing the key is removed.
+ If the map does not include the key, return the map unmodified and no result
+ value.  Otherwise, return the adjusted map and the result value.
+-}
 adjust' :: Ord k => (v -> (Maybe v, b)) -> k -> Map.Map k v -> (Map k v, Maybe b)
 adjust' f k m = case Map.lookup k m of
     Nothing -> (m, Nothing)

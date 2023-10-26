@@ -116,7 +116,7 @@ import Lib (
 import Amazonka (runResourceT)
 import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_key)
 import qualified Amazonka.S3.Lens as S3
-import Control.Exception (Exception, throw)
+import Control.Exception (Exception, SomeException (SomeException), throw)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Maybe (catMaybes)
 import Network.HTTP.Types (ByteRange (..))
@@ -195,6 +195,16 @@ storageSpec makeBackend = do
                     withBackend makeBackend $ \backend -> do
                         AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
                         abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [Upload "thesecret"])
+
+            it "disallows upload completion after a successful abort" $
+                property $
+                    forAll genStorageIndex $ \storageIndex shareNum secret shareData size ->
+                        withBackend makeBackend $ \backend -> do
+                            AllocationResult [] [_] <- createImmutableStorageIndex backend storageIndex (Just [Upload secret]) (AllocateBuckets [shareNum] size)
+                            abortImmutableUpload backend storageIndex shareNum (Just [Upload secret])
+                            writeImmutableShare backend storageIndex shareNum (Just [Upload secret]) shareData Nothing
+                                -- XXX Check for a more specific exception
+                                `shouldThrow` (\SomeException{} -> True)
 
             it "returns the share numbers that were written" $
                 property $
