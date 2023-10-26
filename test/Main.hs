@@ -224,9 +224,9 @@ storageSpec makeBackend = do
                 it "returns the share numbers that were written" $
                     property $
                         forAll genStorageIndex (mutableWriteAndEnumerateShares makeBackend)
-            it "returns the written data when requested" $
-                property $
-                    forAll genStorageIndex (mutableWriteAndReadShare makeBackend)
+                it "returns the written data when requested" $
+                    property $
+                        forAll genStorageIndex (mutableWriteAndReadShare makeBackend)
 
 class Mess m where
     -- Cleanup resources belonging to m
