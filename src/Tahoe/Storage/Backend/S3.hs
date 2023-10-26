@@ -283,6 +283,8 @@ instance Backend S3Backend where
         --
         -- 2. Chunk data somehow to avoid catastrophic performance problems
         -- from the current strategy of whole-object updates for every write.
+        --
+        -- 3. Verify secrets
         readResults <- doReads
         testResults <- doTests
         if and . fmap and $ testResults
