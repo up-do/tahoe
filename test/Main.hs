@@ -49,6 +49,7 @@ import TahoeLAFS.Storage.API (
     LeaseSecret (Upload),
     Offset,
     ReadResult,
+    ReadTestWriteResult (readData, success),
     ReadTestWriteVectors (ReadTestWriteVectors, readVector, testWriteVectors),
     ReadVector (ReadVector),
     ShareData,
