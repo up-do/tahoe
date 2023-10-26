@@ -48,13 +48,15 @@ import TahoeLAFS.Storage.API (
     CBORSet (CBORSet),
     LeaseSecret (Upload),
     Offset,
-    ReadTestWriteResult (success),
+    ReadTestWriteResult (ReadTestWriteResult, success),
     ReadTestWriteVectors (ReadTestWriteVectors, readVector, testWriteVectors),
     ShareData,
     ShareNumber (..),
     Size,
     SlotSecrets (SlotSecrets, leaseCancel, leaseRenew, writeEnabler),
     StorageIndex,
+    TestOperator (Eq),
+    TestVector (TestVector),
     TestWriteVectors (TestWriteVectors, newLength, test, write),
     WriteVector (WriteVector, shareData, writeOffset),
     toInteger,
@@ -116,7 +118,7 @@ import Lib (
 import Amazonka (runResourceT)
 import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_key)
 import qualified Amazonka.S3.Lens as S3
-import Control.Exception (Exception, SomeException (SomeException), throw)
+import Control.Exception (Exception, SomeException (SomeException), throw, throwIO)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Maybe (catMaybes)
 import Network.HTTP.Types (ByteRange (..))
@@ -227,6 +229,17 @@ storageSpec makeBackend = do
                 it "returns the written data when requested" $
                     property $
                         forAll genStorageIndex (mutableWriteAndReadShare makeBackend)
+                it "accepts writes for which the test condition succeeds" $
+                    withBackend makeBackend $ \backend -> do
+                        writeMutable backend "storageindex" (ShareNumber 0) [] [WriteVector 0 "abc"]
+                        writeMutable backend "storageindex" (ShareNumber 0) [TestVector 0 3 Eq "abc"] [WriteVector 0 "xyz"]
+                        readMutableShare backend "storageindex" (ShareNumber 0) Nothing `shouldReturn` "xyz"
+                it "rejects writes for which the test condition fails" $
+                    withBackend makeBackend $ \backend -> do
+                        writeMutable backend "storageindex" (ShareNumber 0) [] [WriteVector 0 "abc"]
+                        writeMutable backend "storageindex" (ShareNumber 0) [TestVector 0 3 Eq "abd"] [WriteVector 0 "xyz"]
+                            `shouldThrow` (\WriteRefused{} -> True)
+                        readMutableShare backend "storageindex" (ShareNumber 0) Nothing `shouldReturn` "abc"
 
 class Mess m where
     -- Cleanup resources belonging to m
@@ -517,3 +530,33 @@ writeMutableShareChunk b _secrets storageIndex shareNum shareData offset = do
                     }
                 )
             ]
+
+writeMutable ::
+    Backend b =>
+    b ->
+    StorageIndex ->
+    ShareNumber ->
+    [TestVector] ->
+    [WriteVector] ->
+    IO ()
+writeMutable backend storageIndex shareNum testv writev = do
+    ReadTestWriteResult{..} <-
+        readvAndTestvAndWritev
+            backend
+            storageIndex
+            ( ReadTestWriteVectors
+                { testWriteVectors =
+                    Map.fromList
+                        [
+                            ( shareNum
+                            , TestWriteVectors
+                                { newLength = Nothing
+                                , test = testv
+                                , write = writev
+                                }
+                            )
+                        ]
+                , readVector = []
+                }
+            )
+    if success then pure () else throwIO WriteRefused
