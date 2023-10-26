@@ -163,60 +163,61 @@ storageSpec makeBackend = do
                     property $
                         forAll genStorageIndex (alreadyHavePlusAllocatedImm makeBackend)
 
-        context "write a share" $ do
-            it "disallows writes without an upload secret" $
-                property $
-                    withBackend makeBackend $ \backend -> do
-                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
-                        writeImmutableShare backend "storageindex" (ShareNumber 0) Nothing "fooooo" Nothing `shouldThrow` (== MissingUploadSecret)
-
-            it "disallows writes without a matching upload secret" $
-                property $
-                    withBackend makeBackend $ \backend -> do
-                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
-                        -- Supply the wrong secret as an upload secret and the
-                        -- right secret marked for some other use - this
-                        -- should still fail.
-                        writeImmutableShare backend "storageindex" (ShareNumber 0) (Just [Upload "wrongsecret"]) "fooooo" Nothing `shouldThrow` (== IncorrectUploadSecret)
-
-            it "disallows aborts without an upload secret" $
-                property $
-                    withBackend makeBackend $ \backend -> do
-                        abortImmutableUpload backend "storageindex" (ShareNumber 0) Nothing `shouldThrow` (== MissingUploadSecret)
-
-            it "disallows aborts without a matching upload secret" $
-                property $
-                    withBackend makeBackend $ \backend -> do
-                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
-                        abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [Upload "wrongsecret"]) `shouldThrow` (== IncorrectUploadSecret)
-
-            it "allows aborts with a matching upload secret" $
-                property $
-                    withBackend makeBackend $ \backend -> do
-                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
-                        abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [Upload "thesecret"])
-
-            it "disallows upload completion after a successful abort" $
-                property $
-                    forAll genStorageIndex $ \storageIndex shareNum secret shareData size ->
+            context "write a share" $ do
+                it "disallows writes without an upload secret" $
+                    property $
                         withBackend makeBackend $ \backend -> do
-                            AllocationResult [] [_] <- createImmutableStorageIndex backend storageIndex (Just [Upload secret]) (AllocateBuckets [shareNum] size)
-                            abortImmutableUpload backend storageIndex shareNum (Just [Upload secret])
-                            writeImmutableShare backend storageIndex shareNum (Just [Upload secret]) shareData Nothing
-                                -- XXX Check for a more specific exception
-                                `shouldThrow` (\SomeException{} -> True)
+                            AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
+                            writeImmutableShare backend "storageindex" (ShareNumber 0) Nothing "fooooo" Nothing `shouldThrow` (== MissingUploadSecret)
 
-            it "returns the share numbers that were written" $
-                property $
-                    forAll genStorageIndex (immutableWriteAndEnumerateShares makeBackend)
+                it "disallows writes without a matching upload secret" $
+                    property $
+                        withBackend makeBackend $ \backend -> do
+                            AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
+                            -- Supply the wrong secret as an upload secret and the
+                            -- right secret marked for some other use - this
+                            -- should still fail.
+                            writeImmutableShare backend "storageindex" (ShareNumber 0) (Just [Upload "wrongsecret"]) "fooooo" Nothing `shouldThrow` (== IncorrectUploadSecret)
 
-            it "returns the written data when requested" $
-                property $
-                    forAll genStorageIndex (immutableWriteAndReadShare makeBackend)
+                it "disallows upload completion after a successful abort" $
+                    property $
+                        forAll genStorageIndex $ \storageIndex shareNum secret shareData size ->
+                            withBackend makeBackend $ \backend -> do
+                                AllocationResult [] [_] <- createImmutableStorageIndex backend storageIndex (Just [Upload secret]) (AllocateBuckets [shareNum] size)
+                                abortImmutableUpload backend storageIndex shareNum (Just [Upload secret])
+                                writeImmutableShare backend storageIndex shareNum (Just [Upload secret]) shareData Nothing
+                                    -- XXX Check for a more specific exception
+                                    `shouldThrow` (\SomeException{} -> True)
 
-            it "cannot be written more than once" $
-                property $
-                    forAll genStorageIndex (immutableWriteAndRewriteShare makeBackend)
+                it "returns the share numbers that were written" $
+                    property $
+                        forAll genStorageIndex (immutableWriteAndEnumerateShares makeBackend)
+
+                it "returns the written data when requested" $
+                    property $
+                        forAll genStorageIndex (immutableWriteAndReadShare makeBackend)
+
+                it "cannot be written more than once" $
+                    property $
+                        forAll genStorageIndex (immutableWriteAndRewriteShare makeBackend)
+
+                it "disallows aborts without an upload secret" $
+                    property $
+                        withBackend makeBackend $ \backend -> do
+                            abortImmutableUpload backend "storageindex" (ShareNumber 0) Nothing `shouldThrow` (== MissingUploadSecret)
+
+            describe "aborting uploads" $ do
+                it "disallows aborts without a matching upload secret" $
+                    property $
+                        withBackend makeBackend $ \backend -> do
+                            AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
+                            abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [Upload "wrongsecret"]) `shouldThrow` (== IncorrectUploadSecret)
+
+                it "allows aborts with a matching upload secret" $
+                    property $
+                        withBackend makeBackend $ \backend -> do
+                            AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
+                            abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [Upload "thesecret"])
 
         context "mutable" $ do
             describe "write a share" $ do
