@@ -318,16 +318,16 @@ alreadyHavePlusAllocatedImm
     (ShareNumbers secondGroup)
     (Positive size) = monadicIO . run . withBackend makeBackend $ \backend -> do
         -- Allocate some shares.  The property should hold.
-        allocate backend (AllocateBuckets firstGroup size) >>= theInvariant firstGroup
+        allocate backend (AllocateBuckets firstGroup size) >>= firstInvariant firstGroup
         -- Allocate some other shares on the same storage index.  The property should hold.
-        allocate backend (AllocateBuckets secondGroup size) >>= theInvariant secondGroup
+        allocate backend (AllocateBuckets secondGroup size) >>= secondInvariant firstGroup
       where
         -- Do some allocation.
         allocate b = createImmutableStorageIndex b storageIndex (Just [Upload "hello world"])
 
         -- Check the property.
-        theInvariant allocated' result = do
-            when (alreadyHave result ++ allocated result /= allocated') $
+        firstInvariant allocated' result =
+            when (actual /= expected) $
                 fail
                     ( show (alreadyHave result)
                         ++ " ++ "
@@ -335,6 +335,14 @@ alreadyHavePlusAllocatedImm
                         ++ " /= "
                         ++ show allocated'
                     )
+          where
+            actual = Set.fromList (alreadyHave result ++ allocated result)
+            expected = Set.fromList allocated'
+
+        secondInvariant alreadyAllocated AllocationResult{..} =
+            -- Anything allocated by the first operation must not be allocated
+            -- by the second operation.
+            Set.fromList alreadyAllocated `Set.intersection` Set.fromList allocated `shouldBe` mempty
 
 -- The share numbers of immutable share data written to the shares of a given
 -- storage index can be retrieved.

@@ -75,6 +75,7 @@ library
     , amazonka-s3
     , base         ^>=4.14.3.0
     , bytestring
+    , composition
     , conduit
     , containers
     , http-client

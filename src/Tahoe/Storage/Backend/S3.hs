@@ -4,6 +4,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TupleSections #-}
 
 module Tahoe.Storage.Backend.S3 where
 
@@ -14,7 +15,7 @@ import qualified Amazonka.S3.Lens as S3
 import Conduit (ResourceT, sinkList)
 import Control.Exception (Exception, catch, throw, throwIO)
 import Control.Lens (set, view, (?~), (^.))
-import Control.Monad (unless, void, when)
+import Control.Monad (void, when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Bifunctor (Bifunctor (first))
 import Data.ByteArray (constEq)
@@ -28,6 +29,7 @@ import Data.IORef (
     newIORef,
     readIORef,
  )
+import Data.List (partition)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -40,7 +42,6 @@ import Network.HTTP.Types.Header (renderByteRange)
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets, allocatedSize, shareNumbers),
     AllocationResult (AllocationResult, allocated, alreadyHave),
-    ApplicationVersion,
     CBORSet (CBORSet),
     LeaseSecret (Upload),
     QueryRange,
@@ -55,7 +56,7 @@ import TahoeLAFS.Storage.API (
     TestWriteVectors (TestWriteVectors, test, write),
     UploadSecret,
     Version (Version),
-    Version1Parameters (Version1Parameters, availableSpace, maximumImmutableShareSize, maximumMutableShareSize),
+    Version1Parameters (..),
     WriteVector (..),
  )
 import TahoeLAFS.Storage.Backend (
@@ -90,7 +91,10 @@ data UploadPart
 data UploadState = UploadState
     { uploadStateSize :: Integer
     , uploadParts :: [UploadPart]
-    , uploadResponse :: S3.CreateMultipartUploadResponse
+    , -- | Nothing after we initialize our internal state but are on our way to
+      -- initializing our external state, then Just some value after external
+      -- state is initialized.
+      uploadResponse :: Maybe S3.CreateMultipartUploadResponse
     , uploadSecret :: UploadSecret
     }
     deriving (Eq, Show)
@@ -106,17 +110,71 @@ data S3Backend = S3Backend
     , s3BackendState :: IORef AllocatedShares
     }
 
--- | Add another part upload to the given state and return the part number and upload id to use with it.
-startUpload :: UploadState -> (UploadState, (PartNumber, T.Text))
-startUpload u@UploadState{uploadParts, uploadResponse} = (u{uploadParts = UploadStarted partNum : uploadParts}, (partNum, view S3.createMultipartUploadResponse_uploadId uploadResponse))
+internalAllocate :: StorageIndex -> UploadSecret -> AllocateBuckets -> AllocatedShares -> (AllocatedShares, AllocationResult)
+internalAllocate storageIndex secret AllocateBuckets{shareNumbers, allocatedSize} curState = (newState, AllocationResult{..})
   where
+    newState = foldr (\shnum -> Map.insert (storageIndex, shnum) newShareState) curState allocated
+
+    newShareState =
+        UploadState
+            { uploadStateSize = allocatedSize
+            , uploadParts = []
+            , uploadResponse = Nothing
+            , uploadSecret = secret
+            }
+
+    (alreadyHave, allocated) = partition shareAlreadyAllocated shareNumbers
+    shareAlreadyAllocated shnum = Map.member (storageIndex, shnum) curState
+
+internalAllocateComplete :: StorageIndex -> ShareNumber -> S3.CreateMultipartUploadResponse -> AllocatedShares -> AllocatedShares
+internalAllocateComplete storageIndex shareNum response curState = newState
+  where
+    newState = Map.adjust (\st -> st{uploadResponse = Just response}) stateKey curState
+    stateKey = (storageIndex, shareNum)
+
+externalAllocate :: S3Backend -> StorageIndex -> ShareNumber -> ResourceT IO S3.CreateMultipartUploadResponse
+externalAllocate S3Backend{..} storageIndex shareNum =
+    -- XXX HOW TO HANDLE FAILURE? this AWS.send should really be AWS.sendEither !
+    -- and then we handle errors that we can
+    AWS.send s3BackendEnv uploadCreate
+  where
+    objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
+    uploadCreate = S3.newCreateMultipartUpload s3BackendBucket objectKey
+
+-- runResourceT $
+--     do
+--         -- switch to sendEither when more brain is available
+--         -- XXX Check to see if we already have local state related to this upload
+--         -- XXX Check to see if S3 already has state related to this upload
+--         -- XXX Use thread-safe primitives so the server can be multithreaded
+--         let objectKeys = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex <$> shareNumbers
+--             uploadCreates = S3.newCreateMultipartUpload s3BackendBucket <$> objectKeys
+--         -- XXX HOW TO HANDLE FAILURE? this AWS.send should really be AWS.sendEither !
+--         -- and then we handle errors that we can
+--         multipartUploadResponse <- mapM (fmap (flip (UploadState allocatedSize []) uploadSecret) . AWS.send s3BackendEnv) uploadCreates
+--         let keys = zip (repeat storageIndex) shareNumbers :: [(StorageIndex, ShareNumber)]
+--             newMap = Map.fromList $ zip keys multipartUploadResponse
+--         -- don't send anything that's already there
+--         liftIO $ modifyIORef' s3BackendState (newMap `Map.union`)
+--         pure $ AllocationResult{alreadyHave = [], allocated = shareNumbers}
+
+data PartUpload = Started PartNumber T.Text | NotReady
+
+-- | Add another part upload to the given state and return the part number and upload id to use with it.
+startPartUpload :: UploadState -> (UploadState, PartUpload)
+startPartUpload u@UploadState{uploadParts, uploadResponse} = result
+  where
+    result = case view S3.createMultipartUploadResponse_uploadId <$> uploadResponse of
+        Nothing -> (u, NotReady)
+        Just uploadId -> (u{uploadParts = UploadStarted partNum : uploadParts}, Started partNum uploadId)
+
     partNum = PartNumber $ 1 + length uploadParts
 
 {- | Mark a part upload as finished and compute the new overall state of the
  multipart upload.
 -}
-finishUpload :: PartNumber -> Integer -> S3.UploadPartResponse -> UploadState -> (Maybe UploadState, (Bool, [S3.CompletedPart]))
-finishUpload finishedPartNum finishedPartSize response u@UploadState{uploadStateSize, uploadParts} =
+finishPartUpload :: PartNumber -> Integer -> S3.UploadPartResponse -> UploadState -> (Maybe UploadState, (Bool, [S3.CompletedPart]))
+finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadStateSize, uploadParts} =
     ( if multipartFinished then Nothing else Just u{uploadParts = newUploadParts}
     ,
         ( multipartFinished
@@ -153,10 +211,12 @@ newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
  generic exceptions defined by tahoe-great-black-swamp.  XXX Some of these
  probably belong in tahoe-great-black-swamp, actually.
 -}
-data BackendError = MaximumShareSizeExceeded
-    { maximumShareSizeExceededLimit :: Integer
-    , maximumShareSizeExceededGiven :: Integer
-    }
+data BackendError
+    = MaximumShareSizeExceeded
+        { maximumShareSizeExceededLimit :: Integer
+        , maximumShareSizeExceededGiven :: Integer
+        }
+    | ShareAllocationIncomplete
     deriving (Eq, Show)
 
 instance Exception BackendError
@@ -185,31 +245,20 @@ instance Backend S3Backend where
             Version1Parameters
                 { maximumImmutableShareSize = maxShareSize
                 , maximumMutableShareSize = maxShareSize
-                , availableSpace = 2 ^ (50 :: Integer)
+                , -- Just estimate ...
+                  availableSpace = 2 ^ (50 :: Integer)
                 }
 
         appVer = "tahoe-s3/0.0.0.0"
 
     createImmutableStorageIndex :: S3Backend -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
-    createImmutableStorageIndex (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex secrets (AllocateBuckets{shareNumbers, allocatedSize})
+    createImmutableStorageIndex s3@S3Backend{s3BackendState} storageIndex secrets allocate@AllocateBuckets{allocatedSize}
         | allocatedSize > maxShareSize = throwIO $ MaximumShareSizeExceeded maxShareSize allocatedSize
-        | otherwise = withUploadSecret secrets $ \uploadSecret ->
-            runResourceT $
-                do
-                    -- switch to sendEither when more brain is available
-                    -- XXX Check to see if we already have local state related to this upload
-                    -- XXX Check to see if S3 already has state related to this upload
-                    -- XXX Use thread-safe primitives so the server can be multithreaded
-                    let objectKeys = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex <$> shareNumbers
-                        uploadCreates = S3.newCreateMultipartUpload s3BackendBucket <$> objectKeys
-                    -- XXX HOW TO HANDLE FAILURE? this AWS.send should really be AWS.sendEither !
-                    -- and then we handle errors that we can
-                    multipartUploadResponse <- mapM (fmap (flip (UploadState allocatedSize []) uploadSecret) . AWS.send s3BackendEnv) uploadCreates
-                    let keys = zip (repeat storageIndex) shareNumbers :: [(StorageIndex, ShareNumber)]
-                        newMap = Map.fromList $ zip keys multipartUploadResponse
-                    -- don't send anything that's already there
-                    liftIO $ modifyIORef' s3BackendState (newMap `Map.union`)
-                    pure $ AllocationResult{alreadyHave = [], allocated = shareNumbers}
+        | otherwise = withUploadSecret secrets $ \uploadSecret -> do
+            result@AllocationResult{allocated} <- atomicModifyIORef' s3BackendState (internalAllocate storageIndex uploadSecret allocate)
+            responses <- runResourceT $ traverse (externalAllocate s3 storageIndex) allocated
+            modifyIORef' s3BackendState $ \st -> foldr (uncurry $ internalAllocateComplete storageIndex) st (zip allocated responses)
+            pure result
 
     writeImmutableShare :: S3Backend -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> QueryRange -> IO ()
     writeImmutableShare _s3 _storageIndex _shareNum Nothing _shareData _ = throwIO MissingUploadSecret
@@ -231,14 +280,15 @@ instance Backend S3Backend where
                 | validUploadSecret secret secrets -> pure ()
                 | otherwise -> throwIO IncorrectUploadSecret
 
-        uploadInfo <- liftIO $ atomicModifyIORef' s3BackendState (adjust' (first Just . startUpload) stateKey)
+        uploadInfo <- liftIO $ atomicModifyIORef' s3BackendState (adjust' (first Just . startPartUpload) stateKey)
         case uploadInfo of
             Nothing -> throwIO ImmutableShareAlreadyWritten
-            Just (PartNumber partNum', uploadId) -> runResourceT $ do
+            Just NotReady -> throwIO ShareAllocationIncomplete
+            Just (Started (PartNumber partNum') uploadId) -> runResourceT $ do
                 let objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
                     uploadPart = S3.newUploadPart s3BackendBucket objKey partNum' uploadId (AWS.toBody shareData)
                 response <- AWS.send s3BackendEnv uploadPart
-                newState <- liftIO $ atomicModifyIORef' s3BackendState (adjust' (finishUpload (PartNumber partNum') (fromIntegral $ B.length shareData) response) stateKey)
+                newState <- liftIO $ atomicModifyIORef' s3BackendState (adjust' (finishPartUpload (PartNumber partNum') (fromIntegral $ B.length shareData) response) stateKey)
                 case newState of
                     Nothing ->
                         error "It went missing?"
@@ -269,7 +319,8 @@ instance Backend S3Backend where
             pure ()
 
         internalCancel UploadState{uploadResponse, uploadSecret}
-            | validUploadSecret uploadSecret secrets = (Nothing, uploadResponse ^. S3.createMultipartUploadResponse_uploadId)
+            | validUploadSecret uploadSecret secrets =
+                maybe (throw ShareAllocationIncomplete) ((Nothing,) . (^. S3.createMultipartUploadResponse_uploadId)) uploadResponse
             | otherwise = throw IncorrectUploadSecret
 
     getImmutableShareNumbers (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = runResourceT $ do
