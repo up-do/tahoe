@@ -119,7 +119,7 @@ import Lib (
 import Amazonka (runResourceT)
 import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_key)
 import qualified Amazonka.S3.Lens as S3
-import Control.Exception (Exception, SomeException (SomeException), throw)
+import Control.Exception (Exception, throw)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Maybe (catMaybes)
 import Network.HTTP.Types (ByteRange (..))
@@ -166,6 +166,12 @@ storageSpec makeBackend = do
                     forAll genStorageIndex (alreadyHavePlusAllocatedImm makeBackend)
 
             context "write a share" $ do
+                it "disallows writing an unallocated share" $
+                    forAll genStorageIndex $ \storageIndex shareNum secret shareData ->
+                        withBackend makeBackend $ \backend -> do
+                            writeImmutableShare backend storageIndex shareNum (Just [Upload secret]) shareData Nothing
+                                `shouldThrow` (== ShareNotAllocated)
+
                 it "disallows writes without an upload secret" $
                     withBackend makeBackend $ \backend -> do
                         AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [Upload "thesecret"]) (AllocateBuckets [ShareNumber 0] 100)
