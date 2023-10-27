@@ -73,6 +73,7 @@ library
     , aeson
     , amazonka
     , amazonka-s3
+    , async
     , base         ^>=4.14.3.0
     , bytestring
     , composition

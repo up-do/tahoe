@@ -13,6 +13,7 @@ import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
 import Conduit (ResourceT, sinkList)
+import Control.Concurrent.Async (concurrently, mapConcurrently, mapConcurrently_)
 import Control.Exception (Exception, catch, throw, throwIO)
 import Control.Lens (set, view, (?~), (^.))
 import Control.Monad (void, when)
@@ -374,8 +375,7 @@ instance Backend S3Backend where
         -- from the current strategy of whole-object updates for every write.
         --
         -- 3. Verify secrets
-        readResults <- doReads
-        testResults <- doTests
+        (readResults, testResults) <- concurrently doReads doTests
         if and . fmap and $ testResults
             then ReadTestWriteResult True readResults <$ doWrites
             else pure $ ReadTestWriteResult False readResults
@@ -383,7 +383,7 @@ instance Backend S3Backend where
         doReads = do
             (CBORSet knownShareNumbers) <- getMutableShareNumbers s3 storageIndex
             let shareNumberList = Set.toList knownShareNumbers
-            shareData <- sequence $ readMutableShare s3 storageIndex <$> shareNumberList <*> pure (toQueryRange readVector)
+            shareData <- mapConcurrently id $ readMutableShare s3 storageIndex <$> shareNumberList <*> pure (toQueryRange readVector)
             pure $ Map.fromList (zip shareNumberList ((: []) <$> shareData))
 
         toQueryRange = Just . fmap toSingleRange
@@ -391,12 +391,12 @@ instance Backend S3Backend where
             toSingleRange (ReadVector offset size) = ByteRangeFromTo offset (offset + size - 1)
 
         doTests =
-            mapM
+            mapConcurrently
                 (\(shareNum, testWriteVectors') -> zipWith runTestVector (test testWriteVectors') <$> mapM (readSomeThings shareNum) (test testWriteVectors'))
                 (Map.toList testWriteVectors)
 
         doWrites =
-            mapM_
+            mapConcurrently_
                 (\(shareNum, testWriteVectors') -> readEverything shareNum >>= writeEverything shareNum . (`applyWriteVectors` write testWriteVectors'))
                 (Map.toList testWriteVectors)
 
