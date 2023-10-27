@@ -160,10 +160,10 @@ newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
 -}
 instance Backend S3Backend where
     createImmutableStorageIndex :: S3Backend -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
-    createImmutableStorageIndex (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex mbLeaseSecret (AllocateBuckets{shareNumbers, allocatedSize})
+    createImmutableStorageIndex (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex secrets (AllocateBuckets{shareNumbers, allocatedSize})
         -- The maximum S3 object size is 5 BT
         | allocatedSize > 5 * 1024 * 1024 * 1024 * 1024 = error "blub"
-        | otherwise = withUploadSecret mbLeaseSecret $ \uploadSecret ->
+        | otherwise = withUploadSecret secrets $ \uploadSecret ->
             runResourceT $
                 do
                     -- switch to sendEither when more brain is available
@@ -225,7 +225,7 @@ instance Backend S3Backend where
 
     abortImmutableUpload :: S3Backend -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
     abortImmutableUpload _ _ _ Nothing = throwIO MissingUploadSecret
-    abortImmutableUpload (S3Backend{..}) storageIndex shareNum mbLeaseSecret = do
+    abortImmutableUpload (S3Backend{..}) storageIndex shareNum secrets = do
         -- Try to find the matching upload state and discard it if the secret matches.
         toCancel <- atomicModifyIORef' s3BackendState (adjust' internalCancel stateKey)
         -- If we found it, also cancel the state in the S3 backend.
@@ -239,7 +239,7 @@ instance Backend S3Backend where
             pure ()
 
         internalCancel UploadState{uploadResponse, uploadSecret}
-            | validUploadSecret uploadSecret mbLeaseSecret = (Nothing, uploadResponse ^. S3.createMultipartUploadResponse_uploadId)
+            | validUploadSecret uploadSecret secrets = (Nothing, uploadResponse ^. S3.createMultipartUploadResponse_uploadId)
             | otherwise = throw IncorrectUploadSecret
 
     getImmutableShareNumbers (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = runResourceT $ do
