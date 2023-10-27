@@ -152,12 +152,11 @@ newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
   The backend is configured with credentials to use the API and the name of a
   bucket to use.
 
-  Object keys like `allocated/<storage index>/<share number>` are used to
-  allocated and incompletely written shares.  Certain metadata required to
-  complete the upload is recorded in tags on the object.
+  Uploads for immutable objects are handled using S3 "multipart uploads" to
+  send the data from each write made on to us onwards to S3 as a separate
+  part.  The overall upload is completed when the last write is received.
 
-  On completion of immutable upload, objects are renamed to keys like
-  `shares/<storage index>/<share number>`.
+  Objects are given S3 keys like `<storage index>/<share number>`.
 -}
 instance Backend S3Backend where
     createImmutableStorageIndex :: S3Backend -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
@@ -254,7 +253,7 @@ instance Backend S3Backend where
                 objToShareNum :: S3.Object -> Maybe ShareNumber
                 objToShareNum obj =
                     case parsed of
-                        [prefix, "allocated", si, shareNum] ->
+                        [prefix, si, shareNum] ->
                             if prefix == s3BackendPrefix && T.unpack si == storageIndex
                                 then ShareNumber <$> readMaybe (T.unpack shareNum)
                                 else Nothing
@@ -373,7 +372,7 @@ storageIndexShareNumberToObjectKey prefix si (ShareNumber sn) =
     S3.ObjectKey $ T.concat [storageIndexPrefix prefix si, T.pack (show sn)]
 
 storageIndexPrefix :: T.Text -> StorageIndex -> T.Text
-storageIndexPrefix prefix si = T.concat [prefix, "/allocated/", Text.pack si, "/"]
+storageIndexPrefix prefix si = T.concat [prefix, "/", Text.pack si, "/"]
 
 {-
 the remaining methods to implement:
