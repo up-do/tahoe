@@ -97,7 +97,8 @@ import TahoeLAFS.Storage.Backend (
     WriteImmutableError (
         ImmutableShareAlreadyWritten,
         IncorrectUploadSecret,
-        MissingUploadSecret
+        MissingUploadSecret,
+        ShareNotAllocated
     ),
     writeMutableShare,
  )
@@ -184,8 +185,7 @@ storageSpec makeBackend = do
                             AllocationResult [] [_] <- createImmutableStorageIndex backend storageIndex (Just [Upload secret]) (AllocateBuckets [shareNum] size)
                             abortImmutableUpload backend storageIndex shareNum (Just [Upload secret])
                             writeImmutableShare backend storageIndex shareNum (Just [Upload secret]) shareData Nothing
-                                -- XXX Check for a more specific exception
-                                `shouldThrow` (\SomeException{} -> True)
+                                `shouldThrow` (== ShareNotAllocated)
 
                 it "returns the share numbers that were written" $
                     forAll genStorageIndex (immutableWriteAndEnumerateShares makeBackend)

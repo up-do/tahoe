@@ -23,7 +23,6 @@ import qualified Data.ByteString.Char8 as C8
 import Data.Foldable (foldl')
 import Data.IORef (
     IORef,
-    atomicModifyIORef,
     atomicModifyIORef',
     modifyIORef',
     newIORef,
@@ -61,7 +60,8 @@ import TahoeLAFS.Storage.Backend (
     WriteImmutableError (
         ImmutableShareAlreadyWritten,
         IncorrectUploadSecret,
-        MissingUploadSecret
+        MissingUploadSecret,
+        ShareNotAllocated
     ),
     withUploadSecret,
  )
@@ -184,27 +184,32 @@ instance Backend S3Backend where
 
     writeImmutableShare :: S3Backend -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> QueryRange -> IO ()
     writeImmutableShare _s3 _storageIndex _shareNum Nothing _shareData _ = throwIO MissingUploadSecret
-    writeImmutableShare s3 storageIndex shareNum mbLeaseSecret shareData Nothing = do
+    writeImmutableShare s3 storageIndex shareNum secrets shareData Nothing = do
         -- If no range is given, this is the whole thing.
-        writeImmutableShare s3 storageIndex shareNum mbLeaseSecret shareData (Just [ByteRangeFrom 0])
-    writeImmutableShare s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum mbLeaseSecret shareData (Just _byteRanges) = do
+        writeImmutableShare s3 storageIndex shareNum secrets shareData (Just [ByteRangeFrom 0])
+    writeImmutableShare s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum secrets shareData (Just _byteRanges) = do
+        -- XXX Do something with _byteRanges
+        --
         -- call list objects on the backend, if this share already exists, reject the new write with ImmutableShareAlreadyWritten
         CBORSet shareNumbers <- getImmutableShareNumbers s3backend storageIndex
         when (shareNum `elem` shareNumbers) $ throwIO ImmutableShareAlreadyWritten
 
         thing <- readIORef s3BackendState
         let stateKey = (storageIndex, shareNum)
-        let leaseSecret = uploadSecret <$> Map.lookup stateKey thing :: Maybe UploadSecret
-        unless (validUploadSecret leaseSecret mbLeaseSecret) $ throwIO IncorrectUploadSecret
+        case uploadSecret <$> Map.lookup stateKey thing of
+            Nothing -> throwIO ShareNotAllocated
+            Just secret
+                | validUploadSecret secret secrets -> pure ()
+                | otherwise -> throwIO IncorrectUploadSecret
 
-        uploadInfo <- liftIO $ atomicModifyIORef s3BackendState (adjust' (first Just . startUpload) stateKey)
+        uploadInfo <- liftIO $ atomicModifyIORef' s3BackendState (adjust' (first Just . startUpload) stateKey)
         case uploadInfo of
             Nothing -> throwIO ImmutableShareAlreadyWritten
             Just (PartNumber partNum', uploadId) -> runResourceT $ do
                 let objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
                     uploadPart = S3.newUploadPart s3BackendBucket objKey partNum' uploadId (AWS.toBody shareData)
                 response <- AWS.send s3BackendEnv uploadPart
-                newState <- liftIO $ atomicModifyIORef s3BackendState (adjust' (finishUpload (PartNumber partNum') (fromIntegral $ B.length shareData) response) stateKey)
+                newState <- liftIO $ atomicModifyIORef' s3BackendState (adjust' (finishUpload (PartNumber partNum') (fromIntegral $ B.length shareData) response) stateKey)
                 case newState of
                     Nothing ->
                         error "It went missing?"
@@ -234,8 +239,8 @@ instance Backend S3Backend where
             _resp <- AWS.send s3BackendEnv $ S3.newAbortMultipartUpload s3BackendBucket (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum) uploadId
             pure ()
 
-        internalCancel u@UploadState{uploadResponse, uploadSecret}
-            | validUploadSecret (Just uploadSecret) mbLeaseSecret = (Just u, uploadResponse ^. S3.createMultipartUploadResponse_uploadId)
+        internalCancel UploadState{uploadResponse, uploadSecret}
+            | validUploadSecret uploadSecret mbLeaseSecret = (Nothing, uploadResponse ^. S3.createMultipartUploadResponse_uploadId)
             | otherwise = throw IncorrectUploadSecret
 
     getImmutableShareNumbers (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = runResourceT $ do
@@ -400,6 +405,6 @@ adjust' f k m = case Map.lookup k m of
       where
         (newV, result) = f v
 
-validUploadSecret :: Maybe UploadSecret -> Maybe [LeaseSecret] -> Bool
-validUploadSecret (Just us1) (Just [Upload us2]) = constEq us1 us2
+validUploadSecret :: UploadSecret -> Maybe [LeaseSecret] -> Bool
+validUploadSecret us1 (Just [Upload us2]) = constEq us1 us2
 validUploadSecret _ _ = False
