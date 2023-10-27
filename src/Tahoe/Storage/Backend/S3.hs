@@ -255,9 +255,13 @@ instance Backend S3Backend where
     createImmutableStorageIndex s3@S3Backend{s3BackendState} storageIndex secrets allocate@AllocateBuckets{allocatedSize}
         | allocatedSize > maxShareSize = throwIO $ MaximumShareSizeExceeded maxShareSize allocatedSize
         | otherwise = withUploadSecret secrets $ \uploadSecret -> do
+            -- Initialize local tracking state
             result@AllocationResult{allocated} <- atomicModifyIORef' s3BackendState (internalAllocate storageIndex uploadSecret allocate)
+            -- Create corresponding state in the S3 backend
             responses <- runResourceT $ traverse (externalAllocate s3 storageIndex) allocated
+            -- Update the local state with the S3 backend state details
             modifyIORef' s3BackendState $ \st -> foldr (uncurry $ internalAllocateComplete storageIndex) st (zip allocated responses)
+            -- Tell the caller what we did
             pure result
 
     writeImmutableShare :: S3Backend -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> QueryRange -> IO ()
