@@ -269,21 +269,41 @@ withBackend b action = do
 
 alreadyHavePlusAllocatedImm ::
     (Backend b, Mess b) =>
-    IO b -> -- The backend on which to operate
-    StorageIndex -> -- The storage index to use
-    ShareNumbers -> -- The share numbers to allocate
-    Positive Size -> -- The size of each share
+    -- | The backend on which to operate
+    IO b ->
+    -- | The storage index to use
+    StorageIndex ->
+    -- | The first group of share numbers to allocate.
+    ShareNumbers ->
+    -- | The second, maybe overlapping, group of share numbers -- to allocate.
+    ShareNumbers ->
+    -- | The size of each share
+    Positive Size ->
     Property
-alreadyHavePlusAllocatedImm makeBackend storageIndex (ShareNumbers shareNumbers) (Positive size) = monadicIO . run . withBackend makeBackend $ \backend -> do
-    result <- createImmutableStorageIndex backend storageIndex (Just [Upload "hello world"]) $ AllocateBuckets shareNumbers size
-    when (alreadyHave result ++ allocated result /= shareNumbers) $
-        fail
-            ( show (alreadyHave result)
-                ++ " ++ "
-                ++ show (allocated result)
-                ++ " /= "
-                ++ show shareNumbers
-            )
+alreadyHavePlusAllocatedImm
+    makeBackend
+    storageIndex
+    (ShareNumbers firstGroup)
+    (ShareNumbers secondGroup)
+    (Positive size) = monadicIO . run . withBackend makeBackend $ \backend -> do
+        -- Allocate some shares.  The property should hold.
+        allocate backend (AllocateBuckets firstGroup size) >>= theInvariant firstGroup
+        -- Allocate some other shares on the same storage index.  The property should hold.
+        allocate backend (AllocateBuckets secondGroup size) >>= theInvariant secondGroup
+      where
+        -- Do some allocation.
+        allocate b = createImmutableStorageIndex b storageIndex (Just [Upload "hello world"])
+
+        -- Check the property.
+        theInvariant allocated' result = do
+            when (alreadyHave result ++ allocated result /= allocated') $
+                fail
+                    ( show (alreadyHave result)
+                        ++ " ++ "
+                        ++ show (allocated result)
+                        ++ " /= "
+                        ++ show allocated'
+                    )
 
 -- The share numbers of immutable share data written to the shares of a given
 -- storage index can be retrieved.
