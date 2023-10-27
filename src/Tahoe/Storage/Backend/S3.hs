@@ -12,7 +12,7 @@ import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
 import Conduit (ResourceT, sinkList)
-import Control.Exception (catch, throw, throwIO)
+import Control.Exception (Exception, catch, throw, throwIO)
 import Control.Lens (set, view, (?~), (^.))
 import Control.Monad (unless, void, when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
@@ -40,6 +40,7 @@ import Network.HTTP.Types.Header (renderByteRange)
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets, allocatedSize, shareNumbers),
     AllocationResult (AllocationResult, allocated, alreadyHave),
+    ApplicationVersion,
     CBORSet (CBORSet),
     LeaseSecret (Upload),
     QueryRange,
@@ -53,6 +54,8 @@ import TahoeLAFS.Storage.API (
     TestVector (TestVector),
     TestWriteVectors (TestWriteVectors, test, write),
     UploadSecret,
+    Version (Version),
+    Version1Parameters (Version1Parameters, availableSpace, maximumImmutableShareSize, maximumMutableShareSize),
     WriteVector (..),
  )
 import TahoeLAFS.Storage.Backend (
@@ -146,6 +149,23 @@ newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
     s3BackendState <- newIORef mempty
     pure S3Backend{..}
 
+{- | Something has gone wrong with the backend that does not fit into the
+ generic exceptions defined by tahoe-great-black-swamp.  XXX Some of these
+ probably belong in tahoe-great-black-swamp, actually.
+-}
+data BackendError = MaximumShareSizeExceeded
+    { maximumShareSizeExceededLimit :: Integer
+    , maximumShareSizeExceededGiven :: Integer
+    }
+    deriving (Eq, Show)
+
+instance Exception BackendError
+
+-- The maximum S3 object size is 5 TB.  We currently add no bookkeeping
+-- overhead so the client-supplied share can use all of this.
+maxShareSize :: Integer
+maxShareSize = 5 * 2 ^ (40 :: Integer)
+
 {- | A storage backend which keeps shares in objects in buckets behind and
  S3-compatible API.
 
@@ -159,10 +179,20 @@ newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
   Objects are given S3 keys like `<storage index>/<share number>`.
 -}
 instance Backend S3Backend where
+    version _ = pure $ Version params appVer
+      where
+        params =
+            Version1Parameters
+                { maximumImmutableShareSize = maxShareSize
+                , maximumMutableShareSize = maxShareSize
+                , availableSpace = 2 ^ (50 :: Integer)
+                }
+
+        appVer = "tahoe-s3/0.0.0.0"
+
     createImmutableStorageIndex :: S3Backend -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
     createImmutableStorageIndex (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex secrets (AllocateBuckets{shareNumbers, allocatedSize})
-        -- The maximum S3 object size is 5 BT
-        | allocatedSize > 5 * 1024 * 1024 * 1024 * 1024 = error "blub"
+        | allocatedSize > maxShareSize = throwIO $ MaximumShareSizeExceeded maxShareSize allocatedSize
         | otherwise = withUploadSecret secrets $ \uploadSecret ->
             runResourceT $
                 do
