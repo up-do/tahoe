@@ -25,17 +25,17 @@ import TahoeLAFS.Storage.API (
     AllocationResult,
     CBORSet (..),
     CorruptionDetails,
-    LeaseSecret (Upload),
+    LeaseSecret (..),
     QueryRange,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
     ShareData,
     ShareNumber,
-    SlotSecrets,
     StorageIndex,
     TestWriteVectors (..),
-    UploadSecret,
+    UploadSecret (..),
     Version,
+    WriteEnablerSecret,
     WriteVector (..),
     isUploadSecret,
  )
@@ -65,7 +65,7 @@ class Backend b where
     getImmutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     readImmutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
 
-    readvAndTestvAndWritev :: b -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
+    readvAndTestvAndWritev :: b -> StorageIndex -> Maybe [LeaseSecret] -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readMutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     getMutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     adviseCorruptMutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
@@ -73,13 +73,13 @@ class Backend b where
 writeMutableShare ::
     Backend b =>
     b ->
-    SlotSecrets ->
     StorageIndex ->
     ShareNumber ->
+    WriteEnablerSecret ->
     ShareData ->
     Maybe ByteRanges ->
     IO ()
-writeMutableShare b _secrets storageIndex shareNumber shareData Nothing = do
+writeMutableShare b storageIndex shareNumber writeEnablerSecret shareData Nothing = do
     let testWriteVectors =
             fromList
                 [
@@ -101,7 +101,7 @@ writeMutableShare b _secrets storageIndex shareNumber shareData Nothing = do
                 { testWriteVectors = testWriteVectors
                 , readVector = mempty
                 }
-    result <- readvAndTestvAndWritev b storageIndex vectors
+    result <- readvAndTestvAndWritev b storageIndex (Just [Write writeEnablerSecret]) vectors
     if success result
         then return ()
         else throw WriteRefused

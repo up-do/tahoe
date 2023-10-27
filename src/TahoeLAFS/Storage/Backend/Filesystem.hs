@@ -61,7 +61,7 @@ import TahoeLAFS.Storage.API (
     ShareNumber,
     StorageIndex,
     TestWriteVectors (write),
-    UploadSecret,
+    UploadSecret (..),
     Version (..),
     Version1Parameters (..),
     WriteVector (WriteVector),
@@ -176,6 +176,7 @@ instance Backend FilesystemBackend where
     readvAndTestvAndWritev
         (FilesystemBackend root)
         storageIndex
+        secrets
         (ReadTestWriteVectors testWritev _readv) = do
             -- TODO implement readv and testv parts.
             mapM_ (applyWriteVectors root storageIndex) $ toList testWritev
@@ -252,7 +253,7 @@ allocate ::
     ShareNumber ->
     UploadSecret ->
     IO ()
-allocate (FilesystemBackend root) storageIndex shareNum secret =
+allocate (FilesystemBackend root) storageIndex shareNum (UploadSecret secret) =
     let sharePath = incomingPathOf root storageIndex shareNum
         shareDirectory = takeDirectory sharePath
         createParents = True
@@ -265,7 +266,7 @@ allocate (FilesystemBackend root) storageIndex shareNum secret =
 secretPath = (<> ".secret")
 
 checkUploadSecret :: FilePath -> UploadSecret -> IO ()
-checkUploadSecret sharePath uploadSecret = do
+checkUploadSecret sharePath (UploadSecret uploadSecret) = do
     matches <- constEq uploadSecret <$> readFile (secretPath sharePath)
     unless matches (throwIO IncorrectUploadSecret)
 

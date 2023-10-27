@@ -87,9 +87,9 @@ readImmutableShare backend storage_index share_number qr =
     -- TODO Need to make sure content-range is set in the header otherwise
     liftIO (Backend.readImmutableShare backend storage_index share_number qr)
 
-readvAndTestvAndWritev :: Backend.Backend b => b -> StorageIndex -> ReadTestWriteVectors -> Handler ReadTestWriteResult
-readvAndTestvAndWritev backend storage_index vectors =
-    liftIO (Backend.readvAndTestvAndWritev backend storage_index vectors)
+readvAndTestvAndWritev :: Backend.Backend b => b -> StorageIndex -> Maybe [LeaseSecret] -> ReadTestWriteVectors -> Handler ReadTestWriteResult
+readvAndTestvAndWritev backend storageIndex secrets vectors =
+    liftIO (Backend.readvAndTestvAndWritev backend storageIndex secrets vectors)
 
 readMutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> QueryRange -> Handler ShareData
 readMutableShare backend storage_index share_numbers params =
