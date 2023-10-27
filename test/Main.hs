@@ -268,18 +268,16 @@ alreadyHavePlusAllocatedImm ::
     ShareNumbers -> -- The share numbers to allocate
     Positive Size -> -- The size of each share
     Property
-alreadyHavePlusAllocatedImm makeBackend storageIndex (ShareNumbers shareNumbers) (Positive size) = monadicIO $
-    run $
-        withBackend makeBackend $ \backend -> do
-            result <- createImmutableStorageIndex backend storageIndex (Just [Upload "hello world"]) $ AllocateBuckets shareNumbers size
-            when (alreadyHave result ++ allocated result /= shareNumbers) $
-                fail
-                    ( show (alreadyHave result)
-                        ++ " ++ "
-                        ++ show (allocated result)
-                        ++ " /= "
-                        ++ show shareNumbers
-                    )
+alreadyHavePlusAllocatedImm makeBackend storageIndex (ShareNumbers shareNumbers) (Positive size) = monadicIO . run . withBackend makeBackend $ \backend -> do
+    result <- createImmutableStorageIndex backend storageIndex (Just [Upload "hello world"]) $ AllocateBuckets shareNumbers size
+    when (alreadyHave result ++ allocated result /= shareNumbers) $
+        fail
+            ( show (alreadyHave result)
+                ++ " ++ "
+                ++ show (allocated result)
+                ++ " /= "
+                ++ show shareNumbers
+            )
 
 -- The share numbers of immutable share data written to the shares of a given
 -- storage index can be retrieved.
@@ -290,18 +288,16 @@ immutableWriteAndEnumerateShares ::
     ShareNumbers ->
     B.ByteString ->
     Property
-immutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
-    let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-        size = fromIntegral (B.length shareSeed)
-        allocate = AllocateBuckets shareNumbers size
-    run $
-        withBackend makeBackend $ \backend -> do
-            void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
-            writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) (zip shareNumbers permutedShares)
-            readShareNumbers <- getImmutableShareNumbers backend storageIndex
-            when (readShareNumbers /= (CBORSet . Set.fromList $ shareNumbers)) $
-                fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
+immutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO . run . withBackend makeBackend $ \backend -> do
+    void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
+    writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) (zip shareNumbers permutedShares)
+    readShareNumbers <- getImmutableShareNumbers backend storageIndex
+    when (readShareNumbers /= (CBORSet . Set.fromList $ shareNumbers)) $
+        fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
   where
+    permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
+    size = fromIntegral (B.length shareSeed)
+    allocate = AllocateBuckets shareNumbers size
     uploadSecret = Just [Upload "hello"]
 
 -- Immutable share data written to the shares of a given storage index cannot
@@ -313,18 +309,16 @@ immutableWriteAndRewriteShare ::
     ShareNumbers ->
     B.ByteString ->
     Property
-immutableWriteAndRewriteShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
-    let size = fromIntegral (B.length shareSeed)
-        allocate = AllocateBuckets shareNumbers size
-        aShareNumber = head shareNumbers
-        aShare = permuteShare shareSeed aShareNumber
-    run $
-        withBackend makeBackend $ \backend -> do
-            void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
-            let write = writeImmutableShare backend storageIndex aShareNumber uploadSecret aShare Nothing
-            write
-            write `shouldThrow` (== ImmutableShareAlreadyWritten)
+immutableWriteAndRewriteShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO . run . withBackend makeBackend $ \backend -> do
+    void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
+    let write = writeImmutableShare backend storageIndex aShareNumber uploadSecret aShare Nothing
+    write
+    write `shouldThrow` (== ImmutableShareAlreadyWritten)
   where
+    size = fromIntegral (B.length shareSeed)
+    allocate = AllocateBuckets shareNumbers size
+    aShareNumber = head shareNumbers
+    aShare = permuteShare shareSeed aShareNumber
     uploadSecret = Just [Upload "hello"]
 
 -- Immutable share data written to the shares of a given storage index can be
@@ -337,18 +331,16 @@ immutableWriteAndReadShare ::
     ShareNumbers ->
     B.ByteString ->
     Property
-immutableWriteAndReadShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
-    let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-    let size = fromIntegral (B.length shareSeed)
-    let allocate = AllocateBuckets shareNumbers size
-    run $
-        withBackend makeBackend $ \backend -> do
-            void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
-            writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) (zip shareNumbers permutedShares)
-            readShares' <- mapM (\sn -> readImmutableShare backend storageIndex sn Nothing) shareNumbers
-            when (permutedShares /= readShares') $
-                fail (show permutedShares ++ " /= " ++ show readShares')
+immutableWriteAndReadShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO . run . withBackend makeBackend $ \backend -> do
+    void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
+    writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) (zip shareNumbers permutedShares)
+    readShares' <- mapM (\sn -> readImmutableShare backend storageIndex sn Nothing) shareNumbers
+    when (permutedShares /= readShares') $
+        fail (show permutedShares ++ " /= " ++ show readShares')
   where
+    permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
+    size = fromIntegral (B.length shareSeed)
+    allocate = AllocateBuckets shareNumbers size
     uploadSecret = Just [Upload "hello"]
 
 -- The share numbers of mutable share data written to the shares of a given
@@ -360,14 +352,13 @@ mutableWriteAndEnumerateShares ::
     ShareNumbers ->
     B.ByteString ->
     Property
-mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
-    let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-    run $
-        withBackend makeBackend $ \backend -> do
-            writeShares (writeMutableShare backend nullSecrets storageIndex) (zip shareNumbers permutedShares)
-            (CBORSet readShareNumbers) <- getMutableShareNumbers backend storageIndex
-            when (readShareNumbers /= Set.fromList shareNumbers) $
-                fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
+mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO . run . withBackend makeBackend $ \backend -> do
+    writeShares (writeMutableShare backend nullSecrets storageIndex) (zip shareNumbers permutedShares)
+    (CBORSet readShareNumbers) <- getMutableShareNumbers backend storageIndex
+    when (readShareNumbers /= Set.fromList shareNumbers) $
+        fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
+  where
+    permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
 
 data MutableWriteExample = MutableWriteExample
     { mweShareNumber :: ShareNumber
@@ -411,11 +402,9 @@ mutableWriteAndReadShare ::
     StorageIndex ->
     MutableWriteExample ->
     Property
-mutableWriteAndReadShare makeBackend storageIndex MutableWriteExample{..} = monadicIO $ do
-    run $
-        withBackend makeBackend $ \backend -> do
-            mapM_ (uncurry $ writeMutableShareChunk backend nullSecrets storageIndex mweShareNumber) (zip mweShareData (offsetsFor mweShareData))
-            readMutableShare backend storageIndex mweShareNumber mweReadRange `shouldReturn` shareRange
+mutableWriteAndReadShare makeBackend storageIndex MutableWriteExample{..} = monadicIO . run . withBackend makeBackend $ \backend -> do
+    mapM_ (uncurry $ writeMutableShareChunk backend nullSecrets storageIndex mweShareNumber) (zip mweShareData (offsetsFor mweShareData))
+    readMutableShare backend storageIndex mweShareNumber mweReadRange `shouldReturn` shareRange
   where
     offsetsFor ranges = scanl (+) 0 $ map (fromIntegral . B.length) ranges
 
