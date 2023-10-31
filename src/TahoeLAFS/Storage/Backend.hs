@@ -65,7 +65,18 @@ class Backend b where
     getImmutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     readImmutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
 
-    readvAndTestvAndWritev :: b -> StorageIndex -> Maybe [LeaseSecret] -> ReadTestWriteVectors -> IO ReadTestWriteResult
+    -- | Read some ranges of all shares held and/or, if test conditions are
+    -- met, overwrite some ranges of some shares.
+    readvAndTestvAndWritev ::
+        b ->
+        -- | The storage index at which to operate.
+        StorageIndex ->
+        -- | A shared secret which the backend can use to authorize the writes.
+        WriteEnablerSecret ->
+        -- | The reads, tests, and writes to perform.
+        ReadTestWriteVectors ->
+        IO ReadTestWriteResult
+
     readMutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     getMutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     adviseCorruptMutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
@@ -101,7 +112,7 @@ writeMutableShare b storageIndex shareNumber writeEnablerSecret shareData Nothin
                 { testWriteVectors = testWriteVectors
                 , readVector = mempty
                 }
-    result <- readvAndTestvAndWritev b storageIndex (Just [Write writeEnablerSecret]) vectors
+    result <- readvAndTestvAndWritev b storageIndex writeEnablerSecret vectors
     if success result
         then return ()
         else throw WriteRefused

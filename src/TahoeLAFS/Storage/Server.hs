@@ -7,6 +7,7 @@ module TahoeLAFS.Storage.Server (
 import Control.Exception (
     Exception,
     throw,
+    throwIO,
  )
 import Control.Monad.IO.Class (
     liftIO,
@@ -39,7 +40,7 @@ import TahoeLAFS.Storage.API (
     AllocationResult (..),
     CBORSet (..),
     CorruptionDetails,
-    LeaseSecret,
+    LeaseSecret (Upload, Write),
     QueryRange,
     ReadTestWriteResult (..),
     ReadTestWriteVectors,
@@ -48,8 +49,10 @@ import TahoeLAFS.Storage.API (
     StorageAPI,
     StorageIndex,
     Version (..),
+    WriteEnablerSecret (WriteEnablerSecret),
     api,
  )
+import TahoeLAFS.Storage.Backend (WriteImmutableError (MissingUploadSecret))
 import qualified TahoeLAFS.Storage.Backend as Backend
 import TahoeLAFS.Storage.Backend.Filesystem (
     FilesystemBackend (FilesystemBackend),
@@ -88,8 +91,12 @@ readImmutableShare backend storage_index share_number qr =
     liftIO (Backend.readImmutableShare backend storage_index share_number qr)
 
 readvAndTestvAndWritev :: Backend.Backend b => b -> StorageIndex -> Maybe [LeaseSecret] -> ReadTestWriteVectors -> Handler ReadTestWriteResult
-readvAndTestvAndWritev backend storageIndex secrets vectors =
-    liftIO (Backend.readvAndTestvAndWritev backend storageIndex secrets vectors)
+readvAndTestvAndWritev _ _ Nothing _ = throw MissingUploadSecret
+readvAndTestvAndWritev _ _ (Just []) _ = throw MissingUploadSecret
+readvAndTestvAndWritev backend storageIndex (Just (Write secret : _)) vectors =
+    liftIO (Backend.readvAndTestvAndWritev backend storageIndex secret vectors)
+readvAndTestvAndWritev backend storageIndex (Just (_ : ss)) vectors =
+    readvAndTestvAndWritev backend storageIndex (Just ss) vectors
 
 readMutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> QueryRange -> Handler ShareData
 readMutableShare backend storage_index share_numbers params =

@@ -176,9 +176,10 @@ instance Backend FilesystemBackend where
     readvAndTestvAndWritev
         (FilesystemBackend root)
         storageIndex
-        secrets
+        _secrets
         (ReadTestWriteVectors testWritev _readv) = do
             -- TODO implement readv and testv parts.
+            -- TODO implement secrets
             mapM_ (applyWriteVectors root storageIndex) $ toList testWritev
             return
                 ReadTestWriteResult

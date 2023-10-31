@@ -45,6 +45,7 @@ import TahoeLAFS.Storage.API (
     UploadSecret (UploadSecret),
     Version (..),
     Version1Parameters (..),
+    WriteEnablerSecret,
     WriteVector (..),
     shareNumbers,
  )
@@ -188,7 +189,7 @@ instance Backend (IORef MemoryBackend) where
                 maybe [] keys $
                     lookup storageIndex shares'
 
-    readvAndTestvAndWritev :: IORef MemoryBackend -> StorageIndex -> Maybe [LeaseSecret] -> ReadTestWriteVectors -> IO ReadTestWriteResult
+    readvAndTestvAndWritev :: IORef MemoryBackend -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev
         backend
         storageIndex
