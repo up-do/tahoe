@@ -413,6 +413,7 @@ newtype WriteEnablerSecret = WriteEnablerSecret B.ByteString
 
 data LeaseSecret = Renew B.ByteString | Cancel B.ByteString | Upload UploadSecret | Write WriteEnablerSecret
 
+isUploadSecret :: LeaseSecret -> Bool
 isUploadSecret (Upload _) = True
 isUploadSecret _ = False
 

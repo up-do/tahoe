@@ -264,12 +264,22 @@ allocate (FilesystemBackend root) storageIndex shareNum (UploadSecret secret) =
             writeFile sharePath ""
             return ()
 
+{- | Given the path of an immutable share, construct a path to use to hold the
+ upload secret for that share.
+-}
+secretPath :: FilePath -> FilePath
 secretPath = (<> ".secret")
 
+{- | Compare the upload secret for an immutable share at a given path to a
+ given upload secret and produce unit if and only if they are equal.
+
+ If they are not, throw IncorrectUploadSecret.
+-}
 checkUploadSecret :: FilePath -> UploadSecret -> IO ()
 checkUploadSecret sharePath (UploadSecret uploadSecret) = do
     matches <- constEq uploadSecret <$> readFile (secretPath sharePath)
     unless matches (throwIO IncorrectUploadSecret)
 
+-- | Partition a list based on the result of a monadic predicate.
 partitionM :: Monad m => (a -> m Bool) -> [a] -> m ([a], [a])
 partitionM pred' items = bimap (fst <$>) (fst <$>) . Data.List.partition snd . zip items <$> mapM pred' items

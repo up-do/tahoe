@@ -34,7 +34,6 @@ import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets),
     AllocationResult (..),
     CBORSet (..),
-    LeaseSecret,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
     ShareData,
@@ -47,7 +46,6 @@ import TahoeLAFS.Storage.API (
     Version1Parameters (..),
     WriteEnablerSecret,
     WriteVector (..),
-    shareNumbers,
  )
 import TahoeLAFS.Storage.Backend (
     Backend (..),

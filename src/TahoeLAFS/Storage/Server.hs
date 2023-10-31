@@ -7,7 +7,6 @@ module TahoeLAFS.Storage.Server (
 import Control.Exception (
     Exception,
     throw,
-    throwIO,
  )
 import Control.Monad.IO.Class (
     liftIO,
@@ -40,7 +39,7 @@ import TahoeLAFS.Storage.API (
     AllocationResult (..),
     CBORSet (..),
     CorruptionDetails,
-    LeaseSecret (Upload, Write),
+    LeaseSecret (Write),
     QueryRange,
     ReadTestWriteResult (..),
     ReadTestWriteVectors,
@@ -49,7 +48,6 @@ import TahoeLAFS.Storage.API (
     StorageAPI,
     StorageIndex,
     Version (..),
-    WriteEnablerSecret (WriteEnablerSecret),
     api,
  )
 import TahoeLAFS.Storage.Backend (WriteImmutableError (MissingUploadSecret))
