@@ -17,16 +17,7 @@ import Data.IORef (
     newIORef,
     readIORef,
  )
-import Data.Map.Strict (
-    Map,
-    adjust,
-    fromList,
-    insert,
-    keys,
-    lookup,
-    map,
-    toList,
- )
+import Data.Map.Merge.Strict (merge, preserveMissing, zipWithAMatched)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing)
 import qualified Data.Set as Set
@@ -44,7 +35,7 @@ import TahoeLAFS.Storage.API (
     UploadSecret (UploadSecret),
     Version (..),
     Version1Parameters (..),
-    WriteEnablerSecret,
+    WriteEnablerSecret (WriteEnablerSecret),
     WriteVector (..),
  )
 import TahoeLAFS.Storage.Backend (
@@ -61,13 +52,13 @@ data Share = Complete ShareData | Uploading UploadSecret ShareData
 
 data Bucket = Bucket
     { bucketSize :: Size
-    , bucketShares :: Map ShareNumber Share
+    , bucketShares :: Map.Map ShareNumber Share
     }
 
-type ShareStorage = Map StorageIndex (Map ShareNumber ShareData)
+type ShareStorage = Map.Map StorageIndex (Map.Map ShareNumber ShareData)
 
 data MemoryBackend = MemoryBackend
-    { memoryBackendBuckets :: Map StorageIndex Bucket -- Completely or partially written immutable share data
+    { memoryBackendBuckets :: Map.Map StorageIndex Bucket -- Completely or partially written immutable share data
     , mutableShares :: ShareStorage -- Completely written mutable shares
     }
 
@@ -125,7 +116,7 @@ abort ::
     (MemoryBackend, ())
 abort storageIndex shareNumber (UploadSecret abortSecret) b@MemoryBackend{memoryBackendBuckets} = (b{memoryBackendBuckets = updated memoryBackendBuckets}, ())
   where
-    updated :: Map StorageIndex Bucket -> Map StorageIndex Bucket
+    updated :: Map.Map StorageIndex Bucket -> Map.Map StorageIndex Bucket
     updated = Map.adjust abortIt storageIndex
 
     abortIt :: Bucket -> Bucket
@@ -184,32 +175,24 @@ instance Backend (IORef MemoryBackend) where
         shares' <- mutableShares <$> readIORef backend
         return $
             CBORSet . Set.fromList $
-                maybe [] keys $
-                    lookup storageIndex shares'
+                maybe [] Map.keys $
+                    Map.lookup storageIndex shares'
 
     readvAndTestvAndWritev :: IORef MemoryBackend -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev
         backend
         storageIndex
-        _secrets
+        (WriteEnablerSecret secret)
         (ReadTestWriteVectors testWritev _readv) = do
             -- TODO implement readv and testv parts.
             -- TODO implement secret check
-            modifyIORef backend $ \m@MemoryBackend{mutableShares} -> m{mutableShares = addShares storageIndex (shares' testWritev) mutableShares}
+            -- TODO handle offsets correctly
+            modifyIORef backend $ \m@MemoryBackend{mutableShares} -> m{mutableShares = addShares storageIndex mutableShares (Map.map write testWritev)}
             return
                 ReadTestWriteResult
                     { success = True
                     , readData = mempty
                     }
-          where
-            shares' ::
-                Map ShareNumber TestWriteVectors ->
-                [(ShareNumber, ShareData)]
-            shares' testWritevs =
-                [ (shareNumber, shareData writev)
-                | (shareNumber, testWritev') <- toList testWritevs
-                , writev <- write testWritev'
-                ]
 
     createImmutableStorageIndex backend storageIndex secrets (AllocateBuckets shareNums size) =
         withUploadSecret secrets $ \secret ->
@@ -231,9 +214,9 @@ instance Backend (IORef MemoryBackend) where
 
     readImmutableShare backend storageIndex shareNum _qr = do
         buckets <- memoryBackendBuckets <$> readIORef backend
-        case lookup storageIndex buckets of
+        case Map.lookup storageIndex buckets of
             Nothing -> pure mempty
-            Just bucket -> case lookup shareNum (bucketShares bucket) of
+            Just bucket -> case Map.lookup shareNum (bucketShares bucket) of
                 Just (Complete shareData) -> pure shareData
                 _ -> pure mempty
 
@@ -241,24 +224,22 @@ totalShareSize :: MemoryBackend -> IO Size
 totalShareSize backend = do
     let imm = memoryBackendBuckets backend
         mut = mutableShares backend
-    let immSize = sum $ map bucketTotalSize imm
-    let mutSize = sum $ map length mut
+    let immSize = sum $ Map.map bucketTotalSize imm
+    let mutSize = sum $ Map.map length mut
     return $ toInteger $ immSize + fromIntegral mutSize
 
 bucketTotalSize :: Bucket -> Size
 bucketTotalSize Bucket{bucketSize, bucketShares} = bucketSize * fromIntegral (Map.size bucketShares)
 
-addShares :: StorageIndex -> [(ShareNumber, ShareData)] -> ShareStorage -> ShareStorage
-addShares _storageIndex [] shareStorage = shareStorage
-addShares storageIndex ((shareNumber, shareData) : rest) shareStorage =
-    let added = case lookup storageIndex shareStorage of
-            Nothing ->
-                insert storageIndex (fromList [(shareNumber, shareData)]) shareStorage
-            Just _shares ->
-                adjust addShare' storageIndex shareStorage
-              where
-                addShare' = insert shareNumber shareData
-     in addShares storageIndex rest added
+addShare :: StorageIndex -> ShareNumber -> [WriteVector] -> ShareStorage -> ShareStorage
+addShare storageIndex shareNum writev =
+    Map.insertWith f storageIndex (Map.singleton shareNum (mconcat $ shareData <$> writev))
+  where
+    f :: Map.Map ShareNumber ShareData -> Map.Map ShareNumber ShareData -> Map.Map ShareNumber ShareData
+    f = merge preserveMissing preserveMissing (zipWithAMatched $ \_key _old new -> pure new)
+
+addShares :: StorageIndex -> ShareStorage -> Map.Map ShareNumber [WriteVector] -> ShareStorage
+addShares storageIndex = Map.foldrWithKey (addShare storageIndex)
 
 memoryBackend :: IO (IORef MemoryBackend)
 memoryBackend = do
