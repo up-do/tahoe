@@ -180,7 +180,7 @@ instance Backend FilesystemBackend where
         (ReadTestWriteVectors testWritev _readv) = do
             -- TODO implement readv and testv parts.
             -- TODO implement secrets
-            mapM_ (applyWriteVectors root storageIndex) $ toList testWritev
+            mapM_ applyWriteVectors $ toList testWritev
             return
                 ReadTestWriteResult
                     { success = True
@@ -188,34 +188,30 @@ instance Backend FilesystemBackend where
                     }
           where
             applyWriteVectors ::
-                FilePath ->
-                StorageIndex ->
                 (ShareNumber, TestWriteVectors) ->
                 IO ()
-            applyWriteVectors _root _storageIndex (shareNumber', testWriteVectors) =
-                mapM_ (applyShareWrite root storageIndex shareNumber') (write testWriteVectors)
+            applyWriteVectors (shareNumber', testWriteVectors) =
+                mapM_ (applyShareWrite shareNumber') (write testWriteVectors)
 
             applyShareWrite ::
-                FilePath ->
-                StorageIndex ->
                 ShareNumber ->
                 WriteVector ->
                 IO ()
-            applyShareWrite _root _storageIndex shareNumber' (WriteVector offset shareData) =
-                let sharePath = pathOfShare root storageIndex shareNumber'
-                    createParents = True
-                 in do
-                        createDirectoryIfMissing createParents $ takeDirectory sharePath
-                        withBinaryFile sharePath ReadWriteMode (writeAtPosition offset shareData)
+            applyShareWrite shareNumber' (WriteVector offset shareData) = do
+                createDirectoryIfMissing createParents $ takeDirectory sharePath
+                withBinaryFile sharePath ReadWriteMode (writeAtPosition offset shareData)
               where
-                writeAtPosition ::
-                    Offset ->
-                    ShareData ->
-                    Handle ->
-                    IO ()
-                writeAtPosition _offset shareData' handle = do
-                    hSeek handle AbsoluteSeek offset
-                    hPut handle shareData'
+                sharePath = pathOfShare root storageIndex shareNumber'
+                createParents = True
+
+            writeAtPosition ::
+                Offset ->
+                ShareData ->
+                Handle ->
+                IO ()
+            writeAtPosition offset shareData' handle = do
+                hSeek handle AbsoluteSeek offset
+                hPut handle shareData'
 
 -- Does the given backend have the complete share indicated?
 haveShare ::
