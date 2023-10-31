@@ -61,7 +61,7 @@ import TahoeLAFS.Storage.API (
     ShareNumber,
     StorageIndex,
     TestWriteVectors (write),
-    UploadSecret,
+    UploadSecret (..),
     Version (..),
     Version1Parameters (..),
     WriteVector (WriteVector),
@@ -176,8 +176,10 @@ instance Backend FilesystemBackend where
     readvAndTestvAndWritev
         (FilesystemBackend root)
         storageIndex
+        _secrets
         (ReadTestWriteVectors testWritev _readv) = do
             -- TODO implement readv and testv parts.
+            -- TODO implement secrets
             mapM_ (applyWriteVectors root storageIndex) $ toList testWritev
             return
                 ReadTestWriteResult
@@ -252,7 +254,7 @@ allocate ::
     ShareNumber ->
     UploadSecret ->
     IO ()
-allocate (FilesystemBackend root) storageIndex shareNum secret =
+allocate (FilesystemBackend root) storageIndex shareNum (UploadSecret secret) =
     let sharePath = incomingPathOf root storageIndex shareNum
         shareDirectory = takeDirectory sharePath
         createParents = True
@@ -262,12 +264,22 @@ allocate (FilesystemBackend root) storageIndex shareNum secret =
             writeFile sharePath ""
             return ()
 
+{- | Given the path of an immutable share, construct a path to use to hold the
+ upload secret for that share.
+-}
+secretPath :: FilePath -> FilePath
 secretPath = (<> ".secret")
 
+{- | Compare the upload secret for an immutable share at a given path to a
+ given upload secret and produce unit if and only if they are equal.
+
+ If they are not, throw IncorrectUploadSecret.
+-}
 checkUploadSecret :: FilePath -> UploadSecret -> IO ()
-checkUploadSecret sharePath uploadSecret = do
+checkUploadSecret sharePath (UploadSecret uploadSecret) = do
     matches <- constEq uploadSecret <$> readFile (secretPath sharePath)
     unless matches (throwIO IncorrectUploadSecret)
 
+-- | Partition a list based on the result of a monadic predicate.
 partitionM :: Monad m => (a -> m Bool) -> [a] -> m ([a], [a])
 partitionM pred' items = bimap (fst <$>) (fst <$>) . Data.List.partition snd . zip items <$> mapM pred' items

@@ -41,11 +41,11 @@ import TahoeLAFS.Storage.API (
     Size,
     StorageIndex,
     TestWriteVectors (..),
-    UploadSecret,
+    UploadSecret (UploadSecret),
     Version (..),
     Version1Parameters (..),
+    WriteEnablerSecret,
     WriteVector (..),
-    shareNumbers,
  )
 import TahoeLAFS.Storage.Backend (
     Backend (..),
@@ -57,13 +57,12 @@ import Prelude hiding (
     map,
  )
 
-data Share = Complete ShareData | Uploading UploadSecret ShareData deriving (Show)
+data Share = Complete ShareData | Uploading UploadSecret ShareData
 
 data Bucket = Bucket
     { bucketSize :: Size
     , bucketShares :: Map ShareNumber Share
     }
-    deriving (Show)
 
 type ShareStorage = Map StorageIndex (Map ShareNumber ShareData)
 
@@ -124,7 +123,7 @@ abort ::
     UploadSecret ->
     MemoryBackend ->
     (MemoryBackend, ())
-abort storageIndex shareNumber abortSecret b@MemoryBackend{memoryBackendBuckets} = (b{memoryBackendBuckets = updated memoryBackendBuckets}, ())
+abort storageIndex shareNumber (UploadSecret abortSecret) b@MemoryBackend{memoryBackendBuckets} = (b{memoryBackendBuckets = updated memoryBackendBuckets}, ())
   where
     updated :: Map StorageIndex Bucket -> Map StorageIndex Bucket
     updated = Map.adjust abortIt storageIndex
@@ -133,17 +132,17 @@ abort storageIndex shareNumber abortSecret b@MemoryBackend{memoryBackendBuckets}
     abortIt bucket@Bucket{bucketShares} = bucket{bucketShares = Map.update abortIt' shareNumber bucketShares}
 
     abortIt' :: Share -> Maybe Share
-    abortIt' (Uploading existingSecret _) = if constEq existingSecret abortSecret then Nothing else throw IncorrectUploadSecret
+    abortIt' (Uploading (UploadSecret existingSecret) _) = if constEq existingSecret abortSecret then Nothing else throw IncorrectUploadSecret
     abortIt' _ = throw ImmutableShareAlreadyWritten
 
 writeImm ::
     StorageIndex ->
     ShareNumber ->
-    B.ByteString ->
+    UploadSecret ->
     B.ByteString ->
     MemoryBackend ->
     (MemoryBackend, ())
-writeImm storageIndex shareNum uploadSecret newData b@MemoryBackend{memoryBackendBuckets}
+writeImm storageIndex shareNum (UploadSecret uploadSecret) newData b@MemoryBackend{memoryBackendBuckets}
     | isNothing share = throw ShareNotAllocated
     | otherwise = (b{memoryBackendBuckets = updated}, ())
   where
@@ -154,9 +153,9 @@ writeImm storageIndex shareNum uploadSecret newData b@MemoryBackend{memoryBacken
 
     writeToShare :: Share -> Share
     writeToShare (Complete _) = throw ImmutableShareAlreadyWritten
-    writeToShare (Uploading existingSecret existingData)
+    writeToShare (Uploading (UploadSecret existingSecret) existingData)
         | authorized =
-            (if Just True == (complete existingData newData <$> size) then Complete else Uploading existingSecret) (existingData <> newData)
+            (if Just True == (complete existingData newData <$> size) then Complete else Uploading (UploadSecret existingSecret)) (existingData <> newData)
         | otherwise = throw IncorrectUploadSecret
       where
         authorized = constEq existingSecret uploadSecret
@@ -188,12 +187,14 @@ instance Backend (IORef MemoryBackend) where
                 maybe [] keys $
                     lookup storageIndex shares'
 
-    readvAndTestvAndWritev :: IORef MemoryBackend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
+    readvAndTestvAndWritev :: IORef MemoryBackend -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev
         backend
         storageIndex
+        _secrets
         (ReadTestWriteVectors testWritev _readv) = do
             -- TODO implement readv and testv parts.
+            -- TODO implement secret check
             modifyIORef backend $ \m@MemoryBackend{mutableShares} -> m{mutableShares = addShares storageIndex (shares' testWritev) mutableShares}
             return
                 ReadTestWriteResult

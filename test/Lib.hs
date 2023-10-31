@@ -38,7 +38,6 @@ import Test.QuickCheck.Instances.ByteString ()
 import TahoeLAFS.Storage.API (
     ShareNumber (..),
     StorageIndex,
-    shareNumber,
  )
 
 gen10String :: Gen String

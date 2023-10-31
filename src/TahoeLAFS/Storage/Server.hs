@@ -39,7 +39,7 @@ import TahoeLAFS.Storage.API (
     AllocationResult (..),
     CBORSet (..),
     CorruptionDetails,
-    LeaseSecret,
+    LeaseSecret (Write),
     QueryRange,
     ReadTestWriteResult (..),
     ReadTestWriteVectors,
@@ -50,6 +50,7 @@ import TahoeLAFS.Storage.API (
     Version (..),
     api,
  )
+import TahoeLAFS.Storage.Backend (WriteImmutableError (MissingUploadSecret))
 import qualified TahoeLAFS.Storage.Backend as Backend
 import TahoeLAFS.Storage.Backend.Filesystem (
     FilesystemBackend (FilesystemBackend),
@@ -87,9 +88,13 @@ readImmutableShare backend storage_index share_number qr =
     -- TODO Need to make sure content-range is set in the header otherwise
     liftIO (Backend.readImmutableShare backend storage_index share_number qr)
 
-readvAndTestvAndWritev :: Backend.Backend b => b -> StorageIndex -> ReadTestWriteVectors -> Handler ReadTestWriteResult
-readvAndTestvAndWritev backend storage_index vectors =
-    liftIO (Backend.readvAndTestvAndWritev backend storage_index vectors)
+readvAndTestvAndWritev :: Backend.Backend b => b -> StorageIndex -> Maybe [LeaseSecret] -> ReadTestWriteVectors -> Handler ReadTestWriteResult
+readvAndTestvAndWritev _ _ Nothing _ = throw MissingUploadSecret
+readvAndTestvAndWritev _ _ (Just []) _ = throw MissingUploadSecret
+readvAndTestvAndWritev backend storageIndex (Just (Write secret : _)) vectors =
+    liftIO (Backend.readvAndTestvAndWritev backend storageIndex secret vectors)
+readvAndTestvAndWritev backend storageIndex (Just (_ : ss)) vectors =
+    readvAndTestvAndWritev backend storageIndex (Just ss) vectors
 
 readMutableShare :: Backend.Backend b => b -> StorageIndex -> ShareNumber -> QueryRange -> Handler ShareData
 readMutableShare backend storage_index share_numbers params =

@@ -33,12 +33,12 @@ module TahoeLAFS.Storage.API (
     QueryRange,
     TestVector (TestVector),
     ReadResult,
-    CorruptionDetails (CorruptionDetails),
-    SlotSecrets (..),
+    CorruptionDetails (..),
     TestOperator (..),
     StorageAPI,
     LeaseSecret (..),
-    UploadSecret,
+    UploadSecret (..),
+    WriteEnablerSecret (..),
     isUploadSecret,
     api,
     renewSecretLength,
@@ -408,10 +408,12 @@ instance ToHttpApiData ByteRanges where
     toUrlPiece _ = error "Cannot serialize ByteRanges to URL piece"
     toQueryParam _ = error "Cannot serialize ByteRanges to query params"
 
-type UploadSecret = B.ByteString
+newtype UploadSecret = UploadSecret B.ByteString
+newtype WriteEnablerSecret = WriteEnablerSecret B.ByteString
 
-data LeaseSecret = Renew B.ByteString | Cancel B.ByteString | Upload UploadSecret | Write B.ByteString
+data LeaseSecret = Renew B.ByteString | Cancel B.ByteString | Upload UploadSecret | Write WriteEnablerSecret
 
+isUploadSecret :: LeaseSecret -> Bool
 isUploadSecret (Upload _) = True
 isUploadSecret _ = False
 
@@ -422,8 +424,8 @@ instance FromHttpApiData LeaseSecret where
             case key of
                 "lease-renew-secret" -> bimap T.pack Renew $ Base64.decode val
                 "lease-cancel-secret" -> bimap T.pack Cancel $ Base64.decode val
-                "upload-secret" -> bimap T.pack Upload $ Base64.decode val
-                "write-enabler" -> bimap T.pack Write $ Base64.decode val
+                "upload-secret" -> bimap T.pack (Upload . UploadSecret) $ Base64.decode val
+                "write-enabler" -> bimap T.pack (Write . WriteEnablerSecret) $ Base64.decode val
                 _ -> Left $ T.concat ["Cannot interpret secret: ", T.pack . show $ key]
 
     parseUrlPiece _ = Left "Cannot parse LeaseSecret from URL piece"
@@ -440,8 +442,8 @@ instance FromHttpApiData [LeaseSecret] where
 instance ToHttpApiData LeaseSecret where
     toHeader (Renew bs) = "lease-renew-secret " <> Base64.encode bs
     toHeader (Cancel bs) = "lease-cancel-secret " <> Base64.encode bs
-    toHeader (Upload bs) = "lease-cancel-secret " <> Base64.encode bs
-    toHeader (Write bs) = "write-enabler " <> Base64.encode bs
+    toHeader (Upload (UploadSecret bs)) = "lease-cancel-secret " <> Base64.encode bs
+    toHeader (Write (WriteEnablerSecret bs)) = "write-enabler " <> Base64.encode bs
 
     toUrlPiece _ = error "Cannot serialize LeaseSecret to URL piece"
     toQueryParam _ = error "Cannot serialize LeaseSecret to query params"
@@ -494,7 +496,7 @@ type ReadImmutableShareData = "immutable" :> Capture "storage_index" StorageInde
 
 -- POST .../v1/mutable/:storage_index/read-test-write
 -- General purpose read-test-and-write operation.
-type ReadTestWrite = "mutable" :> Capture "storage_index" StorageIndex :> "read-test-write" :> ReqBody '[CBOR, JSON] ReadTestWriteVectors :> Post '[CBOR, JSON] ReadTestWriteResult
+type ReadTestWrite = "mutable" :> Capture "storage_index" StorageIndex :> "read-test-write" :> Authz :> ReqBody '[CBOR, JSON] ReadTestWriteVectors :> Post '[CBOR, JSON] ReadTestWriteResult
 
 -- GET /v1/mutable/:storage_index/:share_number
 -- Read from a mutable storage index
@@ -620,28 +622,6 @@ data WriteVector = WriteVector
 
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise WriteVector
-
--- XXX These fields moved to an HTTP Header, this type is probably not useful
--- anymore?
-data SlotSecrets = SlotSecrets
-    { writeEnabler :: WriteEnablerSecret
-    , leaseRenew :: LeaseRenewSecret
-    , leaseCancel :: LeaseCancelSecret
-    }
-    deriving (Show, Eq, Generic)
-
--- XXX This derived instance is surely not compatible with Tahoe-LAFS.
-instance Serialise SlotSecrets
-
-instance ToJSON SlotSecrets where
-    toJSON = genericToJSON tahoeJSONOptions
-
-instance FromJSON SlotSecrets where
-    parseJSON = genericParseJSON tahoeJSONOptions
-
-type WriteEnablerSecret = String
-type LeaseRenewSecret = String
-type LeaseCancelSecret = String
 
 api :: Proxy StorageAPI
 api = Proxy

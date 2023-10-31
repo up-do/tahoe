@@ -22,20 +22,16 @@ import Test.Hspec (
 import qualified Data.ByteString as BS
 
 import Test.QuickCheck (
-    Arbitrary (arbitrary),
     forAll,
     property,
-    suchThatMap,
  )
 
 import TahoeLAFS.Storage.API (
-    ShareNumber,
+    ShareNumber (ShareNumber),
     shareNumber,
     toInteger,
  )
 
--- We also get the Arbitrary ShareNumber instance from here.
--- We also get the Arbitrary ShareNumber instance from here.
 import Lib (
     b32decode,
     b32encode,
@@ -49,9 +45,6 @@ import TahoeLAFS.Storage.Backend.Filesystem (
     pathOfShare,
     storageStartSegment,
  )
-
-instance Arbitrary ShareNumber where
-    arbitrary = suchThatMap positiveIntegers shareNumber
 
 spec :: Spec
 spec = do
@@ -75,8 +68,8 @@ spec = do
                 forAll
                     genStorageIndex
                     ( \storageIndex shareNum ->
-                        pathOfShare "/foo" storageIndex shareNum
-                            `shouldBe` printf "/foo/shares/%s/%s/%d" (take 2 storageIndex) storageIndex (toInteger shareNum)
+                        pathOfShare "/foo" storageIndex (ShareNumber shareNum)
+                            `shouldBe` printf "/foo/shares/%s/%s/%d" (take 2 storageIndex) storageIndex shareNum
                     )
 
     describe "incomingPathOf" $
@@ -85,8 +78,8 @@ spec = do
                 forAll
                     genStorageIndex
                     ( \storageIndex shareNum ->
-                        incomingPathOf "/foo" storageIndex shareNum
-                            `shouldBe` printf "/foo/shares/incoming/%s/%s/%d" (take 2 storageIndex) storageIndex (toInteger shareNum)
+                        incomingPathOf "/foo" storageIndex (ShareNumber shareNum)
+                            `shouldBe` printf "/foo/shares/incoming/%s/%s/%d" (take 2 storageIndex) storageIndex shareNum
                     )
 
     describe "incomingPathOf vs pathOfShare" $
@@ -95,8 +88,8 @@ spec = do
                 forAll
                     genStorageIndex
                     ( \storageIndex shareNum ->
-                        let path = pathOfShare "/foo" storageIndex shareNum
-                            incoming = incomingPathOf "/foo" storageIndex shareNum
+                        let path = pathOfShare "/foo" storageIndex (ShareNumber shareNum)
+                            incoming = incomingPathOf "/foo" storageIndex (ShareNumber shareNum)
                          in path `shouldNotBe` incoming
                     )
 
