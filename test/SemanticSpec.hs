@@ -50,7 +50,6 @@ import Test.QuickCheck (
 
 import Test.QuickCheck.Monadic (
     monadicIO,
-    pre,
     run,
  )
 
