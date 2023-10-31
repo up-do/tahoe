@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Lib (
     gen10String,
@@ -25,7 +26,7 @@ import qualified Data.Text as Text
 import Test.QuickCheck (
     Arbitrary (arbitrary),
     Gen,
-    NonNegative (getNonNegative),
+    NonNegative (NonNegative, getNonNegative),
     shuffle,
     sublistOf,
     suchThatMap,
@@ -38,6 +39,10 @@ import Test.QuickCheck.Instances.ByteString ()
 import TahoeLAFS.Storage.API (
     ShareNumber (..),
     StorageIndex,
+    TestOperator (Eq),
+    TestVector (TestVector),
+    TestWriteVectors (TestWriteVectors),
+    WriteVector (..),
  )
 
 gen10String :: Gen String
@@ -77,3 +82,12 @@ instance Arbitrary ShareNumbers where
             arbitrary
                 >>= (shuffle . enumFromTo 0) . getNonNegative
                 >>= \(num : rest) -> (num :) <$> sublistOf rest
+
+instance Arbitrary TestWriteVectors where
+    arbitrary = TestWriteVectors <$> arbitrary <*> arbitrary <*> arbitrary
+
+instance Arbitrary TestVector where
+    arbitrary = TestVector <$> (getNonNegative <$> arbitrary) <*> (getNonNegative <$> arbitrary) <*> pure Eq <*> arbitrary
+
+instance Arbitrary WriteVector where
+    arbitrary = WriteVector <$> arbitrary <*> arbitrary

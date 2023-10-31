@@ -587,6 +587,13 @@ data TestWriteVectors = TestWriteVectors
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
+instance Semigroup TestWriteVectors where
+    (TestWriteVectors testL writeL _) <> (TestWriteVectors testR writeR newLengthR) =
+        TestWriteVectors (testL <> testR) (writeL <> writeR) newLengthR
+
+instance Monoid TestWriteVectors where
+    mempty = TestWriteVectors mempty mempty Nothing
+
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise TestWriteVectors
 
