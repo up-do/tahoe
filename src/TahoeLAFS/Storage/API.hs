@@ -28,8 +28,7 @@ module TahoeLAFS.Storage.API (
     WriteVector (..),
     ReadTestWriteVectors (..),
     ReadTestWriteResult (..),
-    ReadVectors,
-    ReadVector,
+    ReadVector (..),
     QueryRange,
     TestVector (TestVector),
     ReadResult,
@@ -47,6 +46,9 @@ module TahoeLAFS.Storage.API (
     leaseCancelSecretLength,
     CBOR,
     CBORSet (..),
+    readv,
+    writev,
+    testv,
 ) where
 
 import Codec.CBOR.Encoding (encodeBytes)
@@ -71,9 +73,11 @@ import Data.Aeson.Types (
     toJSONKeyText,
  )
 import Data.Bifunctor (Bifunctor (bimap))
+import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
 import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
 import qualified Data.Map as Map
+import Data.Map.Merge.Strict (merge, preserveMissing, zipWithMatched)
 import Data.Map.Strict (
     Map,
  )
@@ -411,6 +415,9 @@ instance ToHttpApiData ByteRanges where
 newtype UploadSecret = UploadSecret B.ByteString
 newtype WriteEnablerSecret = WriteEnablerSecret B.ByteString
 
+instance Eq WriteEnablerSecret where
+    (WriteEnablerSecret left) == (WriteEnablerSecret right) = constEq left right
+
 data LeaseSecret = Renew B.ByteString | Cancel B.ByteString | Upload UploadSecret | Write WriteEnablerSecret
 
 isUploadSecret :: LeaseSecret -> Bool
@@ -523,18 +530,6 @@ type StorageAPI =
 
 type ReadResult = Map ShareNumber [ShareData]
 
-data ReadVectors = ReadVectors
-    { shares :: [ShareNumber]
-    , readVectors :: [ReadVector]
-    }
-    deriving (Show, Eq, Generic)
-
-instance ToJSON ReadVectors where
-    toJSON = genericToJSON tahoeJSONOptions
-
-instance FromJSON ReadVectors where
-    parseJSON = genericParseJSON tahoeJSONOptions
-
 data ReadTestWriteResult = ReadTestWriteResult
     { success :: Bool
     , readData :: ReadResult
@@ -594,8 +589,27 @@ instance Semigroup TestWriteVectors where
 instance Monoid TestWriteVectors where
     mempty = TestWriteVectors mempty mempty Nothing
 
+instance Monoid ReadTestWriteVectors where
+    mempty = ReadTestWriteVectors mempty []
+
+instance Semigroup ReadTestWriteVectors where
+    (ReadTestWriteVectors wv0 rv0) <> (ReadTestWriteVectors wv1 rv1) =
+        ReadTestWriteVectors (merge preserveMissing preserveMissing (zipWithMatched $ \_ l r -> l <> r) wv0 wv1) (rv0 <> rv1)
+
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise TestWriteVectors
+
+readv :: Offset -> Size -> ReadTestWriteVectors
+readv offset size = mempty{readVector = [ReadVector offset size]}
+
+writev :: ShareNumber -> Offset -> ShareData -> ReadTestWriteVectors
+writev shareNum offset bytes = mempty{testWriteVectors = Map.singleton shareNum (mempty{write = [WriteVector offset bytes]})}
+
+testv :: ShareNumber -> Offset -> ShareData -> ReadTestWriteVectors
+testv shareNum offset specimen =
+    mempty
+        { testWriteVectors = Map.singleton shareNum (mempty{test = [TestVector offset (fromIntegral $ B.length specimen) Eq specimen]})
+        }
 
 -- XXX Most of these operators have been removed from the spec.
 data TestOperator

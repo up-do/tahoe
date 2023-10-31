@@ -48,14 +48,21 @@ import Prelude hiding (
     map,
  )
 
-data Share = Complete ShareData | Uploading UploadSecret ShareData
+data ImmutableShare = Complete ShareData | Uploading UploadSecret ShareData
 
 data Bucket = Bucket
     { bucketSize :: Size
-    , bucketShares :: Map.Map ShareNumber Share
+    , bucketShares :: Map.Map ShareNumber ImmutableShare
     }
 
-type ShareStorage = Map.Map StorageIndex (Map.Map ShareNumber ShareData)
+data SecretProtected a = SecretProtected WriteEnablerSecret a
+
+type ShareStorage = Map.Map StorageIndex (SecretProtected (Map.Map ShareNumber ShareData))
+
+protectedWrite :: WriteEnablerSecret -> (a -> a) -> SecretProtected a -> Maybe (SecretProtected a)
+protectedWrite proposed f (SecretProtected actual a)
+    | proposed == actual = Just (SecretProtected actual (f a))
+    | otherwise = Nothing
 
 data MemoryBackend = MemoryBackend
     { memoryBackendBuckets :: Map.Map StorageIndex Bucket -- Completely or partially written immutable share data
@@ -122,7 +129,7 @@ abort storageIndex shareNumber (UploadSecret abortSecret) b@MemoryBackend{memory
     abortIt :: Bucket -> Bucket
     abortIt bucket@Bucket{bucketShares} = bucket{bucketShares = Map.update abortIt' shareNumber bucketShares}
 
-    abortIt' :: Share -> Maybe Share
+    abortIt' :: ImmutableShare -> Maybe ImmutableShare
     abortIt' (Uploading (UploadSecret existingSecret) _) = if constEq existingSecret abortSecret then Nothing else throw IncorrectUploadSecret
     abortIt' _ = throw ImmutableShareAlreadyWritten
 
@@ -142,7 +149,7 @@ writeImm storageIndex shareNum (UploadSecret uploadSecret) newData b@MemoryBacke
     size = bucketSize <$> bucket
     updated = Map.adjust (\bkt -> bkt{bucketShares = Map.adjust writeToShare shareNum (bucketShares bkt)}) storageIndex memoryBackendBuckets
 
-    writeToShare :: Share -> Share
+    writeToShare :: ImmutableShare -> ImmutableShare
     writeToShare (Complete _) = throw ImmutableShareAlreadyWritten
     writeToShare (Uploading (UploadSecret existingSecret) existingData)
         | authorized =

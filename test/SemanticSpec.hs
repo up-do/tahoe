@@ -42,10 +42,12 @@ import Test.Hspec (
  )
 
 import Test.QuickCheck (
+    Arbitrary (arbitrary),
     Positive (..),
     Property,
     forAll,
     property,
+    (==>),
  )
 
 import Test.QuickCheck.Monadic (
@@ -64,15 +66,18 @@ import TahoeLAFS.Storage.API (
     AllocationResult (AllocationResult),
     CBORSet (..),
     LeaseSecret (..),
+    ReadTestWriteVectors (ReadTestWriteVectors),
     ShareData,
     ShareNumber (ShareNumber),
     Size,
     StorageIndex,
+    TestWriteVectors (TestWriteVectors),
     UploadSecret (UploadSecret),
     WriteEnablerSecret (WriteEnablerSecret),
     allocated,
     alreadyHave,
     toInteger,
+    writev,
  )
 
 import TahoeLAFS.Storage.Backend (
@@ -82,6 +87,7 @@ import TahoeLAFS.Storage.Backend (
         getImmutableShareNumbers,
         getMutableShareNumbers,
         readImmutableShare,
+        readvAndTestvAndWritev,
         writeImmutableShare
     ),
     WriteImmutableError (..),
@@ -90,7 +96,6 @@ import TahoeLAFS.Storage.Backend (
 
 import Data.IORef (IORef)
 
--- We also get the Arbitrary ShareNumber instance from here.
 import Lib (
     ShareNumbers (..),
     genStorageIndex,
@@ -101,9 +106,12 @@ import TahoeLAFS.Storage.Backend.Memory (
     memoryBackend,
  )
 
+import Control.Monad.IO.Class (MonadIO (liftIO))
+import Data.Data (Proxy (Proxy))
 import TahoeLAFS.Storage.Backend.Filesystem (
     FilesystemBackend (FilesystemBackend),
  )
+import Test.QuickCheck.Classes (lawsCheck, semigroupMonoidLaws)
 
 permuteShare :: ByteString -> ShareNumber -> ByteString
 permuteShare seed number =
@@ -233,7 +241,18 @@ mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbe
 
 -- The specification for a storage backend.
 storageSpec :: (Backend b, Mess b) => IO b -> Spec
-storageSpec makeBackend =
+storageSpec makeBackend = do
+    context "utilities" $ do
+        describe "TestWriteVectors" $ do
+            it "has lawful Semigroup and Monoid instances" $
+                lawsCheck $
+                    semigroupMonoidLaws (Proxy :: Proxy TestWriteVectors)
+
+        describe "ReadTestWriteVectors" $ do
+            it "has lawful Semigroup and Monoid instances" $
+                lawsCheck $
+                    semigroupMonoidLaws (Proxy :: Proxy ReadTestWriteVectors)
+
     context "v1" $ do
         context "immutable" $ do
             describe "allocate a storage index" $
@@ -291,6 +310,16 @@ storageSpec makeBackend =
                 it "returns the share numbers that were written" $
                     property $
                         forAll genStorageIndex (mutableWriteAndEnumerateShares makeBackend)
+
+                it "rejects an update with the wrong write enabler" $
+                    property $ \storageIndex shareNum secret wrongSecret shareData offset ->
+                        secret /= wrongSecret ==> monadicIO $
+                            run $
+                                withBackend makeBackend $
+                                    \backend -> do
+                                        void $ readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (writev (ShareNumber shareNum) offset shareData)
+                                        readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret wrongSecret) (writev (ShareNumber shareNum) offset shareData)
+                                            `shouldThrow` (== IncorrectWriteEnabler)
 
 spec :: Spec
 spec = do

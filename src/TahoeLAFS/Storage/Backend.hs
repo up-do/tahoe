@@ -46,6 +46,7 @@ data WriteImmutableError
     | ImmutableShareAlreadyWritten
     | ShareNotAllocated
     | IncorrectUploadSecret
+    | IncorrectWriteEnabler
     deriving (Ord, Eq, Show)
 instance Exception WriteImmutableError
 
