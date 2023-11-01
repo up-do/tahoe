@@ -17,7 +17,7 @@ import Data.IORef (
     newIORef,
     readIORef,
  )
-import Data.Map.Merge.Strict (merge, preserveMissing, zipWithAMatched)
+import Data.Map.Merge.Strict (merge, preserveMissing, zipWithMatched)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing)
 import qualified Data.Set as Set
@@ -57,12 +57,25 @@ data Bucket = Bucket
 
 data SecretProtected a = SecretProtected WriteEnablerSecret a
 
-type ShareStorage = Map.Map StorageIndex (SecretProtected (Map.Map ShareNumber ShareData))
+readSecret :: SecretProtected a -> WriteEnablerSecret
+readSecret (SecretProtected s _) = s
 
-protectedWrite :: WriteEnablerSecret -> (a -> a) -> SecretProtected a -> Maybe (SecretProtected a)
-protectedWrite proposed f (SecretProtected actual a)
-    | proposed == actual = Just (SecretProtected actual (f a))
-    | otherwise = Nothing
+readProtected :: SecretProtected a -> a
+readProtected (SecretProtected _ p) = p
+
+{- | Apply a function in a SecretProtected to a value in a SecretProtected.  The
+ result is in SecretProtected with the function's secret.
+
+ This is almost liftA2 but it's not clear to me how to have lawful handling of
+ the secret.
+-}
+liftProtected2 :: (a -> a -> a) -> SecretProtected a -> SecretProtected a -> SecretProtected a
+liftProtected2 f (SecretProtected secretL x) (SecretProtected _ y) = SecretProtected secretL (f x y)
+
+instance Functor SecretProtected where
+    fmap f (SecretProtected secret a) = SecretProtected secret (f a)
+
+type ShareStorage = Map.Map StorageIndex (SecretProtected (Map.Map ShareNumber ShareData))
 
 data MemoryBackend = MemoryBackend
     { memoryBackendBuckets :: Map.Map StorageIndex Bucket -- Completely or partially written immutable share data
@@ -179,27 +192,33 @@ instance Backend (IORef MemoryBackend) where
 
     getMutableShareNumbers :: IORef MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
     getMutableShareNumbers backend storageIndex = do
-        shares' <- mutableShares <$> readIORef backend
-        return $
-            CBORSet . Set.fromList $
-                maybe [] Map.keys $
-                    Map.lookup storageIndex shares'
+        sharemap <- fmap readProtected . Map.lookup storageIndex . mutableShares <$> readIORef backend
+        return
+            . CBORSet
+            . Set.fromList
+            . maybe [] Map.keys
+            $ sharemap
 
     readvAndTestvAndWritev :: IORef MemoryBackend -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev
         backend
         storageIndex
-        (WriteEnablerSecret secret)
+        secret
         (ReadTestWriteVectors testWritev _readv) = do
             -- TODO implement readv and testv parts.
-            -- TODO implement secret check
             -- TODO handle offsets correctly
-            modifyIORef backend $ \m@MemoryBackend{mutableShares} -> m{mutableShares = addShares storageIndex mutableShares (Map.map write testWritev)}
+            success <- atomicModifyIORef' backend tryWrite
+
             return
                 ReadTestWriteResult
-                    { success = True
-                    , readData = mempty
+                    { readData = mempty
+                    , success = success
                     }
+          where
+            tryWrite m@MemoryBackend{mutableShares} =
+                case addShares storageIndex secret mutableShares (Map.map write testWritev) of
+                    Nothing -> (m, False)
+                    Just newShares -> (m{mutableShares = newShares}, True)
 
     createImmutableStorageIndex backend storageIndex secrets (AllocateBuckets shareNums size) =
         withUploadSecret secrets $ \secret ->
@@ -232,21 +251,32 @@ totalShareSize backend = do
     let imm = memoryBackendBuckets backend
         mut = mutableShares backend
     let immSize = sum $ Map.map bucketTotalSize imm
-    let mutSize = sum $ Map.map length mut
+    let mutSize = sum $ Map.map (length . readProtected) mut
     return $ toInteger $ immSize + fromIntegral mutSize
 
 bucketTotalSize :: Bucket -> Size
 bucketTotalSize Bucket{bucketSize, bucketShares} = bucketSize * fromIntegral (Map.size bucketShares)
 
-addShare :: StorageIndex -> ShareNumber -> [WriteVector] -> ShareStorage -> ShareStorage
-addShare storageIndex shareNum writev =
-    Map.insertWith f storageIndex (Map.singleton shareNum (mconcat $ shareData <$> writev))
+addShare :: StorageIndex -> WriteEnablerSecret -> ShareNumber -> [WriteVector] -> ShareStorage -> ShareStorage
+addShare storageIndex secret shareNum writev =
+    Map.insertWith (liftProtected2 f) storageIndex newShare
   where
     f :: Map.Map ShareNumber ShareData -> Map.Map ShareNumber ShareData -> Map.Map ShareNumber ShareData
-    f = merge preserveMissing preserveMissing (zipWithAMatched $ \_key _old new -> pure new)
+    f = merge preserveMissing preserveMissing (zipWithMatched applyWrites)
 
-addShares :: StorageIndex -> ShareStorage -> Map.Map ShareNumber [WriteVector] -> ShareStorage
-addShares storageIndex = Map.foldrWithKey (addShare storageIndex)
+    applyWrites :: ShareNumber -> ShareData -> ShareData -> ShareData
+    applyWrites _ _ replacement = replacement -- XXX Need to merge new data into old, not replace it.  Probably replace ShareData with a different type that makes this easier.
+    newShare = SecretProtected secret (Map.singleton shareNum (mconcat (shareData <$> writev)))
+
+addShares :: StorageIndex -> WriteEnablerSecret -> ShareStorage -> Map.Map ShareNumber [WriteVector] -> Maybe ShareStorage
+addShares storageIndex secret existing updates
+    | isNothing writeEnabler = Just go
+    | writeEnabler == Just secret = Just go
+    | otherwise = Nothing
+  where
+    go = Map.foldrWithKey (addShare storageIndex secret) existing updates
+
+    writeEnabler = readSecret <$> Map.lookup storageIndex existing
 
 memoryBackend :: IO (IORef MemoryBackend)
 memoryBackend = do

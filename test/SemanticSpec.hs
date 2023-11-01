@@ -22,6 +22,7 @@ import GHC.Word (
     Word8,
  )
 
+import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 import System.Directory (
@@ -38,11 +39,11 @@ import Test.Hspec (
     context,
     describe,
     it,
+    shouldBe,
     shouldThrow,
  )
 
 import Test.QuickCheck (
-    Arbitrary (arbitrary),
     Positive (..),
     Property,
     forAll,
@@ -55,27 +56,25 @@ import Test.QuickCheck.Monadic (
     run,
  )
 
-import Data.ByteString (
-    ByteString,
-    length,
-    map,
- )
+import qualified Data.ByteString as B
 
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets),
     AllocationResult (AllocationResult),
     CBORSet (..),
     LeaseSecret (..),
-    ReadTestWriteVectors (ReadTestWriteVectors),
+    ReadTestWriteResult (readData, success),
+    ReadTestWriteVectors,
     ShareData,
     ShareNumber (ShareNumber),
     Size,
     StorageIndex,
-    TestWriteVectors (TestWriteVectors),
+    TestWriteVectors,
     UploadSecret (UploadSecret),
     WriteEnablerSecret (WriteEnablerSecret),
     allocated,
     alreadyHave,
+    readv,
     toInteger,
     writev,
  )
@@ -106,16 +105,15 @@ import TahoeLAFS.Storage.Backend.Memory (
     memoryBackend,
  )
 
-import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Data (Proxy (Proxy))
 import TahoeLAFS.Storage.Backend.Filesystem (
     FilesystemBackend (FilesystemBackend),
  )
 import Test.QuickCheck.Classes (lawsCheck, semigroupMonoidLaws)
 
-permuteShare :: ByteString -> ShareNumber -> ByteString
+permuteShare :: B.ByteString -> ShareNumber -> B.ByteString
 permuteShare seed number =
-    Data.ByteString.map xor' seed
+    B.map xor' seed
   where
     xor' :: Word8 -> Word8
     xor' = xor $ fromInteger $ toInteger number
@@ -157,11 +155,11 @@ immutableWriteAndEnumerateShares ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 immutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-        size = fromIntegral (Data.ByteString.length shareSeed)
+        size = fromIntegral (B.length shareSeed)
         allocate = AllocateBuckets shareNumbers size
     run $
         withBackend makeBackend $ \backend -> do
@@ -180,10 +178,10 @@ immutableWriteAndRewriteShare ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 immutableWriteAndRewriteShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
-    let size = fromIntegral (Data.ByteString.length shareSeed)
+    let size = fromIntegral (B.length shareSeed)
         allocate = AllocateBuckets shareNumbers size
         aShareNumber = head shareNumbers
         aShare = permuteShare shareSeed aShareNumber
@@ -204,11 +202,11 @@ immutableWriteAndReadShare ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 immutableWriteAndReadShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-    let size = fromIntegral (Data.ByteString.length shareSeed)
+    let size = fromIntegral (B.length shareSeed)
     let allocate = AllocateBuckets shareNumbers size
     run $
         withBackend makeBackend $ \backend -> do
@@ -227,7 +225,7 @@ mutableWriteAndEnumerateShares ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
@@ -312,14 +310,21 @@ storageSpec makeBackend = do
                         forAll genStorageIndex (mutableWriteAndEnumerateShares makeBackend)
 
                 it "rejects an update with the wrong write enabler" $
-                    property $ \storageIndex shareNum secret wrongSecret shareData offset ->
-                        secret /= wrongSecret ==> monadicIO $
-                            run $
+                    forAll genStorageIndex $ \storageIndex shareNum secret wrongSecret shareData junkData offset ->
+                        (secret /= wrongSecret)
+                            && (shareData /= junkData)
+                            && (B.length shareData > 0)
+                            && (B.length junkData > 0)
+                            ==> monadicIO
+                            $ run $
                                 withBackend makeBackend $
                                     \backend -> do
-                                        void $ readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (writev (ShareNumber shareNum) offset shareData)
-                                        readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret wrongSecret) (writev (ShareNumber shareNum) offset shareData)
-                                            `shouldThrow` (== IncorrectWriteEnabler)
+                                        first <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (writev shareNum offset shareData)
+                                        success first `shouldBe` True
+                                        second <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret wrongSecret) (writev shareNum offset junkData)
+                                        success second `shouldBe` False
+                                        third <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (readv offset (fromIntegral $ B.length shareData))
+                                        readData third `shouldBe` Map.singleton shareNum [shareData]
 
 spec :: Spec
 spec = do
