@@ -3,11 +3,15 @@
 module TahoeLAFS.Storage.Backend.Memory (
     MemoryBackend (MemoryBackend),
     memoryBackend,
+    MutableShareSize (..),
+    shareDataSize,
+    toMutableShareSize,
 ) where
 
 import Control.Exception (
     throw,
  )
+import Control.Foldl.ByteString (Word8)
 import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
 import Data.IORef (
@@ -21,12 +25,16 @@ import Data.Map.Merge.Strict (merge, preserveMissing, zipWithMatched)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing)
 import qualified Data.Set as Set
+import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo, ByteRangeSuffix))
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets),
     AllocationResult (..),
     CBORSet (..),
+    Offset,
+    QueryRange,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
+    ReadVector (ReadVector, offset, readSize),
     ShareData,
     ShareNumber,
     Size,
@@ -75,11 +83,31 @@ liftProtected2 f (SecretProtected secretL x) (SecretProtected _ y) = SecretProte
 instance Functor SecretProtected where
     fmap f (SecretProtected secret a) = SecretProtected secret (f a)
 
-type ShareStorage = Map.Map StorageIndex (SecretProtected (Map.Map ShareNumber ShareData))
+type MutableShareStorage = Map.Map StorageIndex (SecretProtected (Map.Map ShareNumber [WriteVector]))
+
+data MutableShareSize = MutableShareSize Offset Size deriving (Show, Eq)
+
+instance Semigroup MutableShareSize where
+    (MutableShareSize writeOffsetL sizeL) <> (MutableShareSize writeOffsetR sizeR) =
+        MutableShareSize minOffset maxSize
+      where
+        minOffset = min writeOffsetL writeOffsetR
+        maxSize = max (writeOffsetL + sizeL) (writeOffsetR + sizeR) - minOffset
+
+instance Monoid MutableShareSize where
+    mempty = MutableShareSize 0 0
+
+toMutableShareSize :: WriteVector -> MutableShareSize
+toMutableShareSize (WriteVector offset bytes) = MutableShareSize offset (fromIntegral $ B.length bytes)
+
+shareDataSize :: [WriteVector] -> Size
+shareDataSize writev = offset + size
+  where
+    (MutableShareSize offset size) = foldMap toMutableShareSize writev
 
 data MemoryBackend = MemoryBackend
     { memoryBackendBuckets :: Map.Map StorageIndex Bucket -- Completely or partially written immutable share data
-    , mutableShares :: ShareStorage -- Completely written mutable shares
+    , mutableShares :: MutableShareStorage -- Completely written mutable shares
     }
 
 getShareNumbers :: StorageIndex -> MemoryBackend -> CBORSet ShareNumber
@@ -204,21 +232,38 @@ instance Backend (IORef MemoryBackend) where
         backend
         storageIndex
         secret
-        (ReadTestWriteVectors testWritev _readv) = do
-            -- TODO implement readv and testv parts.
-            -- TODO handle offsets correctly
+        (ReadTestWriteVectors testWritev readv) = do
+            -- TODO implement testv parts.
+
+            (CBORSet allShareNums) <- getMutableShareNumbers backend storageIndex
+            let queryRange = readvToQueryRange readv
+
+            readData <- mapM (\shareNum -> (shareNum,) <$> readMutableShare' backend storageIndex shareNum queryRange) (Set.toList allShareNums)
             success <- atomicModifyIORef' backend tryWrite
 
             return
                 ReadTestWriteResult
-                    { readData = mempty
+                    { readData = Map.fromList readData
                     , success = success
                     }
           where
+            readvToQueryRange :: [ReadVector] -> QueryRange
+            --            readvToQueryRange [] = Nothing
+            readvToQueryRange rv = Just (go rv)
+              where
+                go [] = []
+                go (r : rs) = ByteRangeFromTo off end : go rs
+                  where
+                    off = offset r
+                    end = off + readSize r - 1
+
             tryWrite m@MemoryBackend{mutableShares} =
                 case addShares storageIndex secret mutableShares (Map.map write testWritev) of
                     Nothing -> (m, False)
                     Just newShares -> (m{mutableShares = newShares}, True)
+
+    readMutableShare backend storageIndex shareNum queryRange =
+        B.concat <$> readMutableShare' backend storageIndex shareNum queryRange
 
     createImmutableStorageIndex backend storageIndex secrets (AllocateBuckets shareNums size) =
         withUploadSecret secrets $ \secret ->
@@ -257,18 +302,16 @@ totalShareSize backend = do
 bucketTotalSize :: Bucket -> Size
 bucketTotalSize Bucket{bucketSize, bucketShares} = bucketSize * fromIntegral (Map.size bucketShares)
 
-addShare :: StorageIndex -> WriteEnablerSecret -> ShareNumber -> [WriteVector] -> ShareStorage -> ShareStorage
+addShare :: StorageIndex -> WriteEnablerSecret -> ShareNumber -> [WriteVector] -> MutableShareStorage -> MutableShareStorage
 addShare storageIndex secret shareNum writev =
     Map.insertWith (liftProtected2 f) storageIndex newShare
   where
-    f :: Map.Map ShareNumber ShareData -> Map.Map ShareNumber ShareData -> Map.Map ShareNumber ShareData
-    f = merge preserveMissing preserveMissing (zipWithMatched applyWrites)
+    f :: Map.Map ShareNumber [WriteVector] -> Map.Map ShareNumber [WriteVector] -> Map.Map ShareNumber [WriteVector]
+    f = merge preserveMissing preserveMissing (zipWithMatched (const (<>)))
 
-    applyWrites :: ShareNumber -> ShareData -> ShareData -> ShareData
-    applyWrites _ _ replacement = replacement -- XXX Need to merge new data into old, not replace it.  Probably replace ShareData with a different type that makes this easier.
-    newShare = SecretProtected secret (Map.singleton shareNum (mconcat (shareData <$> writev)))
+    newShare = SecretProtected secret (Map.singleton shareNum writev)
 
-addShares :: StorageIndex -> WriteEnablerSecret -> ShareStorage -> Map.Map ShareNumber [WriteVector] -> Maybe ShareStorage
+addShares :: StorageIndex -> WriteEnablerSecret -> MutableShareStorage -> Map.Map ShareNumber [WriteVector] -> Maybe MutableShareStorage
 addShares storageIndex secret existing updates
     | isNothing writeEnabler = Just go
     | writeEnabler == Just secret = Just go
@@ -281,3 +324,51 @@ addShares storageIndex secret existing updates
 memoryBackend :: IO (IORef MemoryBackend)
 memoryBackend = do
     newIORef $ MemoryBackend mempty mempty
+
+readMutableShare' :: IORef MemoryBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO [ShareData]
+readMutableShare' backend storageIndex shareNum queryRange = do
+    storage <- mutableShares <$> readIORef backend
+    pure $ doOneRead <$> rv storage <*> pure storage
+  where
+    rv :: MutableShareStorage -> [ReadVector]
+    rv storage = queryRangeToReadVector storage queryRange
+
+    getShareData storage =
+        Map.lookup storageIndex storage >>= Map.lookup shareNum . readProtected
+
+    doOneRead :: ReadVector -> MutableShareStorage -> ShareData
+    doOneRead readv storage =
+        maybe "" (readOneVector readv) (getShareData storage)
+
+    queryRangeToReadVector :: MutableShareStorage -> QueryRange -> [ReadVector]
+    queryRangeToReadVector storage Nothing = [ReadVector 0 size]
+      where
+        size = maybe 0 shareDataSize (getShareData storage)
+    queryRangeToReadVector storage (Just ranges) = toReadVector <$> ranges
+      where
+        toReadVector (ByteRangeFrom start) = ReadVector start size
+          where
+            size = maybe 0 shareDataSize (getShareData storage)
+        toReadVector (ByteRangeFromTo start end) = ReadVector start (end - start + 1)
+        toReadVector (ByteRangeSuffix len) = ReadVector (size - len) len
+          where
+            size = maybe 0 shareDataSize (getShareData storage)
+
+    readOneVector :: ReadVector -> [WriteVector] -> ShareData
+    readOneVector ReadVector{..} [] = ""
+    readOneVector ReadVector{offset, readSize} wv =
+        B.pack (extractBytes <$> positions)
+      where
+        extractBytes :: Integer -> Word8
+        extractBytes p = go wv
+          where
+            go [] = 0
+            go (w : ws) =
+                case byteFromShare p w of
+                    Nothing -> go ws
+                    Just b -> b
+        positions = [offset .. (offset + readSize - 1)]
+        byteFromShare :: Integer -> WriteVector -> Maybe Word8
+        byteFromShare p (WriteVector offset bytes)
+            | p >= offset && p < offset + fromIntegral (B.length bytes) = Just (B.index bytes (fromIntegral $ p - offset))
+            | otherwise = Nothing

@@ -72,6 +72,7 @@ import TahoeLAFS.Storage.API (
     TestWriteVectors,
     UploadSecret (UploadSecret),
     WriteEnablerSecret (WriteEnablerSecret),
+    WriteVector (WriteVector),
     allocated,
     alreadyHave,
     readv,
@@ -102,14 +103,17 @@ import Lib (
 
 import TahoeLAFS.Storage.Backend.Memory (
     MemoryBackend (..),
+    MutableShareSize (MutableShareSize),
     memoryBackend,
+    shareDataSize,
+    toMutableShareSize,
  )
 
 import Data.Data (Proxy (Proxy))
 import TahoeLAFS.Storage.Backend.Filesystem (
     FilesystemBackend (FilesystemBackend),
  )
-import Test.QuickCheck.Classes (lawsCheck, semigroupMonoidLaws)
+import Test.QuickCheck.Classes (lawsCheck, ordLaws, semigroupMonoidLaws)
 
 permuteShare :: B.ByteString -> ShareNumber -> B.ByteString
 permuteShare seed number =
@@ -241,6 +245,36 @@ mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbe
 storageSpec :: (Backend b, Mess b) => IO b -> Spec
 storageSpec makeBackend = do
     context "utilities" $ do
+        describe "WriteVector" $ do
+            it "has a lawful Ord instance" $
+                lawsCheck $
+                    ordLaws (Proxy :: Proxy WriteVector)
+
+        describe "MutableShareStorage" $ do
+            it "finds the larger size for some cases" $ do
+                toMutableShareSize (WriteVector 0 "x") <> toMutableShareSize (WriteVector 1 "x")
+                    `shouldBe` MutableShareSize 0 2
+
+                toMutableShareSize (WriteVector 0 "Hello") <> toMutableShareSize (WriteVector 1 "bye")
+                    `shouldBe` MutableShareSize 0 5
+
+                toMutableShareSize (WriteVector 0 "x") <> toMutableShareSize (WriteVector 3 "x")
+                    `shouldBe` MutableShareSize 0 4
+
+                toMutableShareSize (WriteVector 0 "Hello") <> toMutableShareSize (WriteVector 3 "world")
+                    `shouldBe` MutableShareSize 0 8
+
+        describe "shareDataSize" $ do
+            it "converts list of WriteVector to a size" $ do
+                shareDataSize [WriteVector 2 "foo", WriteVector 10 "quux"]
+                    `shouldBe` 14
+                shareDataSize [WriteVector 0 "foobar", WriteVector 2 "q"]
+                    `shouldBe` 6
+                shareDataSize []
+                    `shouldBe` 0
+                shareDataSize [WriteVector 2 "foo", WriteVector 3 "quux"]
+                    `shouldBe` 7
+
         describe "TestWriteVectors" $ do
             it "has lawful Semigroup and Monoid instances" $
                 lawsCheck $
@@ -310,11 +344,13 @@ storageSpec makeBackend = do
                         forAll genStorageIndex (mutableWriteAndEnumerateShares makeBackend)
 
                 it "rejects an update with the wrong write enabler" $
-                    forAll genStorageIndex $ \storageIndex shareNum secret wrongSecret shareData junkData offset ->
+                    forAll genStorageIndex $ \storageIndex shareNum (secret, wrongSecret) (shareData, junkData) offset ->
                         (secret /= wrongSecret)
                             && (shareData /= junkData)
                             && (B.length shareData > 0)
                             && (B.length junkData > 0)
+                            && (B.length secret > 0)
+                            && (B.length wrongSecret > 0)
                             ==> monadicIO
                             $ run $
                                 withBackend makeBackend $

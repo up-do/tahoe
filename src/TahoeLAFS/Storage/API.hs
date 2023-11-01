@@ -641,7 +641,6 @@ data WriteVector = WriteVector
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
--- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise WriteVector
 
 api :: Proxy StorageAPI
