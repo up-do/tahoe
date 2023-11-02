@@ -217,6 +217,7 @@ test-suite http-tests
     , cborg                    >=0.2.4    && <0.3
     , connection               >=0.3      && <0.4
     , data-default-class       >=0.1      && <0.2
+    , data-interval
     , hspec                    <2.12
     , hspec-expectations       <0.9
     , hspec-wai                <0.12

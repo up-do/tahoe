@@ -23,7 +23,8 @@ import Data.IORef (
  )
 import Data.Map.Merge.Strict (merge, preserveMissing, zipWithMatched)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isNothing)
+import Data.Maybe (fromMaybe, isNothing)
+import Data.Monoid (Last (Last, getLast))
 import qualified Data.Set as Set
 import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo, ByteRangeSuffix))
 import TahoeLAFS.Storage.API (
@@ -359,16 +360,16 @@ readMutableShare' backend storageIndex shareNum queryRange = do
     readOneVector ReadVector{offset, readSize} wv =
         B.pack (extractBytes <$> positions)
       where
-        extractBytes :: Integer -> Word8
-        extractBytes p = go wv
-          where
-            go [] = 0
-            go (w : ws) =
-                case byteFromShare p w of
-                    Nothing -> go ws
-                    Just b -> b
         positions = [offset .. (offset + readSize - 1)]
+
+        extractBytes :: Integer -> Word8
+        extractBytes p = fromMaybe 0 (go wv)
+          where
+            -- New writes are added to the end of the list so give the Last
+            -- write precedence over others.
+            go = getLast . foldMap (Last . byteFromShare p)
+
         byteFromShare :: Integer -> WriteVector -> Maybe Word8
-        byteFromShare p (WriteVector offset bytes)
-            | p >= offset && p < offset + fromIntegral (B.length bytes) = Just (B.index bytes (fromIntegral $ p - offset))
+        byteFromShare p (WriteVector off bytes)
+            | p >= off && p < off + fromIntegral (B.length bytes) = Just (B.index bytes (fromIntegral $ p - off))
             | otherwise = Nothing

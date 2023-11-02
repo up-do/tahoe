@@ -28,6 +28,7 @@ import Test.QuickCheck (
     Arbitrary (arbitrary),
     Gen,
     NonNegative (NonNegative, getNonNegative),
+    Positive (getPositive),
     shuffle,
     sublistOf,
     suchThatMap,
@@ -104,7 +105,7 @@ instance Arbitrary WriteVector where
     arbitrary = WriteVector <$> arbNonNeg <*> arbitrary
 
 instance Arbitrary ReadVector where
-    arbitrary = ReadVector <$> arbNonNeg <*> arbitrary
+    arbitrary = ReadVector <$> arbNonNeg <*> (getPositive <$> arbitrary)
 
 arbNonNeg :: Gen Offset
 arbNonNeg = getNonNegative <$> arbitrary
