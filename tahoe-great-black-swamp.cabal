@@ -217,6 +217,7 @@ test-suite http-tests
     , cborg                    >=0.2.4    && <0.3
     , connection               >=0.3      && <0.4
     , data-default-class       >=0.1      && <0.2
+    , data-interval
     , hspec                    <2.12
     , hspec-expectations       <0.9
     , hspec-wai                <0.12
@@ -224,6 +225,7 @@ test-suite http-tests
     , network                  >=3.1      && <3.2
     , network-simple-tls       >=0.4      && <0.5
     , QuickCheck               <2.15
+    , quickcheck-classes       >=0.6      && <0.7
     , quickcheck-instances     <0.4
     , serialise                >=0.2.3    && <0.3
     , servant                  >=0.16.2   && <0.21

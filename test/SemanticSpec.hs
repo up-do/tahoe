@@ -22,6 +22,7 @@ import GHC.Word (
     Word8,
  )
 
+import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 import System.Directory (
@@ -38,14 +39,22 @@ import Test.Hspec (
     context,
     describe,
     it,
+    shouldBe,
     shouldThrow,
  )
-
 import Test.QuickCheck (
+    Gen,
+    NonEmptyList (getNonEmpty),
     Positive (..),
     Property,
+    chooseInteger,
+    counterexample,
     forAll,
+    ioProperty,
+    oneof,
     property,
+    vector,
+    (==>),
  )
 
 import Test.QuickCheck.Monadic (
@@ -53,26 +62,30 @@ import Test.QuickCheck.Monadic (
     run,
  )
 
-import Data.ByteString (
-    ByteString,
-    length,
-    map,
- )
+import qualified Data.ByteString as B
 
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets),
     AllocationResult (AllocationResult),
     CBORSet (..),
     LeaseSecret (..),
+    Offset,
+    ReadTestWriteResult (readData, success),
+    ReadTestWriteVectors,
+    ReadVector (ReadVector),
     ShareData,
     ShareNumber (ShareNumber),
     Size,
     StorageIndex,
+    TestWriteVectors,
     UploadSecret (UploadSecret),
     WriteEnablerSecret (WriteEnablerSecret),
+    WriteVector (WriteVector),
     allocated,
     alreadyHave,
+    readv,
     toInteger,
+    writev,
  )
 
 import TahoeLAFS.Storage.Backend (
@@ -82,6 +95,7 @@ import TahoeLAFS.Storage.Backend (
         getImmutableShareNumbers,
         getMutableShareNumbers,
         readImmutableShare,
+        readvAndTestvAndWritev,
         writeImmutableShare
     ),
     WriteImmutableError (..),
@@ -90,7 +104,6 @@ import TahoeLAFS.Storage.Backend (
 
 import Data.IORef (IORef)
 
--- We also get the Arbitrary ShareNumber instance from here.
 import Lib (
     ShareNumbers (..),
     genStorageIndex,
@@ -98,16 +111,23 @@ import Lib (
 
 import TahoeLAFS.Storage.Backend.Memory (
     MemoryBackend (..),
+    MutableShareSize (MutableShareSize),
     memoryBackend,
+    shareDataSize,
+    toMutableShareSize,
  )
 
+import Data.Data (Proxy (Proxy))
+import Data.Interval (Boundary (Closed, Open), Extended (Finite), Interval, interval, lowerBound, upperBound)
+import qualified Data.IntervalSet as IS
 import TahoeLAFS.Storage.Backend.Filesystem (
     FilesystemBackend (FilesystemBackend),
  )
+import Test.QuickCheck.Classes (Laws (..), semigroupMonoidLaws)
 
-permuteShare :: ByteString -> ShareNumber -> ByteString
+permuteShare :: B.ByteString -> ShareNumber -> B.ByteString
 permuteShare seed number =
-    Data.ByteString.map xor' seed
+    B.map xor' seed
   where
     xor' :: Word8 -> Word8
     xor' = xor $ fromInteger $ toInteger number
@@ -149,11 +169,11 @@ immutableWriteAndEnumerateShares ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 immutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-        size = fromIntegral (Data.ByteString.length shareSeed)
+        size = fromIntegral (B.length shareSeed)
         allocate = AllocateBuckets shareNumbers size
     run $
         withBackend makeBackend $ \backend -> do
@@ -172,10 +192,10 @@ immutableWriteAndRewriteShare ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 immutableWriteAndRewriteShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
-    let size = fromIntegral (Data.ByteString.length shareSeed)
+    let size = fromIntegral (B.length shareSeed)
         allocate = AllocateBuckets shareNumbers size
         aShareNumber = head shareNumbers
         aShare = permuteShare shareSeed aShareNumber
@@ -196,11 +216,11 @@ immutableWriteAndReadShare ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 immutableWriteAndReadShare makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
-    let size = fromIntegral (Data.ByteString.length shareSeed)
+    let size = fromIntegral (B.length shareSeed)
     let allocate = AllocateBuckets shareNumbers size
     run $
         withBackend makeBackend $ \backend -> do
@@ -219,7 +239,7 @@ mutableWriteAndEnumerateShares ::
     IO b ->
     StorageIndex ->
     ShareNumbers ->
-    ByteString ->
+    B.ByteString ->
     Property
 mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = Prelude.map (permuteShare shareSeed) shareNumbers
@@ -231,9 +251,17 @@ mutableWriteAndEnumerateShares makeBackend storageIndex (ShareNumbers shareNumbe
             when (readShareNumbers /= Set.fromList shareNumbers) $
                 fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
 
--- The specification for a storage backend.
+-- | Create a Spec that checks the given Laws.
+lawsCheck :: Laws -> Spec
+lawsCheck Laws{lawsTypeclass, lawsProperties} =
+    describe lawsTypeclass $
+        mapM_ oneLawProp lawsProperties
+  where
+    oneLawProp (lawName, lawProp) = it lawName lawProp
+
+-- | The specification for a storage backend.
 storageSpec :: (Backend b, Mess b) => IO b -> Spec
-storageSpec makeBackend =
+storageSpec makeBackend = do
     context "v1" $ do
         context "immutable" $ do
             describe "allocate a storage index" $
@@ -292,11 +320,122 @@ storageSpec makeBackend =
                     property $
                         forAll genStorageIndex (mutableWriteAndEnumerateShares makeBackend)
 
+                it "rejects an update with the wrong write enabler" $
+                    forAll genStorageIndex $ \storageIndex shareNum (secret, wrongSecret) (shareData, junkData) offset ->
+                        (secret /= wrongSecret)
+                            && (shareData /= junkData)
+                            && (B.length shareData > 0)
+                            && (B.length junkData > 0)
+                            ==> monadicIO
+                                . run
+                                . withBackend makeBackend
+                            $ \backend -> do
+                                first <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (writev shareNum offset shareData)
+                                success first `shouldBe` True
+                                readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret wrongSecret) (writev shareNum offset junkData)
+                                    `shouldThrow` (== IncorrectWriteEnablerSecret)
+                                third <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (readv offset (fromIntegral $ B.length shareData))
+                                readData third `shouldBe` Map.singleton shareNum [shareData]
+
+                it "overwrites older data with newer data" $
+                    property $ \storageIndex (readVectors :: NonEmptyList ReadVector) secret shareNum -> do
+                        let is = readVectorToIntervalSet (getNonEmpty readVectors)
+                            sp = IS.span is
+                            (lower, upper) = toFiniteBounds sp
+                            size = upper - lower
+                        bs <- B.pack <$> vector (fromIntegral size)
+                        writeVectors <- writesThatResultIn bs lower size
+                        pure $
+                            counterexample ("write vectors: " <> show writeVectors) $
+                                ioProperty $
+                                    withBackend makeBackend $ \backend -> do
+                                        let x = foldMap (\(WriteVector off shareData) -> writev shareNum off shareData) writeVectors
+                                        writeResult <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) x
+                                        success writeResult `shouldBe` True
+
+                                        let y = foldMap (\(ReadVector off sz) -> readv off sz) (getNonEmpty readVectors)
+                                        readResult <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) y
+                                        Map.map B.concat (readData readResult)
+                                            `shouldBe` Map.singleton shareNum (B.concat $ extractRead lower bs <$> getNonEmpty readVectors)
+
+extractRead :: Integral a => a -> B.ByteString -> ReadVector -> B.ByteString
+extractRead lower bs (ReadVector offset size) = B.take (fromIntegral size) . B.drop (fromIntegral offset - fromIntegral lower) $ bs
+
+toFiniteBounds :: Show r => Interval r -> (r, r)
+toFiniteBounds i = (lower, upper)
+  where
+    lower = toFinite (lowerBound i)
+    upper = toFinite (upperBound i)
+
+    toFinite n = case n of
+        Finite r -> r
+        e -> error ("Non-finite bound " <> show e)
+
+readVectorToIntervalSet :: [ReadVector] -> IS.IntervalSet Integer
+readVectorToIntervalSet rvs = foldr IS.insert IS.empty (f <$> rvs)
+  where
+    f (ReadVector offset size) = interval (Finite offset, Closed) (Finite $ offset + size, Open)
+
+writesThatResultIn :: B.ByteString -> Offset -> Size -> Gen [WriteVector]
+writesThatResultIn "" _ _ = pure []
+writesThatResultIn bs offset size =
+    oneof
+        [ -- The whole thing as one write
+          pure [WriteVector offset bs]
+        , -- Or divide and conquer arbitrarily
+          do
+            prefixLen <- chooseInteger (0, fromIntegral $ B.length bs)
+            pfx <- writesThatResultIn (B.take (fromIntegral prefixLen) bs) offset prefixLen
+            sfx <- writesThatResultIn (B.drop (fromIntegral prefixLen) bs) (offset + prefixLen) (size - prefixLen)
+            pure $ pfx <> sfx
+        , -- Or write some other random somewhere in this range first, to
+          -- later be overwritten.
+          (:) <$> (WriteVector <$> chooseInteger (offset, offset + size) <*> (chooseInteger (1, size) >>= bytes)) <*> writesThatResultIn bs offset size
+        ]
+
+bytes :: Integer -> Gen B.ByteString
+bytes len = B.pack <$> vector (fromIntegral len)
+
 spec :: Spec
 spec = do
-    Test.Hspec.context "memory" $ storageSpec memoryBackend
+    context "utilities" $ do
+        describe "MutableShareStorage" $ do
+            it "finds the larger size for some cases" $ do
+                toMutableShareSize (WriteVector 0 "x") <> toMutableShareSize (WriteVector 1 "x")
+                    `shouldBe` MutableShareSize 0 2
 
-    Test.Hspec.context "filesystem" $ storageSpec filesystemBackend
+                toMutableShareSize (WriteVector 0 "Hello") <> toMutableShareSize (WriteVector 1 "bye")
+                    `shouldBe` MutableShareSize 0 5
+
+                toMutableShareSize (WriteVector 0 "x") <> toMutableShareSize (WriteVector 3 "x")
+                    `shouldBe` MutableShareSize 0 4
+
+                toMutableShareSize (WriteVector 0 "Hello") <> toMutableShareSize (WriteVector 3 "world")
+                    `shouldBe` MutableShareSize 0 8
+
+        describe "shareDataSize" $ do
+            it "converts list of WriteVector to a size" $ do
+                shareDataSize [WriteVector 2 "foo", WriteVector 10 "quux"]
+                    `shouldBe` 14
+                shareDataSize [WriteVector 0 "foobar", WriteVector 2 "q"]
+                    `shouldBe` 6
+                shareDataSize []
+                    `shouldBe` 0
+                shareDataSize [WriteVector 2 "foo", WriteVector 3 "quux"]
+                    `shouldBe` 7
+
+        describe "TestWriteVectors"
+            . lawsCheck
+            . semigroupMonoidLaws
+            $ (Proxy :: Proxy TestWriteVectors)
+
+        describe "ReadTestWriteVectors"
+            . lawsCheck
+            . semigroupMonoidLaws
+            $ (Proxy :: Proxy ReadTestWriteVectors)
+
+    context "memory" $ storageSpec memoryBackend
+    context "filesystem" $ storageSpec filesystemBackend
 
 anUploadSecret :: LeaseSecret
 anUploadSecret = Upload $ UploadSecret "anuploadsecret"

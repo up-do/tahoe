@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Lib (
     gen10String,
@@ -22,10 +23,12 @@ import Data.ByteString (
 
 import qualified Data.Text as Text
 
+import qualified Data.Map.Strict as Map
 import Test.QuickCheck (
     Arbitrary (arbitrary),
     Gen,
-    NonNegative (getNonNegative),
+    NonNegative (NonNegative, getNonNegative),
+    Positive (getPositive),
     shuffle,
     sublistOf,
     suchThatMap,
@@ -36,8 +39,16 @@ import Test.QuickCheck (
 import Test.QuickCheck.Instances.ByteString ()
 
 import TahoeLAFS.Storage.API (
+    Offset,
+    ReadTestWriteResult (ReadTestWriteResult),
+    ReadTestWriteVectors (ReadTestWriteVectors),
+    ReadVector (ReadVector),
     ShareNumber (..),
     StorageIndex,
+    TestOperator (Eq),
+    TestVector (TestVector),
+    TestWriteVectors (TestWriteVectors),
+    WriteVector (..),
  )
 
 gen10String :: Gen String
@@ -65,7 +76,7 @@ b32decode :: String -> ByteString
 b32decode base32 =
     Base32.toBytes b32table $ Base32.fromText b32table $ Text.pack base32
 
-newtype ShareNumbers = ShareNumbers [ShareNumber] deriving (Eq, Ord, Show)
+newtype ShareNumbers = ShareNumbers {getShareNumbers :: [ShareNumber]} deriving (Eq, Ord, Show)
 
 {- | An Arbitrary instance that guarantees ShareNumbers are unique and
    non-empty (without invoking discard).
@@ -77,3 +88,24 @@ instance Arbitrary ShareNumbers where
             arbitrary
                 >>= (shuffle . enumFromTo 0) . getNonNegative
                 >>= \(num : rest) -> (num :) <$> sublistOf rest
+
+instance Arbitrary ShareNumber where
+    arbitrary = ShareNumber <$> arbNonNeg
+
+instance Arbitrary ReadTestWriteVectors where
+    arbitrary = ReadTestWriteVectors <$> arbitrary <*> arbitrary
+
+instance Arbitrary TestWriteVectors where
+    arbitrary = TestWriteVectors <$> arbitrary <*> arbitrary <*> arbitrary
+
+instance Arbitrary TestVector where
+    arbitrary = TestVector <$> arbNonNeg <*> arbNonNeg <*> pure Eq <*> arbitrary
+
+instance Arbitrary WriteVector where
+    arbitrary = WriteVector <$> arbNonNeg <*> arbitrary
+
+instance Arbitrary ReadVector where
+    arbitrary = ReadVector <$> arbNonNeg <*> (getPositive <$> arbitrary)
+
+arbNonNeg :: Gen Offset
+arbNonNeg = getNonNegative <$> arbitrary
