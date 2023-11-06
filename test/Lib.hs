@@ -23,12 +23,12 @@ import Data.ByteString (
 
 import qualified Data.Text as Text
 
-import qualified Data.Map.Strict as Map
 import Test.QuickCheck (
     Arbitrary (arbitrary),
     Gen,
-    NonNegative (NonNegative, getNonNegative),
+    NonNegative (getNonNegative),
     Positive (getPositive),
+    oneof,
     shuffle,
     sublistOf,
     suchThatMap,
@@ -39,8 +39,6 @@ import Test.QuickCheck (
 import Test.QuickCheck.Instances.ByteString ()
 
 import TahoeLAFS.Storage.API (
-    Offset,
-    ReadTestWriteResult (ReadTestWriteResult),
     ReadTestWriteVectors (ReadTestWriteVectors),
     ReadVector (ReadVector),
     ShareNumber (..),
@@ -96,7 +94,7 @@ instance Arbitrary ReadTestWriteVectors where
     arbitrary = ReadTestWriteVectors <$> arbitrary <*> arbitrary
 
 instance Arbitrary TestWriteVectors where
-    arbitrary = TestWriteVectors <$> arbitrary <*> arbitrary <*> arbitrary
+    arbitrary = TestWriteVectors <$> arbitrary <*> arbitrary <*> oneof [pure Nothing, Just <$> arbNonNeg]
 
 instance Arbitrary TestVector where
     arbitrary = TestVector <$> arbNonNeg <*> arbNonNeg <*> pure Eq <*> arbitrary
@@ -107,5 +105,5 @@ instance Arbitrary WriteVector where
 instance Arbitrary ReadVector where
     arbitrary = ReadVector <$> arbNonNeg <*> (getPositive <$> arbitrary)
 
-arbNonNeg :: Gen Offset
+arbNonNeg :: (Arbitrary n, Integral n) => Gen n
 arbNonNeg = getNonNegative <$> arbitrary

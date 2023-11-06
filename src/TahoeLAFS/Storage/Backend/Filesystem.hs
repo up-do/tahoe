@@ -11,24 +11,26 @@ module TahoeLAFS.Storage.Backend.Filesystem (
 
 import Control.Exception (
     throwIO,
+    try,
     tryJust,
  )
-import Control.Monad (unless)
-import Data.Bifunctor (Bifunctor (bimap))
+import Control.Monad (unless, when)
+import Control.Monad.Extra (concatMapM)
+import Data.Bifunctor (Bifunctor (bimap, second))
 import Data.ByteArray (constEq)
 import Data.ByteString (
     hPut,
     readFile,
     writeFile,
  )
+import qualified Data.ByteString as B
 import qualified Data.List
-import Data.Map.Strict (
-    toList,
- )
+import qualified Data.Map.Strict as Map
 import Data.Maybe (
     mapMaybe,
  )
 import qualified Data.Set as Set
+import Data.Tuple.Extra ((&&&))
 import System.Directory (
     createDirectoryIfMissing,
     doesPathExist,
@@ -42,35 +44,38 @@ import System.FilePath (
  )
 import System.IO (
     Handle,
-    IOMode (ReadWriteMode),
+    IOMode (ReadMode, ReadWriteMode),
     SeekMode (AbsoluteSeek),
     hSeek,
     withBinaryFile,
  )
-import System.IO.Error (
-    isDoesNotExistError,
- )
+import System.IO.Error (isDoesNotExistError)
 import TahoeLAFS.Storage.API (
     AllocateBuckets (..),
     AllocationResult (..),
     CBORSet (..),
     Offset,
+    ReadResult,
     ReadTestWriteResult (ReadTestWriteResult, readData, success),
     ReadTestWriteVectors (ReadTestWriteVectors),
+    ReadVector (..),
     ShareData,
     ShareNumber,
+    Size,
     StorageIndex,
-    TestWriteVectors (write),
+    TestVector (..),
+    TestWriteVectors (..),
     UploadSecret (..),
     Version (..),
     Version1Parameters (..),
+    WriteEnablerSecret (..),
     WriteVector (WriteVector),
     shareNumber,
  )
 import qualified TahoeLAFS.Storage.API as Storage
 import TahoeLAFS.Storage.Backend (
     Backend (..),
-    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret),
+    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret, IncorrectWriteEnablerSecret),
     withUploadSecret,
  )
 import Prelude hiding (
@@ -174,19 +179,43 @@ instance Backend FilesystemBackend where
     getMutableShareNumbers = getImmutableShareNumbers
 
     readvAndTestvAndWritev
-        (FilesystemBackend root)
+        backend@(FilesystemBackend root)
         storageIndex
-        _secrets
-        (ReadTestWriteVectors testWritev _readv) = do
-            -- TODO implement readv and testv parts.
-            -- TODO implement secrets
-            mapM_ applyWriteVectors $ toList testWritev
+        secret
+        (ReadTestWriteVectors testWritev readv) = do
+            checkWriteEnabler secret (pathOfStorageIndex root storageIndex)
+            readData <- runAllReads
+            success <- fmap and . concatMapM (uncurry checkTestVectors . second test) . Map.toList $ testWritev
+            when success $ mapM_ applyWriteVectors $ Map.toList testWritev
             return
                 ReadTestWriteResult
-                    { success = True
-                    , readData = mempty
+                    { success = success
+                    , readData = readData
                     }
           where
+            runAllReads :: IO ReadResult
+            runAllReads = do
+                (CBORSet allShareNumbers) <- getMutableShareNumbers backend storageIndex
+                let allShareNumbers' = Set.toList allShareNumbers
+                Map.fromList . zip allShareNumbers' <$> mapM readvOneShare allShareNumbers'
+
+            readvOneShare :: ShareNumber -> IO [ShareData]
+            readvOneShare shareNum =
+                mapM (uncurry (readShare shareNum) . (offset &&& readSize)) readv
+
+            checkTestVectors :: ShareNumber -> [TestVector] -> IO [Bool]
+            checkTestVectors = mapM . checkTestVector
+
+            checkTestVector :: ShareNumber -> TestVector -> IO Bool
+            checkTestVector shareNum TestVector{..} = (specimen ==) <$> readShare shareNum testOffset testSize
+
+            readShare :: ShareNumber -> Offset -> Size -> IO ShareData
+            readShare shareNum offset size = withBinaryFile path ReadMode $ \shareFile -> do
+                hSeek shareFile AbsoluteSeek offset
+                B.hGetSome shareFile (fromIntegral size)
+              where
+                path = pathOfShare root storageIndex shareNum
+
             applyWriteVectors ::
                 (ShareNumber, TestWriteVectors) ->
                 IO ()
@@ -279,3 +308,24 @@ checkUploadSecret sharePath (UploadSecret uploadSecret) = do
 -- | Partition a list based on the result of a monadic predicate.
 partitionM :: Monad m => (a -> m Bool) -> [a] -> m ([a], [a])
 partitionM pred' items = bimap (fst <$>) (fst <$>) . Data.List.partition snd . zip items <$> mapM pred' items
+
+{- | Throw IncorrectUploadSecret if the given secret does not match the
+ existing secret for the given storage index path or succeed with () if it
+ does.  If there is no secret yet, record the given one and succeed with ().
+-}
+checkWriteEnabler :: WriteEnablerSecret -> FilePath -> IO ()
+checkWriteEnabler (WriteEnablerSecret given) storageIndexPath = do
+    x <- try . B.readFile $ path
+    case x of
+        Left e
+            | isDoesNotExistError e -> do
+                -- If there is no existing value, this check initializes it to the given
+                -- value.
+                createDirectoryIfMissing True (takeDirectory path)
+                B.writeFile path given
+            | otherwise -> throwIO e
+        Right existing
+            | WriteEnablerSecret given == WriteEnablerSecret existing -> pure ()
+            | otherwise -> throwIO IncorrectWriteEnablerSecret
+  where
+    path = secretPath storageIndexPath

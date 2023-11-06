@@ -45,6 +45,7 @@ import Test.Hspec (
 import Test.QuickCheck (
     Gen,
     NonEmptyList (getNonEmpty),
+    NonNegative (NonNegative),
     Positive (..),
     Property,
     chooseInteger,
@@ -315,13 +316,17 @@ storageSpec makeBackend = do
                     forAll genStorageIndex (immutableWriteAndRewriteShare makeBackend)
 
         context "mutable" $ do
+            -- XXX There's lots of problems around supplying negative integer
+            -- values in most places.  We avoid tripping over those cases here
+            -- but we should really fix the implementation to deal with them
+            -- sensible.
             describe "write a share" $ do
                 it "returns the share numbers that were written" $
                     property $
                         forAll genStorageIndex (mutableWriteAndEnumerateShares makeBackend)
 
                 it "rejects an update with the wrong write enabler" $
-                    forAll genStorageIndex $ \storageIndex shareNum (secret, wrongSecret) (shareData, junkData) offset ->
+                    forAll genStorageIndex $ \storageIndex shareNum (secret, wrongSecret) (shareData, junkData) (NonNegative offset) ->
                         (secret /= wrongSecret)
                             && (shareData /= junkData)
                             && (B.length shareData > 0)
@@ -338,7 +343,10 @@ storageSpec makeBackend = do
                                 readData third `shouldBe` Map.singleton shareNum [shareData]
 
                 it "overwrites older data with newer data" $
-                    property $ \storageIndex (readVectors :: NonEmptyList ReadVector) secret shareNum -> do
+                    -- XXX We go out of our way to generate a legal storage
+                    -- index here.  Illegal storage indexes aren't checked by
+                    -- the system anywhere but they really ought to be.
+                    forAll genStorageIndex $ \storageIndex (readVectors :: NonEmptyList ReadVector) secret shareNum -> do
                         let is = readVectorToIntervalSet (getNonEmpty readVectors)
                             sp = IS.span is
                             (lower, upper) = toFiniteBounds sp
