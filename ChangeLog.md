@@ -9,6 +9,9 @@
 * The memory and filesystem backends have been updated to reflect these Great
   Black Swamp specification changes.
 
+* The memory and filesystem backends now make at least a token effort to
+  implement the mutable portions of the API.
+
 ## 0.3.1.0
 
 * ``TahoeLAFS.Storage.Client.runGBS`` is a new high-level API for performing an interaction with a GBS server.
