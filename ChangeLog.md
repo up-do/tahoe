@@ -1,5 +1,9 @@
 # Changelog for tahoe-great-black-swamp
 
+## 0.4.0.1
+
+* Package metadata improvements.
+
 ## 0.4.0.0
 
 * ``TahoeLAFS.Storage.Backend.Backend`` has received a number of incompatible
