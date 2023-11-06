@@ -327,15 +327,15 @@ storageSpec makeBackend = do
                             && (B.length shareData > 0)
                             && (B.length junkData > 0)
                             ==> monadicIO
-                            $ run $
-                                withBackend makeBackend $
-                                    \backend -> do
-                                        first <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (writev shareNum offset shareData)
-                                        success first `shouldBe` True
-                                        second <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret wrongSecret) (writev shareNum offset junkData)
-                                        success second `shouldBe` False
-                                        third <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (readv offset (fromIntegral $ B.length shareData))
-                                        readData third `shouldBe` Map.singleton shareNum [shareData]
+                                . run
+                                . withBackend makeBackend
+                            $ \backend -> do
+                                first <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (writev shareNum offset shareData)
+                                success first `shouldBe` True
+                                readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret wrongSecret) (writev shareNum offset junkData)
+                                    `shouldThrow` (== IncorrectWriteEnablerSecret)
+                                third <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (readv offset (fromIntegral $ B.length shareData))
+                                readData third `shouldBe` Map.singleton shareNum [shareData]
 
                 it "overwrites older data with newer data" $
                     property $ \storageIndex (readVectors :: NonEmptyList ReadVector) secret shareNum -> do

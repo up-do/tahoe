@@ -30,7 +30,7 @@ module TahoeLAFS.Storage.API (
     ReadTestWriteResult (..),
     ReadVector (..),
     QueryRange,
-    TestVector (TestVector),
+    TestVector (..),
     ReadResult,
     CorruptionDetails (..),
     TestOperator (..),

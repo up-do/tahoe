@@ -10,6 +10,7 @@ module TahoeLAFS.Storage.Backend.Memory (
 
 import Control.Exception (
     throw,
+    throwIO,
  )
 import Control.Foldl.ByteString (Word8)
 import Data.ByteArray (constEq)
@@ -49,7 +50,7 @@ import TahoeLAFS.Storage.API (
  )
 import TahoeLAFS.Storage.Backend (
     Backend (..),
-    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret, ShareNotAllocated, ShareSizeMismatch),
+    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret, IncorrectWriteEnablerSecret, ShareNotAllocated, ShareSizeMismatch),
     withUploadSecret,
  )
 import Prelude hiding (
@@ -240,13 +241,22 @@ instance Backend (IORef MemoryBackend) where
             let queryRange = readvToQueryRange readv
 
             readData <- mapM (\shareNum -> (shareNum,) <$> readMutableShare' backend storageIndex shareNum queryRange) (Set.toList allShareNums)
-            success <- atomicModifyIORef' backend tryWrite
-
-            return
-                ReadTestWriteResult
-                    { readData = Map.fromList readData
-                    , success = success
-                    }
+            outcome <- atomicModifyIORef' backend tryWrite
+            case outcome of
+                TestSuccess ->
+                    return
+                        ReadTestWriteResult
+                            { readData = Map.fromList readData
+                            , success = True
+                            }
+                TestFail ->
+                    return
+                        ReadTestWriteResult
+                            { readData = Map.fromList readData
+                            , success = False
+                            }
+                SecretMismatch ->
+                    throwIO IncorrectWriteEnablerSecret
           where
             readvToQueryRange :: [ReadVector] -> QueryRange
             --            readvToQueryRange [] = Nothing
@@ -260,8 +270,8 @@ instance Backend (IORef MemoryBackend) where
 
             tryWrite m@MemoryBackend{mutableShares} =
                 case addShares storageIndex secret mutableShares (Map.map write testWritev) of
-                    Nothing -> (m, False)
-                    Just newShares -> (m{mutableShares = newShares}, True)
+                    Nothing -> (m, SecretMismatch)
+                    Just newShares -> (m{mutableShares = newShares}, TestSuccess)
 
     readMutableShare backend storageIndex shareNum queryRange =
         B.concat <$> readMutableShare' backend storageIndex shareNum queryRange
@@ -314,13 +324,13 @@ addShare storageIndex secret shareNum writev =
 
 addShares :: StorageIndex -> WriteEnablerSecret -> MutableShareStorage -> Map.Map ShareNumber [WriteVector] -> Maybe MutableShareStorage
 addShares storageIndex secret existing updates
-    | isNothing writeEnabler = Just go
-    | writeEnabler == Just secret = Just go
+    | isNothing existingSecret = Just go
+    | existingSecret == Just secret = Just go
     | otherwise = Nothing
   where
     go = Map.foldrWithKey (addShare storageIndex secret) existing updates
 
-    writeEnabler = readSecret <$> Map.lookup storageIndex existing
+    existingSecret = readSecret <$> Map.lookup storageIndex existing
 
 memoryBackend :: IO (IORef MemoryBackend)
 memoryBackend = do
@@ -356,7 +366,6 @@ readMutableShare' backend storageIndex shareNum queryRange = do
             size = maybe 0 shareDataSize (getShareData storage)
 
     readOneVector :: ReadVector -> [WriteVector] -> ShareData
-    readOneVector ReadVector{..} [] = ""
     readOneVector ReadVector{offset, readSize} wv =
         B.pack (extractBytes <$> positions)
       where
@@ -373,3 +382,12 @@ readMutableShare' backend storageIndex shareNum queryRange = do
         byteFromShare p (WriteVector off bytes)
             | p >= off && p < off + fromIntegral (B.length bytes) = Just (B.index bytes (fromIntegral $ p - off))
             | otherwise = Nothing
+
+-- | Internal type tracking the result of an attempted mutable write.
+data WriteResult
+    = -- | The test condition succeeded and the write was performed.
+      TestSuccess
+    | -- | The test condition failed and the write was not performed.
+      TestFail
+    | -- | The supplied secret was incorrect and the write was not performed.
+      SecretMismatch
