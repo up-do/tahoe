@@ -17,6 +17,7 @@ import Data.Aeson (
     (.:),
     (.=),
  )
+import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
 import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
 import Data.Map.Merge.Strict (merge, preserveMissing, zipWithMatched)
@@ -107,10 +108,16 @@ newtype CorruptionDetails = CorruptionDetails
 -}
 newtype UploadSecret = UploadSecret B.ByteString
 
+instance Eq UploadSecret where
+    (UploadSecret left) == (UploadSecret right) = constEq left right
+
 {- | A secret shared between an SSK write capability holder and this storage
  server for the purpose of authorizing write operations on a mutable object.
 -}
 newtype WriteEnablerSecret = WriteEnablerSecret B.ByteString
+
+instance Eq WriteEnablerSecret where
+    (WriteEnablerSecret left) == (WriteEnablerSecret right) = constEq left right
 
 -- | Describe tests, reads, and writes to perform on a mutable object.
 data ReadTestWriteVectors = ReadTestWriteVectors
