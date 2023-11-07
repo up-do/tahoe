@@ -279,6 +279,10 @@ instance FromJSON WriteVector where
 data WriteImmutableError
     = MissingUploadSecret
     | ShareSizeMismatch
+    | MaximumShareSizeExceeded
+        { maximumShareSizeExceededLimit :: Integer
+        , maximumShareSizeExceededGiven :: Integer
+        }
     | ImmutableShareAlreadyWritten
     | ShareNotAllocated
     | IncorrectUploadSecret
