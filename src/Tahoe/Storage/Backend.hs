@@ -275,7 +275,9 @@ instance FromJSON WriteVector where
     parseJSON = withObject "WriteVector" $ \v ->
         WriteVector <$> v .: "offset" <*> (unBase64 <$> v .: "data")
 
--- | Exceptional cases which might be encounted by various backend operations.
+{- | Exceptional cases which might be encounted by various backend for
+ operations related to immutable shares.
+-}
 data WriteImmutableError
     = -- | Used to reject an immutable allocate or upload with no upload secret.
       MissingUploadSecret
@@ -298,6 +300,9 @@ data WriteImmutableError
       ShareNotAllocated
     deriving (Ord, Eq, Show)
 
+{- | Exceptional cases which might be encounted by various backend for
+ operations related to mutable shares.
+-}
 data WriteMutableError
     = -- | Used to reject a mutable write with no write enabler secret.
       MissingWriteEnablerSecret
