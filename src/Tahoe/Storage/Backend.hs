@@ -296,6 +296,8 @@ data WriteImmutableError
     | -- | Used to reject an immutable write to a share which has not been
       -- allocated.
       ShareNotAllocated
+    | -- | Used to reject a mutable write with no write enabler secret.
+      MissingWriteEnablerSecret
     | -- | Used to reject a mutable write with an incorrect write enabler secret.
       IncorrectWriteEnablerSecret
     deriving (Ord, Eq, Show)
