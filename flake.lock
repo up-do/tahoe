@@ -359,14 +359,18 @@
         ]
       },
       "locked": {
-        "lastModified": 1699302391,
-        "narHash": "sha256-Bz7xdTiLPY2PhnBjgEI102Xqmb23+UhLNt+r2E4fe7U=",
+        "lastModified": 1699453849,
+        "narHash": "sha256-7qqW8WwJ3yDrEsO9EfL9GxJo8piV5QeR7/GI9yYngaU=",
+        "ref": "main",
+        "rev": "bb60f23c8660db38a2ff89ec731aaa3a08c9d7ba",
+        "revCount": 10,
         "type": "git",
-        "url": "file:///home/exarkun/Work/haskell/tahoe-great-black-swamp-types"
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types"
       },
       "original": {
+        "ref": "main",
         "type": "git",
-        "url": "file:///home/exarkun/Work/haskell/tahoe-great-black-swamp-types"
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types"
       }
     }
   },
