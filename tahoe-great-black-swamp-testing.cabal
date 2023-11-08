@@ -18,10 +18,10 @@ name:            tahoe-great-black-swamp-testing
 -- See the Haskell package versioning policy (PVP) for standards
 -- guiding when and how versions should be incremented.
 -- https://pvp.haskell.org
--- PVP summary:     +-+------- breaking API changes
---                  | | +----- non-breaking API additions
---                  | | | +--- code changes with no API change
-version:         0.1.0.0
+-- PVP summary:  +-+------- breaking API changes
+--               | | +----- non-breaking API additions
+--               | | | +--- code changes with no API change
+version:         0.4.0.0
 
 -- A short (one-line) description of the package.
 synopsis:
