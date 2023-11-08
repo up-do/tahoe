@@ -277,16 +277,27 @@ instance FromJSON WriteVector where
 
 -- | Exceptional cases which might be encounted by various backend operations.
 data WriteImmutableError
-    = MissingUploadSecret
-    | ShareSizeMismatch
-    | MaximumShareSizeExceeded
+    = -- | Used to reject an immutable allocate or upload with no upload secret.
+      MissingUploadSecret
+    | -- | Used to reject an immutable upload with an incorrect upload secret.
+      IncorrectUploadSecret
+    | -- | Used to reject an immutable allocate of a size that does not match
+      -- existing shares with the same storage index.
+      ShareSizeMismatch
+    | -- | Used to reject an immutable allocate of a size greater than the
+      -- maximum allowed by the server.
+      MaximumShareSizeExceeded
         { maximumShareSizeExceededLimit :: Integer
         , maximumShareSizeExceededGiven :: Integer
         }
-    | ImmutableShareAlreadyWritten
-    | ShareNotAllocated
-    | IncorrectUploadSecret
-    | IncorrectWriteEnablerSecret
+    | -- | Used to reject an immutable write to a share that is already
+      -- completely written.
+      ImmutableShareAlreadyWritten
+    | -- | Used to reject an immutable write to a share which has not been
+      -- allocated.
+      ShareNotAllocated
+    | -- | Used to reject a mutable write with an incorrect write enabler secret.
+      IncorrectWriteEnablerSecret
     deriving (Ord, Eq, Show)
 
 instance Exception WriteImmutableError
