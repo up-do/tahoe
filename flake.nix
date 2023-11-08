@@ -6,14 +6,14 @@
     nixpkgs.follows = "hs-flake-utils/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
     hs-flake-utils.url = "git+https://whetstone.private.storage/jcalderone/hs-flake-utils.git?ref=main";
-    tahoe-great-black-swamp.url = "git+https://whetstone.private.storage/privatestorage/tahoe-great-black-swamp.git?ref=main";
+    tahoe-great-black-swamp-types.url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types?ref=main";
   };
 
   outputs = {
     self,
     nixpkgs,
     flake-utils,
-    tahoe-great-black-swamp,
+    tahoe-great-black-swamp-types,
     hs-flake-utils,
   }: let
     ulib = flake-utils.lib;
@@ -30,7 +30,8 @@
         compilerVersion = ghcVersion;
         packageName = "tahoe-great-black-swamp-testing";
         hsPkgsOverrides = hfinal: hprev: {
-          tahoe-great-black-swamp = tahoe-great-black-swamp.outputs.packages.${system}.default;
+          tahoe-great-black-swamp-types =
+            tahoe-great-black-swamp-types.outputs.packages.${system}.default;
         };
       };
 
@@ -80,7 +81,8 @@
 
       apps.write-cabal-project = hslib.apps.write-cabal-project {
         localPackages = {
-          tahoe-great-black-swamp = tahoe-great-black-swamp.sourceInfo.outPath;
+          tahoe-great-black-swamp-types =
+            tahoe-great-black-swamp-types.sourceInfo.outPath;
         };
       };
 
