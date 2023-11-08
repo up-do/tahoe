@@ -50,6 +50,11 @@ import System.IO (
     withBinaryFile,
  )
 import System.IO.Error (isDoesNotExistError)
+import Tahoe.Storage.Backend (
+    Backend (..),
+    WriteImmutableError (..),
+    WriteMutableError (..),
+ )
 import TahoeLAFS.Storage.API (
     AllocateBuckets (..),
     AllocationResult (..),
@@ -73,11 +78,7 @@ import TahoeLAFS.Storage.API (
     shareNumber,
  )
 import qualified TahoeLAFS.Storage.API as Storage
-import TahoeLAFS.Storage.Backend (
-    Backend (..),
-    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret, IncorrectWriteEnablerSecret),
-    withUploadSecret,
- )
+import TahoeLAFS.Storage.Backend (withUploadSecret)
 import Prelude hiding (
     readFile,
     writeFile,

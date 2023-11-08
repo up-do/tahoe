@@ -50,7 +50,8 @@ import TahoeLAFS.Storage.API (
  )
 import TahoeLAFS.Storage.Backend (
     Backend (..),
-    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret, IncorrectWriteEnablerSecret, ShareNotAllocated, ShareSizeMismatch),
+    WriteImmutableError (..),
+    WriteMutableError (..),
     withUploadSecret,
  )
 import Prelude hiding (
