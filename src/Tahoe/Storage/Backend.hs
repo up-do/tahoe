@@ -300,6 +300,8 @@ data WriteImmutableError
       ShareNotAllocated
     deriving (Ord, Eq, Show)
 
+instance Exception WriteImmutableError
+
 {- | Exceptional cases which might be encounted by various backend for
  operations related to mutable shares.
 -}
@@ -310,7 +312,7 @@ data WriteMutableError
       IncorrectWriteEnablerSecret
     deriving (Ord, Eq, Show)
 
-instance Exception WriteImmutableError
+instance Exception WriteMutableError
 
 class Backend b where
     version :: b -> IO Version
