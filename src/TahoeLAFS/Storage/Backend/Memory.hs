@@ -140,6 +140,12 @@ allocate ::
     (MemoryBackend, AllocationResult)
 allocate storageIndex shareNumbers uploadSecret size backend@MemoryBackend{memoryBackendBuckets}
     | maybe size bucketSize existing /= size = throw ShareSizeMismatch
+    | size > maxSize =
+        throw
+            MaximumShareSizeExceeded
+                { maximumShareSizeExceededLimit = maxSize
+                , maximumShareSizeExceededGiven = size
+                }
     | otherwise =
         ( backend{memoryBackendBuckets = updated}
         , result
@@ -147,6 +153,8 @@ allocate storageIndex shareNumbers uploadSecret size backend@MemoryBackend{memor
   where
     existing = Map.lookup storageIndex memoryBackendBuckets
     updated = Map.insertWith mergeBuckets storageIndex newBucket memoryBackendBuckets
+
+    maxSize = maximumImmutableShareSize . makeVersionParams $ 0
 
     alreadyHave = maybe [] (Map.keys . bucketShares) existing
     allocated = filter (`notElem` alreadyHave) shareNumbers
@@ -207,18 +215,20 @@ writeImm storageIndex shareNum (UploadSecret uploadSecret) newData b@MemoryBacke
 instance Show MemoryBackend where
     show _ = "<MemoryBackend>"
 
+makeVersionParams totalSize =
+    Version1Parameters
+        { maximumImmutableShareSize = 1024 * 1024 * 64
+        , maximumMutableShareSize = 1024 * 1024 * 64
+        , availableSpace = (1024 * 1024 * 1024) - totalSize
+        }
+
 instance Backend (IORef MemoryBackend) where
     version backend = do
         totalSize <- readIORef backend >>= totalShareSize
         return
             Version
                 { applicationVersion = "(memory)"
-                , parameters =
-                    Version1Parameters
-                        { maximumImmutableShareSize = 1024 * 1024 * 64
-                        , maximumMutableShareSize = 1024 * 1024 * 64
-                        , availableSpace = (1024 * 1024 * 1024) - totalSize
-                        }
+                , parameters = makeVersionParams totalSize
                 }
 
     getMutableShareNumbers :: IORef MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
