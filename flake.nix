@@ -105,6 +105,8 @@
             export PKG_CONFIG_PATH=${pkgs.lib.makeSearchPath "lib/pkgconfig" [pkgs.zlib.dev]}
 
             pkg-config --list-all
+
+            cabal build --enable-tests -v3
           '';
         };
         release = hslib.apps.release {};
