@@ -1,12 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 
-module TahoeLAFS.Storage.Backend.Memory (
-    MemoryBackend (MemoryBackend),
-    memoryBackend,
-    MutableShareSize (..),
-    shareDataSize,
-    toMutableShareSize,
-) where
+module TahoeLAFS.Storage.Backend.Memory where
 
 import Control.Exception (
     throw,
@@ -15,22 +9,22 @@ import Control.Exception (
 import Control.Foldl.ByteString (Word8)
 import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
+import Data.Composition ((.:))
 import Data.IORef (
     IORef,
     atomicModifyIORef',
-    modifyIORef,
     newIORef,
     readIORef,
  )
 import Data.Map.Merge.Strict (merge, preserveMissing, zipWithMatched)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isNothing)
-import Data.Monoid (Last (Last, getLast))
+import Data.Monoid (All (All, getAll), First (First, getFirst))
 import qualified Data.Set as Set
-import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo, ByteRangeSuffix))
-import TahoeLAFS.Storage.API (
+import Tahoe.Storage.Backend (
     AllocateBuckets (AllocateBuckets),
     AllocationResult (..),
+    Backend (..),
     CBORSet (..),
     Offset,
     QueryRange,
@@ -41,18 +35,20 @@ import TahoeLAFS.Storage.API (
     ShareNumber,
     Size,
     StorageIndex,
+    TestVector (..),
     TestWriteVectors (..),
     UploadSecret (UploadSecret),
     Version (..),
     Version1Parameters (..),
-    WriteEnablerSecret (WriteEnablerSecret),
+    WriteEnablerSecret,
+    WriteImmutableError (..),
+    WriteMutableError (..),
     WriteVector (..),
  )
 import TahoeLAFS.Storage.Backend (
-    Backend (..),
-    WriteImmutableError (ImmutableShareAlreadyWritten, IncorrectUploadSecret, IncorrectWriteEnablerSecret, ShareNotAllocated, ShareSizeMismatch),
     withUploadSecret,
  )
+import TahoeLAFS.Storage.Backend.Util (queryRangeToReadVector, readvToQueryRange)
 import Prelude hiding (
     lookup,
     map,
@@ -65,7 +61,10 @@ data Bucket = Bucket
     , bucketShares :: Map.Map ShareNumber ImmutableShare
     }
 
-data SecretProtected a = SecretProtected WriteEnablerSecret a
+data SecretProtected a = SecretProtected WriteEnablerSecret a deriving (Eq)
+
+instance Show a => Show (SecretProtected a) where
+    show (SecretProtected _ a) = "SecretProtected " <> show a
 
 readSecret :: SecretProtected a -> WriteEnablerSecret
 readSecret (SecretProtected s _) = s
@@ -139,6 +138,12 @@ allocate ::
     (MemoryBackend, AllocationResult)
 allocate storageIndex shareNumbers uploadSecret size backend@MemoryBackend{memoryBackendBuckets}
     | maybe size bucketSize existing /= size = throw ShareSizeMismatch
+    | size > maximumShareSize =
+        throw
+            MaximumShareSizeExceeded
+                { maximumShareSizeExceededLimit = maximumShareSize
+                , maximumShareSizeExceededGiven = size
+                }
     | otherwise =
         ( backend{memoryBackendBuckets = updated}
         , result
@@ -206,18 +211,24 @@ writeImm storageIndex shareNum (UploadSecret uploadSecret) newData b@MemoryBacke
 instance Show MemoryBackend where
     show _ = "<MemoryBackend>"
 
+maximumShareSize :: Integral i => i
+maximumShareSize = fromIntegral (maxBound :: Int)
+
+makeVersionParams :: Integer -> Version1Parameters
+makeVersionParams totalSize =
+    Version1Parameters
+        { maximumImmutableShareSize = maximumShareSize
+        , maximumMutableShareSize = maximumShareSize
+        , availableSpace = (1024 * 1024 * 1024) - totalSize
+        }
+
 instance Backend (IORef MemoryBackend) where
     version backend = do
         totalSize <- readIORef backend >>= totalShareSize
         return
             Version
                 { applicationVersion = "(memory)"
-                , parameters =
-                    Version1Parameters
-                        { maximumImmutableShareSize = 1024 * 1024 * 64
-                        , maximumMutableShareSize = 1024 * 1024 * 64
-                        , availableSpace = (1024 * 1024 * 1024) - totalSize
-                        }
+                , parameters = makeVersionParams totalSize
                 }
 
     getMutableShareNumbers :: IORef MemoryBackend -> StorageIndex -> IO (CBORSet ShareNumber)
@@ -230,48 +241,49 @@ instance Backend (IORef MemoryBackend) where
             $ sharemap
 
     readvAndTestvAndWritev :: IORef MemoryBackend -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadTestWriteResult
-    readvAndTestvAndWritev
-        backend
-        storageIndex
-        secret
-        (ReadTestWriteVectors testWritev readv) = do
-            -- TODO implement testv parts.
+    readvAndTestvAndWritev backend storageIndex secret (ReadTestWriteVectors testWritev readv) = do
+        (CBORSet allShareNums) <- getMutableShareNumbers backend storageIndex
+        let queryRange = readvToQueryRange readv
 
-            (CBORSet allShareNums) <- getMutableShareNumbers backend storageIndex
-            let queryRange = readvToQueryRange readv
+        readData <- mapM (\shareNum -> (shareNum,) <$> readMutableShare' backend storageIndex shareNum queryRange) (Set.toList allShareNums)
 
-            readData <- mapM (\shareNum -> (shareNum,) <$> readMutableShare' backend storageIndex shareNum queryRange) (Set.toList allShareNums)
-            outcome <- atomicModifyIORef' backend tryWrite
-            case outcome of
-                TestSuccess ->
-                    return
-                        ReadTestWriteResult
-                            { readData = Map.fromList readData
-                            , success = True
-                            }
-                TestFail ->
-                    return
-                        ReadTestWriteResult
-                            { readData = Map.fromList readData
-                            , success = False
-                            }
-                SecretMismatch ->
-                    throwIO IncorrectWriteEnablerSecret
+        outcome <- atomicModifyIORef' backend tryWrite
+        case outcome of
+            TestSuccess ->
+                return
+                    ReadTestWriteResult
+                        { readData = Map.fromList readData
+                        , success = True
+                        }
+            TestFail ->
+                return
+                    ReadTestWriteResult
+                        { readData = Map.fromList readData
+                        , success = False
+                        }
+            SecretMismatch ->
+                throwIO IncorrectWriteEnablerSecret
+      where
+        checkTestVectors :: MutableShareStorage -> Map.Map ShareNumber TestWriteVectors -> Bool
+        checkTestVectors mutableShares = getAll . Map.foldMapWithKey (foldMap2 $ All .: checkTestVector mutableShares) . Map.map test
+
+        checkTestVector :: MutableShareStorage -> ShareNumber -> TestVector -> Bool
+        checkTestVector mutableShares shareNum TestVector{..} =
+            specimen == actual
           where
-            readvToQueryRange :: [ReadVector] -> QueryRange
-            --            readvToQueryRange [] = Nothing
-            readvToQueryRange rv = Just (go rv)
-              where
-                go [] = []
-                go (r : rs) = ByteRangeFromTo off end : go rs
-                  where
-                    off = offset r
-                    end = off + readSize r - 1
+            actual =
+                readMutableShare''
+                    mutableShares
+                    storageIndex
+                    shareNum
+                    ReadVector{offset = testOffset, readSize = fromIntegral $ B.length specimen}
 
-            tryWrite m@MemoryBackend{mutableShares} =
+        tryWrite m@MemoryBackend{mutableShares}
+            | checkTestVectors mutableShares testWritev =
                 case addShares storageIndex secret mutableShares (Map.map write testWritev) of
                     Nothing -> (m, SecretMismatch)
                     Just newShares -> (m{mutableShares = newShares}, TestSuccess)
+            | otherwise = (m, TestFail)
 
     readMutableShare backend storageIndex shareNum queryRange =
         B.concat <$> readMutableShare' backend storageIndex shareNum queryRange
@@ -320,7 +332,7 @@ addShare storageIndex secret shareNum writev =
     f :: Map.Map ShareNumber [WriteVector] -> Map.Map ShareNumber [WriteVector] -> Map.Map ShareNumber [WriteVector]
     f = merge preserveMissing preserveMissing (zipWithMatched (const (<>)))
 
-    newShare = SecretProtected secret (Map.singleton shareNum writev)
+    newShare = SecretProtected secret (Map.singleton shareNum (reverse writev))
 
 addShares :: StorageIndex -> WriteEnablerSecret -> MutableShareStorage -> Map.Map ShareNumber [WriteVector] -> Maybe MutableShareStorage
 addShares storageIndex secret existing updates
@@ -339,31 +351,14 @@ memoryBackend = do
 readMutableShare' :: IORef MemoryBackend -> StorageIndex -> ShareNumber -> QueryRange -> IO [ShareData]
 readMutableShare' backend storageIndex shareNum queryRange = do
     storage <- mutableShares <$> readIORef backend
-    pure $ doOneRead <$> rv storage <*> pure storage
+    let shareSize = maybe 0 shareDataSize (getShareData storage storageIndex shareNum)
+    pure $ readMutableShare'' storage storageIndex shareNum <$> queryRangeToReadVector shareSize queryRange
+
+readMutableShare'' :: MutableShareStorage -> StorageIndex -> ShareNumber -> ReadVector -> ShareData
+readMutableShare'' storage storageIndex shareNum rv =
+    maybe "" (readOneVector rv) theShareData
   where
-    rv :: MutableShareStorage -> [ReadVector]
-    rv storage = queryRangeToReadVector storage queryRange
-
-    getShareData storage =
-        Map.lookup storageIndex storage >>= Map.lookup shareNum . readProtected
-
-    doOneRead :: ReadVector -> MutableShareStorage -> ShareData
-    doOneRead readv storage =
-        maybe "" (readOneVector readv) (getShareData storage)
-
-    queryRangeToReadVector :: MutableShareStorage -> QueryRange -> [ReadVector]
-    queryRangeToReadVector storage Nothing = [ReadVector 0 size]
-      where
-        size = maybe 0 shareDataSize (getShareData storage)
-    queryRangeToReadVector storage (Just ranges) = toReadVector <$> ranges
-      where
-        toReadVector (ByteRangeFrom start) = ReadVector start size
-          where
-            size = maybe 0 shareDataSize (getShareData storage)
-        toReadVector (ByteRangeFromTo start end) = ReadVector start (end - start + 1)
-        toReadVector (ByteRangeSuffix len) = ReadVector (size - len) len
-          where
-            size = maybe 0 shareDataSize (getShareData storage)
+    theShareData = getShareData storage storageIndex shareNum
 
     readOneVector :: ReadVector -> [WriteVector] -> ShareData
     readOneVector ReadVector{offset, readSize} wv =
@@ -374,14 +369,18 @@ readMutableShare' backend storageIndex shareNum queryRange = do
         extractBytes :: Integer -> Word8
         extractBytes p = fromMaybe 0 (go wv)
           where
-            -- New writes are added to the end of the list so give the Last
+            -- New writes are added to the front of the list so give the First
             -- write precedence over others.
-            go = getLast . foldMap (Last . byteFromShare p)
+            go = getFirst . foldMap (First . byteFromShare p)
 
         byteFromShare :: Integer -> WriteVector -> Maybe Word8
         byteFromShare p (WriteVector off bytes)
             | p >= off && p < off + fromIntegral (B.length bytes) = Just (B.index bytes (fromIntegral $ p - off))
             | otherwise = Nothing
+
+getShareData :: MutableShareStorage -> StorageIndex -> ShareNumber -> Maybe [WriteVector]
+getShareData storage storageIndex shareNum =
+    Map.lookup storageIndex storage >>= Map.lookup shareNum . readProtected
 
 -- | Internal type tracking the result of an attempted mutable write.
 data WriteResult
@@ -391,3 +390,6 @@ data WriteResult
       TestFail
     | -- | The supplied secret was incorrect and the write was not performed.
       SecretMismatch
+
+foldMap2 :: (Foldable o, Monoid c) => (a -> b -> c) -> (a -> o b -> c)
+foldMap2 f a = foldMap (f a)

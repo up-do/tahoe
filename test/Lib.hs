@@ -1,13 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Lib (
     gen10String,
-    genStorageIndex,
     positiveIntegers,
     b32encode,
     b32decode,
-    ShareNumbers (..),
 ) where
 
 import Data.Word (
@@ -56,10 +53,6 @@ gen10ByteString :: Gen ByteString
 gen10ByteString =
     suchThatMap (vectorOf 10 (arbitrary :: Gen Word8)) (Just . pack)
 
-genStorageIndex :: Gen StorageIndex
-genStorageIndex =
-    suchThatMap gen10ByteString (Just . b32encode)
-
 positiveIntegers :: Gen Integer
 positiveIntegers =
     suchThatMap (arbitrary :: Gen Integer) (Just . abs)
@@ -73,37 +66,3 @@ b32encode = Text.unpack . Base32.toText . Base32.fromBytes b32table
 b32decode :: String -> ByteString
 b32decode base32 =
     Base32.toBytes b32table $ Base32.fromText b32table $ Text.pack base32
-
-newtype ShareNumbers = ShareNumbers {getShareNumbers :: [ShareNumber]} deriving (Eq, Ord, Show)
-
-{- | An Arbitrary instance that guarantees ShareNumbers are unique and
-   non-empty (without invoking discard).
--}
-instance Arbitrary ShareNumbers where
-    arbitrary = ShareNumbers . fmap ShareNumber <$> nums
-      where
-        nums =
-            arbitrary
-                >>= (shuffle . enumFromTo 0) . getNonNegative
-                >>= \(num : rest) -> (num :) <$> sublistOf rest
-
-instance Arbitrary ShareNumber where
-    arbitrary = ShareNumber <$> arbNonNeg
-
-instance Arbitrary ReadTestWriteVectors where
-    arbitrary = ReadTestWriteVectors <$> arbitrary <*> arbitrary
-
-instance Arbitrary TestWriteVectors where
-    arbitrary = TestWriteVectors <$> arbitrary <*> arbitrary <*> oneof [pure Nothing, Just <$> arbNonNeg]
-
-instance Arbitrary TestVector where
-    arbitrary = TestVector <$> arbNonNeg <*> arbNonNeg <*> pure Eq <*> arbitrary
-
-instance Arbitrary WriteVector where
-    arbitrary = WriteVector <$> arbNonNeg <*> arbitrary
-
-instance Arbitrary ReadVector where
-    arbitrary = ReadVector <$> arbNonNeg <*> (getPositive <$> arbitrary)
-
-arbNonNeg :: (Arbitrary n, Integral n) => Gen n
-arbNonNeg = getNonNegative <$> arbitrary

@@ -5,6 +5,7 @@ module TahoeLAFS.Storage.Backend (
     WriteImmutableError (..),
     writeMutableShare,
     withUploadSecret,
+    module Tahoe.Storage.Backend,
 ) where
 
 import Control.Exception (
@@ -12,75 +13,16 @@ import Control.Exception (
     throw,
     throwIO,
  )
-
 import Data.Map.Strict (
     fromList,
  )
-
 import Network.HTTP.Types (
     ByteRanges,
  )
+import Tahoe.Storage.Backend
 import TahoeLAFS.Storage.API (
-    AllocateBuckets,
-    AllocationResult,
-    CBORSet (..),
-    CorruptionDetails,
-    LeaseSecret (..),
-    QueryRange,
-    ReadTestWriteResult (..),
-    ReadTestWriteVectors (..),
-    ShareData,
-    ShareNumber,
-    StorageIndex,
-    TestWriteVectors (..),
-    UploadSecret (..),
-    Version,
-    WriteEnablerSecret,
-    WriteVector (..),
     isUploadSecret,
  )
-
-data WriteImmutableError
-    = MissingUploadSecret
-    | ShareSizeMismatch
-    | ImmutableShareAlreadyWritten
-    | ShareNotAllocated
-    | IncorrectUploadSecret
-    | IncorrectWriteEnablerSecret
-    deriving (Ord, Eq, Show)
-instance Exception WriteImmutableError
-
-class Backend b where
-    version :: b -> IO Version
-
-    -- | Update the lease expiration time on the shares associated with the
-    -- given storage index.
-    renewLease :: b -> StorageIndex -> [LeaseSecret] -> IO ()
-
-    createImmutableStorageIndex :: b -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
-
-    -- May throw ImmutableShareAlreadyWritten
-    writeImmutableShare :: b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> Maybe ByteRanges -> IO ()
-    abortImmutableUpload :: b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
-    adviseCorruptImmutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
-    getImmutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
-    readImmutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
-
-    -- | Read some ranges of all shares held and/or, if test conditions are
-    -- met, overwrite some ranges of some shares.
-    readvAndTestvAndWritev ::
-        b ->
-        -- | The storage index at which to operate.
-        StorageIndex ->
-        -- | A shared secret which the backend can use to authorize the writes.
-        WriteEnablerSecret ->
-        -- | The reads, tests, and writes to perform.
-        ReadTestWriteVectors ->
-        IO ReadTestWriteResult
-
-    readMutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
-    getMutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
-    adviseCorruptMutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
 
 writeMutableShare ::
     Backend b =>

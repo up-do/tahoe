@@ -1,15 +1,11 @@
 {-# LANGUAGE DataKinds #-}
--- https://artyom.me/aeson#records-and-json-generics
-{-# LANGUAGE DeriveAnyClass #-}
--- https://artyom.me/aeson#records-and-json-generics
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
--- Supports derivations for ShareNumber
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PackageImports #-}
 {-# LANGUAGE TypeOperators #-}
+-- TODO Move the orphans
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module TahoeLAFS.Storage.API (
     Version (..),
@@ -59,7 +55,6 @@ import qualified Codec.Serialise.Encoding as CSE
 import Control.Monad
 import Data.Aeson (
     FromJSON (..),
-    FromJSONKey (..),
     ToJSON (..),
     ToJSONKey (..),
     camelTo2,
@@ -73,11 +68,9 @@ import Data.Aeson.Types (
     toJSONKeyText,
  )
 import Data.Bifunctor (Bifunctor (bimap))
-import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
 import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
 import qualified Data.Map as Map
-import Data.Map.Merge.Strict (merge, preserveMissing, zipWithMatched)
 import Data.Map.Strict (
     Map,
  )
@@ -85,9 +78,6 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Text.Encoding (
     decodeUtf8',
- )
-import GHC.Generics (
-    Generic,
  )
 import Network.HTTP.Types (
     ByteRanges,
@@ -109,6 +99,35 @@ import Servant (
     Verb,
     (:<|>),
     (:>),
+ )
+import Tahoe.Storage.Backend (
+    AllocateBuckets (..),
+    AllocationResult (..),
+    ApplicationVersion,
+    CBORSet (..),
+    CorruptionDetails (..),
+    LeaseSecret (..),
+    Offset,
+    QueryRange,
+    ReadResult,
+    ReadTestWriteResult (..),
+    ReadTestWriteVectors (..),
+    ReadVector (..),
+    ShareData,
+    ShareNumber (..),
+    Size,
+    StorageIndex,
+    TestOperator (..),
+    TestVector (..),
+    TestWriteVectors (..),
+    UploadSecret (..),
+    Version (..),
+    Version1Parameters (..),
+    WriteEnablerSecret (..),
+    WriteVector (..),
+    readv,
+    testv,
+    writev,
  )
 import TahoeLAFS.Internal.ServantUtil (
     CBOR,
@@ -140,37 +159,6 @@ leaseRenewSecretLength :: Num a => a
 leaseRenewSecretLength = 32
 leaseCancelSecretLength :: Num a => a
 leaseCancelSecretLength = 32
-
-type ApplicationVersion = B.ByteString
-type Size = Integer
-type Offset = Integer
-type QueryRange = Maybe ByteRanges
-
--- TODO These should probably all be byte strings instead.
-type StorageIndex = String
-type ShareData = B.ByteString
-
-newtype ShareNumber = ShareNumber Integer
-    deriving
-        ( Show
-        , Eq
-        , Ord
-        , Generic
-        )
-    deriving newtype
-        ( ToJSON
-        , FromJSON
-        , FromJSONKey
-        )
-
-{- | A new type for which we can define our own CBOR serialisation rules.  The
- cborg library provides a Serialise instance for Set which is not compatible
- with the representation required by Tahoe-LAFS.
--}
-newtype CBORSet a = CBORSet
-    { getCBORSet :: Set.Set a
-    }
-    deriving newtype (ToJSON, FromJSON, Show, Eq)
 
 -- | Encode a CBORSet using a CBOR "set" tag and a determinate length list.
 encodeCBORSet :: (Serialise a) => CBORSet a -> CSE.Encoding
@@ -237,13 +225,6 @@ shareNumber n =
 toInteger :: ShareNumber -> Integer
 toInteger (ShareNumber i) = i
 
-data Version1Parameters = Version1Parameters
-    { maximumImmutableShareSize :: Size
-    , maximumMutableShareSize :: Size
-    , availableSpace :: Size
-    }
-    deriving (Show, Eq, Generic)
-
 encodeVersion1Parameters :: Version1Parameters -> CSE.Encoding
 encodeVersion1Parameters Version1Parameters{..} =
     CSE.encodeMapLen 3 -- three rings for the elven kings
@@ -296,12 +277,6 @@ instance ToJSON Version1Parameters where
 instance FromJSON Version1Parameters where
     parseJSON = genericParseJSON tahoeJSONOptions
 
-data Version = Version
-    { parameters :: Version1Parameters
-    , applicationVersion :: ApplicationVersion
-    }
-    deriving (Show, Eq, Generic)
-
 encodeApplicationVersion :: ApplicationVersion -> CSE.Encoding
 encodeApplicationVersion = CSE.encodeBytes
 
@@ -353,12 +328,6 @@ instance ToJSON Version where
 instance FromJSON Version where
     parseJSON = genericParseJSON tahoeJSONOptions
 
-data AllocateBuckets = AllocateBuckets
-    { shareNumbers :: [ShareNumber]
-    , allocatedSize :: Size
-    }
-    deriving (Show, Eq, Generic)
-
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise AllocateBuckets
 
@@ -368,12 +337,6 @@ instance ToJSON AllocateBuckets where
 instance FromJSON AllocateBuckets where
     parseJSON = genericParseJSON tahoeJSONOptions
 
-data AllocationResult = AllocationResult
-    { alreadyHave :: [ShareNumber]
-    , allocated :: [ShareNumber]
-    }
-    deriving (Show, Eq, Generic)
-
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise AllocationResult
 
@@ -382,11 +345,6 @@ instance ToJSON AllocationResult where
 
 instance FromJSON AllocationResult where
     parseJSON = genericParseJSON tahoeJSONOptions
-
-newtype CorruptionDetails = CorruptionDetails
-    { reason :: String
-    }
-    deriving (Show, Eq, Generic)
 
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise CorruptionDetails
@@ -411,14 +369,6 @@ instance ToHttpApiData ByteRanges where
 
     toUrlPiece _ = error "Cannot serialize ByteRanges to URL piece"
     toQueryParam _ = error "Cannot serialize ByteRanges to query params"
-
-newtype UploadSecret = UploadSecret B.ByteString
-newtype WriteEnablerSecret = WriteEnablerSecret B.ByteString
-
-instance Eq WriteEnablerSecret where
-    (WriteEnablerSecret left) == (WriteEnablerSecret right) = constEq left right
-
-data LeaseSecret = Renew B.ByteString | Cancel B.ByteString | Upload UploadSecret | Write WriteEnablerSecret
 
 isUploadSecret :: LeaseSecret -> Bool
 isUploadSecret (Upload _) = True
@@ -528,14 +478,6 @@ type StorageAPI =
                 :<|> "mutable" :> AdviseCorrupt
            )
 
-type ReadResult = Map ShareNumber [ShareData]
-
-data ReadTestWriteResult = ReadTestWriteResult
-    { success :: Bool
-    , readData :: ReadResult
-    }
-    deriving (Show, Eq, Generic)
-
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise ReadTestWriteResult
 
@@ -544,12 +486,6 @@ instance ToJSON ReadTestWriteResult where
 
 instance FromJSON ReadTestWriteResult where
     parseJSON = genericParseJSON tahoeJSONOptions
-
-data ReadTestWriteVectors = ReadTestWriteVectors
-    { testWriteVectors :: Map ShareNumber TestWriteVectors
-    , readVector :: [ReadVector]
-    }
-    deriving (Show, Eq, Generic)
 
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise ReadTestWriteVectors
@@ -560,12 +496,6 @@ instance ToJSON ReadTestWriteVectors where
 instance FromJSON ReadTestWriteVectors where
     parseJSON = genericParseJSON tahoeJSONOptions
 
-data ReadVector = ReadVector
-    { offset :: Offset
-    , readSize :: Size
-    }
-    deriving (Show, Eq, Generic)
-
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise ReadVector
 
@@ -575,71 +505,14 @@ instance ToJSON ReadVector where
 instance FromJSON ReadVector where
     parseJSON = genericParseJSON tahoeJSONOptions
 
-data TestWriteVectors = TestWriteVectors
-    { test :: [TestVector]
-    , write :: [WriteVector]
-    , newLength :: Maybe Integer
-    }
-    deriving (Show, Eq, Generic, ToJSON, FromJSON)
-
-instance Semigroup TestWriteVectors where
-    (TestWriteVectors testL writeL _) <> (TestWriteVectors testR writeR newLengthR) =
-        TestWriteVectors (testL <> testR) (writeL <> writeR) newLengthR
-
-instance Monoid TestWriteVectors where
-    mempty = TestWriteVectors mempty mempty Nothing
-
-instance Monoid ReadTestWriteVectors where
-    mempty = ReadTestWriteVectors mempty []
-
-instance Semigroup ReadTestWriteVectors where
-    (ReadTestWriteVectors wv0 rv0) <> (ReadTestWriteVectors wv1 rv1) =
-        ReadTestWriteVectors (merge preserveMissing preserveMissing (zipWithMatched $ \_ l r -> l <> r) wv0 wv1) (rv0 <> rv1)
-
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise TestWriteVectors
-
-readv :: Offset -> Size -> ReadTestWriteVectors
-readv offset size = mempty{readVector = [ReadVector offset size]}
-
-writev :: ShareNumber -> Offset -> ShareData -> ReadTestWriteVectors
-writev shareNum offset bytes = mempty{testWriteVectors = Map.singleton shareNum (mempty{write = [WriteVector offset bytes]})}
-
-testv :: ShareNumber -> Offset -> ShareData -> ReadTestWriteVectors
-testv shareNum offset specimen =
-    mempty
-        { testWriteVectors = Map.singleton shareNum (mempty{test = [TestVector offset (fromIntegral $ B.length specimen) Eq specimen]})
-        }
-
--- XXX Most of these operators have been removed from the spec.
-data TestOperator
-    = Lt
-    | Le
-    | Eq
-    | Ne
-    | Ge
-    | Gt
-    deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise TestOperator
 
-data TestVector = TestVector
-    { testOffset :: Offset
-    , testSize :: Size
-    , operator :: TestOperator
-    , specimen :: ShareData
-    }
-    deriving (Show, Eq, Generic, ToJSON, FromJSON)
-
 -- XXX This derived instance is surely not compatible with Tahoe-LAFS.
 instance Serialise TestVector
-
-data WriteVector = WriteVector
-    { writeOffset :: Offset
-    , shareData :: ShareData
-    }
-    deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
 instance Serialise WriteVector
 

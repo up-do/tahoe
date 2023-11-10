@@ -35,10 +35,9 @@ import TahoeLAFS.Storage.API (
 import Lib (
     b32decode,
     b32encode,
-    genStorageIndex,
     positiveIntegers,
  )
-
+import Tahoe.Storage.Testing.Spec (genStorageIndex)
 import TahoeLAFS.Storage.Backend.Filesystem (
     incomingPathOf,
     partitionM,
