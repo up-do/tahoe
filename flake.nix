@@ -100,6 +100,13 @@
             # dependencies, if necessary.
             nix run .#write-cabal-project
 
+            # Also, zlib doesn't want to use pkg-config by default.  Convince
+            # it...
+            cat >>cabal.project.local <<EOF
+            package zlib
+                flags: +pkg-config
+            EOF
+
             # Here we make zlib discoverable by pkg-config so cabal can find
             # headers and stuff.
             export PKG_CONFIG_PATH=${pkgs.lib.makeSearchPath "lib/pkgconfig" [pkgs.zlib.dev]}
