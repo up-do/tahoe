@@ -55,12 +55,29 @@ extra-doc-files: CHANGELOG.md
 common warnings
   ghc-options: -Wall
 
+common language
+  -- Base language which the package is written in.
+  default-language:   Haskell2010
+
+  -- The language extensions to enable for all modules.
+  default-extensions:
+    DerivingStrategies
+    GeneralizedNewtypeDeriving
+    InstanceSigs
+    LambdaCase
+    NamedFieldPuns
+    OverloadedStrings
+    RecordWildCards
+    ScopedTypeVariables
+    TupleSections
+
 library
-  -- Import common warning flags.
-  import:           warnings
+  import:
+    warnings
+    , language
 
   -- Modules exported by the library.
-  exposed-modules:  Tahoe.Storage.Backend.S3
+  exposed-modules: Tahoe.Storage.Backend.S3
 
   -- Modules included in this library but not exported.
   -- other-modules:
@@ -90,17 +107,15 @@ library
     , unordered-containers
 
   -- TODO 0.4.0.0
-  build-depends:    tahoe-great-black-swamp >=0.4.0.1
+  build-depends:   tahoe-great-black-swamp >=0.4.0.1
 
   -- Directories containing source files.
-  hs-source-dirs:   src
-
-  -- Base language which the package is written in.
-  default-language: Haskell2010
+  hs-source-dirs:  src
 
 executable tahoe-s3
-  -- Import common warning flags.
-  import:           warnings
+  import:
+    warnings
+    , language
 
   -- .hs or .lhs file containing the Main module.
   main-is:          Main.hs
@@ -123,8 +138,10 @@ executable tahoe-s3
   default-language: Haskell2010
 
 test-suite tahoe-s3-test
-  -- Import common warning flags.
-  import:           warnings
+  import:
+    warnings
+    , language
+
   ghc-options:      -threaded
 
   -- Base language which the package is written in.

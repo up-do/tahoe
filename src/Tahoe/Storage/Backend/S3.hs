@@ -1,13 +1,3 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
-
 module Tahoe.Storage.Backend.S3 where
 
 import Amazonka (runResourceT)
@@ -16,7 +6,7 @@ import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
 import Conduit (ResourceT, sinkList)
 import Control.Concurrent.Async (concurrently, mapConcurrently, mapConcurrently_)
-import Control.Exception (Exception, catch, throw, throwIO, try)
+import Control.Exception (Exception, catch, throw, throwIO)
 import Control.Lens (set, view, (.~), (?~), (^.))
 import Control.Monad (void, when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
@@ -376,12 +366,10 @@ instance Backend S3Backend where
                 ReadTestWriteResult True <$> doReads
             (arbShareNum, _) : _ -> do
                 expectedSecret <-
-                    try (readShare s3 storageIndex arbShareNum (Just [ByteRangeFromTo 0 0])) >>= \case
-                        Left (AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) ->
-                            pure Nothing
-                        Left err -> throwIO err
-                        Right (Metadata{metadataWriteEnabler = expectedSecret}, _) -> do
-                            pure expectedSecret
+                    ( metadataWriteEnabler . fst
+                            <$> readShare s3 storageIndex arbShareNum (Just [ByteRangeFromTo 0 0])
+                        )
+                        `catch` on404 Nothing
 
                 when (isJust expectedSecret && Just secret /= expectedSecret) $ throwIO IncorrectWriteEnablerSecret
 
@@ -417,11 +405,10 @@ instance Backend S3Backend where
 
         readSomeThings shareNum (TestVector offset size _ _) =
             readMutableShare s3 storageIndex shareNum (Just [ByteRangeFromTo offset (offset + size - 1)])
-                `catch` (\(AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) -> pure "")
+                `catch` on404 ""
 
         readEverything shareNum =
-            readMutableShare s3 storageIndex shareNum Nothing
-                `catch` (\(AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) -> pure "")
+            readMutableShare s3 storageIndex shareNum Nothing `catch` on404 ""
 
         writeEverything shareNum bs =
             runResourceT $
@@ -530,8 +517,4 @@ readMetadata resp =
 
 on404 :: a -> AWS.Error -> IO a
 on404 result (AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) = pure result
-on404 _ e = throwIO OhOhThisCase -- "oh oh this case" -- throwIO e
-
-data OhOhThisCase = OhOhThisCase deriving (Show)
-
-instance Exception OhOhThisCase
+on404 _ e = throwIO e
