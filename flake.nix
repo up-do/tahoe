@@ -10,14 +10,17 @@
     tahoe-chk = {
       url = "git+https://whetstone.private.storage/PrivateStorage/tahoe-chk.git?ref=main";
       inputs.nixpkgs.follows = "hs-flake-utils/nixpkgs";
+      inputs.hs-flake-utils.follows = "hs-flake-utils";
     };
     tahoe-great-black-swamp-types = {
       url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types?ref=main";
       inputs.nixpkgs.follows = "hs-flake-utils/nixpkgs";
+      inputs.hs-flake-utils.follows = "hs-flake-utils";
     };
     tahoe-great-black-swamp-testing = {
       url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing?ref=main";
       inputs.nixpkgs.follows = "hs-flake-utils/nixpkgs";
+      inputs.hs-flake-utils.follows = "hs-flake-utils";
       inputs.tahoe-great-black-swamp-types.follows = "tahoe-great-black-swamp-types";
     };
   };
