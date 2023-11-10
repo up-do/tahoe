@@ -129,14 +129,11 @@
       apps.write-cabal-project = hslib.apps.write-cabal-project {
         localPackages = {
           tahoe-great-black-swamp =
-            # tahoe-great-black-swamp.sourceInfo.outPath;
-            "/home/exarkun/Work/PrivateStorage/tahoe-great-black-swamp";
+            tahoe-great-black-swamp.sourceInfo.outPath;
           tahoe-great-black-swamp-types =
-            # tahoe-great-black-swamp-types.sourceInfo.outPath;
-            "/home/exarkun/Work/haskell/tahoe-great-black-swamp-types";
+            tahoe-great-black-swamp-types.sourceInfo.outPath;
           tahoe-great-black-swamp-testing =
-            # tahoe-great-black-swamp-testing.sourceInfo.outPath;
-            "/home/exarkun/Work/haskell/tahoe-great-black-swamp-testing";
+            tahoe-great-black-swamp-testing.sourceInfo.outPath;
         };
       };
 
