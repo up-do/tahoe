@@ -34,10 +34,10 @@ import qualified Data.Text.Encoding as T
 import GHC.Stack (HasCallStack)
 import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo), Status (Status, statusCode))
 import Network.HTTP.Types.Header (renderByteRange)
-import Tahoe.Storage.Backend (WriteEnablerSecret (..))
-import TahoeLAFS.Storage.API (
+import Tahoe.Storage.Backend (
     AllocateBuckets (AllocateBuckets, allocatedSize, shareNumbers),
     AllocationResult (..),
+    Backend (..),
     CBORSet (..),
     LeaseSecret (..),
     QueryRange,
@@ -53,12 +53,12 @@ import TahoeLAFS.Storage.API (
     UploadSecret,
     Version (Version),
     Version1Parameters (..),
+    WriteEnablerSecret (..),
+    WriteImmutableError (..),
+    WriteMutableError (..),
     WriteVector (..),
  )
 import TahoeLAFS.Storage.Backend (
-    Backend (..),
-    WriteImmutableError (..),
-    WriteMutableError (..),
     withUploadSecret,
  )
 import Text.Read (readMaybe)
