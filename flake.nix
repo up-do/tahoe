@@ -95,7 +95,7 @@
           preBuild = ''
             # Refresh the cabal.project.local file to point to the correct
             # dependencies, if necessary.
-            nix run .#generate-cabal-project
+            nix run .#write-cabal-project
 
             # Here we make zlib discoverable by pkg-config so cabal can find
             # headers and stuff.
