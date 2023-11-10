@@ -354,7 +354,7 @@ readMutableShare' :: IORef MemoryBackend -> StorageIndex -> ShareNumber -> Query
 readMutableShare' backend storageIndex shareNum queryRange = do
     storage <- mutableShares <$> readIORef backend
     let shareSize = maybe 0 shareDataSize (getShareData storage storageIndex shareNum)
-    pure $ readMutableShare'' storage storageIndex shareNum <$> (queryRangeToReadVector shareSize queryRange)
+    pure $ readMutableShare'' storage storageIndex shareNum <$> queryRangeToReadVector shareSize queryRange
 
 readMutableShare'' :: MutableShareStorage -> StorageIndex -> ShareNumber -> ReadVector -> ShareData
 readMutableShare'' storage storageIndex shareNum rv =

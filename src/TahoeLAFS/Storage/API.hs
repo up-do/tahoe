@@ -1,12 +1,6 @@
 {-# LANGUAGE DataKinds #-}
--- https://artyom.me/aeson#records-and-json-generics
-{-# LANGUAGE DeriveAnyClass #-}
--- https://artyom.me/aeson#records-and-json-generics
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
--- Supports derivations for ShareNumber
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PackageImports #-}
 {-# LANGUAGE TypeOperators #-}
