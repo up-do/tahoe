@@ -6,7 +6,16 @@
     nixpkgs.follows = "hs-flake-utils/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
     hs-flake-utils.url = "git+https://whetstone.private.storage/jcalderone/hs-flake-utils.git?ref=main";
-    tahoe-great-black-swamp.url = "git+https://whetstone.private.storage/privatestorage/tahoe-great-black-swamp.git?ref=release-0.4.0.0";
+    tahoe-great-black-swamp = {
+      url = "git+https://whetstone.private.storage/PrivateStorage/tahoe-great-black-swamp.git?ref=main";
+    };
+    tahoe-great-black-swamp-types = {
+      url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types.git?ref=main";
+    };
+    tahoe-great-black-swamp-testing = {
+      url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing.git?ref=main";
+      inputs.tahoe-great-black-swamp-types.follows = "tahoe-great-black-swamp-types";
+    };
   };
 
   outputs = {
@@ -14,6 +23,8 @@
     nixpkgs,
     flake-utils,
     tahoe-great-black-swamp,
+    tahoe-great-black-swamp-types,
+    tahoe-great-black-swamp-testing,
     hs-flake-utils,
   }: let
     ulib = flake-utils.lib;
@@ -31,6 +42,8 @@
         packageName = "tahoe-s3";
         hsPkgsOverrides = hfinal: hprev: {
           tahoe-great-black-swamp = tahoe-great-black-swamp.outputs.packages.${system}.default;
+          tahoe-great-black-swamp-types = tahoe-great-black-swamp-types.outputs.packages.${system}.default;
+          tahoe-great-black-swamp-testing = tahoe-great-black-swamp-testing.outputs.packages.${system}.default;
           crypton = hfinal.callHackageDirect {
             pkg = "crypton";
             ver = "0.33";
@@ -115,7 +128,12 @@
 
       apps.write-cabal-project = hslib.apps.write-cabal-project {
         localPackages = {
-          tahoe-great-black-swamp = tahoe-great-black-swamp.sourceInfo.outPath;
+          tahoe-great-black-swamp =
+            tahoe-great-black-swamp.sourceInfo.outPath;
+          tahoe-great-black-swamp-types =
+            tahoe-great-black-swamp-types.sourceInfo.outPath;
+          tahoe-great-black-swamp-testing =
+            tahoe-great-black-swamp-testing.sourceInfo.outPath;
         };
       };
 
