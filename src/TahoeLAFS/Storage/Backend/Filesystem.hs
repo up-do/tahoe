@@ -10,8 +10,6 @@ module TahoeLAFS.Storage.Backend.Filesystem (
     incomingPathOf,
 ) where
 
-import Debug.Trace (trace)
-
 import Control.Exception (
     throwIO,
     try,
@@ -33,7 +31,6 @@ import Data.Maybe (
     mapMaybe,
  )
 import qualified Data.Set as Set
-import Data.Tuple.Extra ((&&&))
 import Network.HTTP.Types (ByteRange (..))
 import System.Directory (
     createDirectoryIfMissing,
@@ -68,7 +65,6 @@ import TahoeLAFS.Storage.API (
     ReadResult,
     ReadTestWriteResult (ReadTestWriteResult, readData, success),
     ReadTestWriteVectors (ReadTestWriteVectors),
-    ReadVector (..),
     ShareData,
     ShareNumber,
     Size,

@@ -13,32 +13,14 @@ import Control.Exception (
     throw,
     throwIO,
  )
-import Tahoe.Storage.Backend
-
 import Data.Map.Strict (
     fromList,
  )
-
 import Network.HTTP.Types (
     ByteRanges,
  )
+import Tahoe.Storage.Backend
 import TahoeLAFS.Storage.API (
-    AllocateBuckets,
-    AllocationResult,
-    CBORSet (..),
-    CorruptionDetails,
-    LeaseSecret (..),
-    QueryRange,
-    ReadTestWriteResult (..),
-    ReadTestWriteVectors (..),
-    ShareData,
-    ShareNumber,
-    StorageIndex,
-    TestWriteVectors (..),
-    UploadSecret (..),
-    Version,
-    WriteEnablerSecret,
-    WriteVector (..),
     isUploadSecret,
  )
 

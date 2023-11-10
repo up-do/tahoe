@@ -7,23 +7,20 @@ import Control.Exception (
     throwIO,
  )
 import Control.Foldl.ByteString (Word8)
-import Data.Bifunctor (second)
 import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
 import Data.Composition ((.:))
 import Data.IORef (
     IORef,
     atomicModifyIORef',
-    modifyIORef,
     newIORef,
     readIORef,
  )
 import Data.Map.Merge.Strict (merge, preserveMissing, zipWithMatched)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust, fromMaybe, isJust, isNothing)
-import Data.Monoid (All (All, getAll), First (First, getFirst), Last (Last, getLast))
+import Data.Maybe (fromMaybe, isNothing)
+import Data.Monoid (All (All, getAll), First (First, getFirst))
 import qualified Data.Set as Set
-import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo, ByteRangeSuffix))
 import Tahoe.Storage.Backend (
     AllocateBuckets (AllocateBuckets),
     AllocationResult (..),
@@ -43,7 +40,7 @@ import Tahoe.Storage.Backend (
     UploadSecret (UploadSecret),
     Version (..),
     Version1Parameters (..),
-    WriteEnablerSecret (WriteEnablerSecret),
+    WriteEnablerSecret,
     WriteImmutableError (..),
     WriteMutableError (..),
     WriteVector (..),
@@ -217,6 +214,7 @@ instance Show MemoryBackend where
 maximumShareSize :: Integral i => i
 maximumShareSize = fromIntegral (maxBound :: Int)
 
+makeVersionParams :: Integer -> Version1Parameters
 makeVersionParams totalSize =
     Version1Parameters
         { maximumImmutableShareSize = maximumShareSize
@@ -380,6 +378,7 @@ readMutableShare'' storage storageIndex shareNum rv =
             | p >= off && p < off + fromIntegral (B.length bytes) = Just (B.index bytes (fromIntegral $ p - off))
             | otherwise = Nothing
 
+getShareData :: MutableShareStorage -> StorageIndex -> ShareNumber -> Maybe [WriteVector]
 getShareData storage storageIndex shareNum =
     Map.lookup storageIndex storage >>= Map.lookup shareNum . readProtected
 

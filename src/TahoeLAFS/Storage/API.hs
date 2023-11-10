@@ -4,6 +4,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PackageImports #-}
 {-# LANGUAGE TypeOperators #-}
+-- TODO Move the orphans
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module TahoeLAFS.Storage.API (
     Version (..),
@@ -53,7 +55,6 @@ import qualified Codec.Serialise.Encoding as CSE
 import Control.Monad
 import Data.Aeson (
     FromJSON (..),
-    FromJSONKey (..),
     ToJSON (..),
     ToJSONKey (..),
     camelTo2,
@@ -70,7 +71,6 @@ import Data.Bifunctor (Bifunctor (bimap))
 import qualified Data.ByteString as B
 import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
 import qualified Data.Map as Map
-import Data.Map.Merge.Strict (merge, preserveMissing, zipWithMatched)
 import Data.Map.Strict (
     Map,
  )
@@ -78,9 +78,6 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Text.Encoding (
     decodeUtf8',
- )
-import GHC.Generics (
-    Generic,
  )
 import Network.HTTP.Types (
     ByteRanges,
