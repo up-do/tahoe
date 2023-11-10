@@ -103,6 +103,8 @@
             # Here we make zlib discoverable by pkg-config so cabal can find
             # headers and stuff.
             export PKG_CONFIG_PATH=${pkgs.lib.makeSearchPath "lib/pkgconfig" [pkgs.zlib.dev]}
+
+            pkg-config --list-all
           '';
         };
         release = hslib.apps.release {};
