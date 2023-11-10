@@ -51,6 +51,7 @@ import Tahoe.Storage.Backend (
 import TahoeLAFS.Storage.Backend (
     withUploadSecret,
  )
+import TahoeLAFS.Storage.Backend.Util (queryRangeToReadVector, readvToQueryRange)
 import Prelude hiding (
     lookup,
     map,
@@ -344,32 +345,6 @@ addShares storageIndex secret existing updates
     go = Map.foldrWithKey (addShare storageIndex secret) existing updates
 
     existingSecret = readSecret <$> Map.lookup storageIndex existing
-
-readvToQueryRange :: [ReadVector] -> QueryRange
-readvToQueryRange rv = Just (go rv)
-  where
-    go [] = []
-    go (r : rs) = ByteRangeFromTo off end : go rs
-      where
-        off = offset r
-        end = off + readSize r - 1
-
-queryRangeToReadVector :: Size -> QueryRange -> [ReadVector]
-queryRangeToReadVector shareSize Nothing = [ReadVector 0 shareSize]
-queryRangeToReadVector shareSize (Just ranges) = toReadVector <$> ranges
-  where
-    toReadVector (ByteRangeFrom start) = ReadVector offset size
-      where
-        offset = max 0 start
-        size = shareSize - offset
-    toReadVector (ByteRangeFromTo start end) = ReadVector offset size
-      where
-        offset = min shareSize (max 0 start)
-        size = min (shareSize - offset) (end - start + 1)
-    toReadVector (ByteRangeSuffix len) = ReadVector offset size
-      where
-        offset = max 0 $ shareSize - len
-        size = min (shareSize - offset) len
 
 memoryBackend :: IO (IORef MemoryBackend)
 memoryBackend = do

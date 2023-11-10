@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -8,6 +9,8 @@ module TahoeLAFS.Storage.Backend.Filesystem (
     pathOfShare,
     incomingPathOf,
 ) where
+
+import Debug.Trace (trace)
 
 import Control.Exception (
     throwIO,
@@ -31,6 +34,7 @@ import Data.Maybe (
  )
 import qualified Data.Set as Set
 import Data.Tuple.Extra ((&&&))
+import Network.HTTP.Types (ByteRange (..))
 import System.Directory (
     createDirectoryIfMissing,
     doesPathExist,
@@ -45,7 +49,8 @@ import System.FilePath (
 import System.IO (
     Handle,
     IOMode (ReadMode, ReadWriteMode),
-    SeekMode (AbsoluteSeek),
+    SeekMode (..),
+    hFileSize,
     hSeek,
     withBinaryFile,
  )
@@ -79,6 +84,7 @@ import TahoeLAFS.Storage.API (
  )
 import qualified TahoeLAFS.Storage.API as Storage
 import TahoeLAFS.Storage.Backend (withUploadSecret)
+import TahoeLAFS.Storage.Backend.Util (readvToByteRange)
 import Prelude hiding (
     readFile,
     writeFile,
@@ -93,6 +99,12 @@ versionString = "tahoe-lafs (gbs) 0.1.0"
 -- Copied from the Python implementation.  Kind of arbitrary.
 maxMutableShareSize :: Storage.Size
 maxMutableShareSize = 69_105 * 1_000 * 1_000 * 1_000 * 1_000
+
+-- Perhaps should be based on the underlying filesystem?  Currently a single
+-- file is used per share so we cannot hold a share larger than the
+-- filesystem's largest support file.
+maximumShareSize :: Integral i => i
+maximumShareSize = fromIntegral (maxBound :: Int)
 
 --  storage/
 --  storage/shares/incoming
@@ -116,7 +128,7 @@ instance Backend FilesystemBackend where
                 { applicationVersion = versionString
                 , parameters =
                     Version1Parameters
-                        { maximumImmutableShareSize = available
+                        { maximumImmutableShareSize = maximumShareSize
                         , maximumMutableShareSize = maxMutableShareSize
                         , -- TODO: Copy the "reserved space" feature of the Python
                           -- implementation.
@@ -128,7 +140,7 @@ instance Backend FilesystemBackend where
         withUploadSecret secrets $ \uploadSecret -> do
             let exists = haveShare backend storageIndex
             (alreadyHave, allocated) <- partitionM exists (shareNumbers params)
-            mapM_ (flip (allocate backend storageIndex) uploadSecret) allocated
+            mapM_ (flip (allocate backend storageIndex (allocatedSize params)) uploadSecret) allocated
             return
                 AllocationResult
                     { alreadyHave = alreadyHave
@@ -147,18 +159,25 @@ instance Backend FilesystemBackend where
                 else do
                     let finalSharePath = pathOfShare root storageIndex shareNumber'
                     let incomingSharePath = incomingPathOf root storageIndex shareNumber'
-                    checkUploadSecret incomingSharePath uploadSecret
-                    writeFile incomingSharePath shareData
-                    let createParents = True
-                    createDirectoryIfMissing createParents $ takeDirectory finalSharePath
-                    removeFile (secretPath incomingSharePath)
-                    renameFile incomingSharePath finalSharePath
+
+                    secretCheck <- try $ checkUploadSecret incomingSharePath uploadSecret
+                    case secretCheck of
+                        Left e
+                            | isDoesNotExistError e -> throwIO ShareNotAllocated
+                            | otherwise -> throwIO e
+                        Right () -> do
+                            writeFile incomingSharePath shareData
+                            let createParents = True
+                            createDirectoryIfMissing createParents $ takeDirectory finalSharePath
+                            removeFileIfExists (secretPath incomingSharePath)
+                            renameFile incomingSharePath finalSharePath
 
     abortImmutableUpload (FilesystemBackend root) storageIndex shareNumber' secrets =
         withUploadSecret secrets $ \uploadSecret -> do
             let incomingSharePath = incomingPathOf root storageIndex shareNumber'
             checkUploadSecret incomingSharePath uploadSecret
-            removeFile incomingSharePath
+            removeFileIfExists incomingSharePath
+            removeFileIfExists (secretPath incomingSharePath)
 
     getImmutableShareNumbers (FilesystemBackend root) storageIndex = do
         let storageIndexPath = pathOfStorageIndex root storageIndex
@@ -178,6 +197,11 @@ instance Backend FilesystemBackend where
          in readShare shareNum
 
     getMutableShareNumbers = getImmutableShareNumbers
+
+    readMutableShare backend storageIndex shareNum Nothing =
+        readMutableShare backend storageIndex shareNum (Just [ByteRangeFrom 0])
+    readMutableShare (FilesystemBackend root) storageIndex shareNum (Just ranges) =
+        B.concat <$> mapM (readMutableShare' root storageIndex shareNum) ranges
 
     readvAndTestvAndWritev
         backend@(FilesystemBackend root)
@@ -201,21 +225,14 @@ instance Backend FilesystemBackend where
                 Map.fromList . zip allShareNumbers' <$> mapM readvOneShare allShareNumbers'
 
             readvOneShare :: ShareNumber -> IO [ShareData]
-            readvOneShare shareNum =
-                mapM (uncurry (readShare shareNum) . (offset &&& readSize)) readv
+            readvOneShare shareNum = mapM (readMutableShare' root storageIndex shareNum) . fmap readvToByteRange $ readv
 
             checkTestVectors :: ShareNumber -> [TestVector] -> IO [Bool]
             checkTestVectors = mapM . checkTestVector
 
             checkTestVector :: ShareNumber -> TestVector -> IO Bool
-            checkTestVector shareNum TestVector{..} = (specimen ==) <$> readShare shareNum testOffset testSize
-
-            readShare :: ShareNumber -> Offset -> Size -> IO ShareData
-            readShare shareNum offset size = withBinaryFile path ReadMode $ \shareFile -> do
-                hSeek shareFile AbsoluteSeek offset
-                B.hGetSome shareFile (fromIntegral size)
-              where
-                path = pathOfShare root storageIndex shareNum
+            checkTestVector shareNum TestVector{..} =
+                (specimen ==) <$> readMutableShare' root storageIndex shareNum (ByteRangeFromTo testOffset (testOffset + testSize - 1))
 
             applyWriteVectors ::
                 (ShareNumber, TestWriteVectors) ->
@@ -277,18 +294,26 @@ storageStartSegment (a : b : _) = [a, b]
 allocate ::
     FilesystemBackend ->
     StorageIndex ->
+    Size ->
     ShareNumber ->
     UploadSecret ->
     IO ()
-allocate (FilesystemBackend root) storageIndex shareNum (UploadSecret secret) =
-    let sharePath = incomingPathOf root storageIndex shareNum
-        shareDirectory = takeDirectory sharePath
-        createParents = True
-     in do
-            createDirectoryIfMissing createParents shareDirectory
-            writeFile (secretPath sharePath) secret
-            writeFile sharePath ""
-            return ()
+allocate (FilesystemBackend root) storageIndex size shareNum (UploadSecret secret)
+    | size > maximumShareSize =
+        throwIO
+            MaximumShareSizeExceeded
+                { maximumShareSizeExceededLimit = maximumShareSize
+                , maximumShareSizeExceededGiven = size
+                }
+    | otherwise =
+        let sharePath = incomingPathOf root storageIndex shareNum
+            shareDirectory = takeDirectory sharePath
+            createParents = True
+         in do
+                createDirectoryIfMissing createParents shareDirectory
+                writeFile (secretPath sharePath) secret
+                writeFile sharePath ""
+                return ()
 
 {- | Given the path of an immutable share, construct a path to use to hold the
  upload secret for that share.
@@ -330,3 +355,28 @@ checkWriteEnabler (WriteEnablerSecret given) storageIndexPath = do
             | otherwise -> throwIO IncorrectWriteEnablerSecret
   where
     path = secretPath storageIndexPath
+
+removeFileIfExists :: FilePath -> IO ()
+removeFileIfExists p =
+    try (removeFile p) >>= \case
+        Left e
+            | isDoesNotExistError e -> pure ()
+            | otherwise -> throwIO e
+        Right () -> pure ()
+
+readMutableShare' :: FilePath -> StorageIndex -> ShareNumber -> ByteRange -> IO ShareData
+readMutableShare' root storageIndex shareNum range =
+    withBinaryFile path ReadMode (readTheRange range)
+  where
+    path = pathOfShare root storageIndex shareNum
+
+    readTheRange (ByteRangeFrom start) shareFile = do
+        hSeek shareFile AbsoluteSeek start
+        B.hGetContents shareFile
+    readTheRange (ByteRangeFromTo start end) shareFile = do
+        hSeek shareFile AbsoluteSeek start
+        B.hGetSome shareFile (fromIntegral $ end - start + 1)
+    readTheRange (ByteRangeSuffix len) shareFile = do
+        realSize <- hFileSize shareFile
+        hSeek shareFile SeekFromEnd (-(min realSize len))
+        B.hGetContents shareFile

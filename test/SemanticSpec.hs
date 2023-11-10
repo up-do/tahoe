@@ -77,10 +77,12 @@ import TahoeLAFS.Storage.Backend.Memory (
     SecretProtected (..),
     addShares,
     memoryBackend,
-    queryRangeToReadVector,
-    readvToQueryRange,
     shareDataSize,
     toMutableShareSize,
+ )
+import TahoeLAFS.Storage.Backend.Util (
+    queryRangeToReadVector,
+    readvToQueryRange,
  )
 import Test.Hspec (
     Spec,
