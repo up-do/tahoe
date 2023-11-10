@@ -1,5 +1,12 @@
 # Changelog for tahoe-great-black-swamp
 
+## 0.5.0.0
+
+* The primary definition of most types related to the ``Backend`` class have moved to ``tahoe-great-black-swamp-types``.
+  They are still re-exported from their original location for convenience but the new location should be preferred.
+
+* The Filesystem and Memory backends now support operations on mutables.
+
 ## 0.4.0.1
 
 * Package metadata improvements.
