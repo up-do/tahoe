@@ -1,9 +1,11 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 
 module Tahoe.Storage.Backend.S3 where
@@ -14,15 +16,16 @@ import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
 import Conduit (ResourceT, sinkList)
 import Control.Concurrent.Async (concurrently, mapConcurrently, mapConcurrently_)
-import Control.Exception (Exception, catch, throw, throwIO)
-import Control.Lens (set, view, (?~), (^.))
+import Control.Exception (Exception, catch, throw, throwIO, try)
+import Control.Lens (set, view, (.~), (?~), (^.))
 import Control.Monad (void, when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Data.Bifunctor (Bifunctor (first))
-import Data.ByteArray (constEq)
+import Data.Bifunctor (Bifunctor (first, second))
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Base64 as Base64
 import qualified Data.ByteString.Char8 as C8
 import Data.Foldable (foldl')
+import qualified Data.HashMap.Strict as HashMap
 import Data.IORef (
     IORef,
     atomicModifyIORef',
@@ -34,27 +37,29 @@ import Data.List (partition)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (mapMaybe)
+import Data.Maybe (isJust, mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
-import qualified Data.Text as Text
+import qualified Data.Text.Encoding as T
+import GHC.Stack (HasCallStack)
 import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo), Status (Status, statusCode))
 import Network.HTTP.Types.Header (renderByteRange)
+import Tahoe.Storage.Backend (WriteEnablerSecret (..))
 import TahoeLAFS.Storage.API (
     AllocateBuckets (AllocateBuckets, allocatedSize, shareNumbers),
-    AllocationResult (AllocationResult, allocated, alreadyHave),
-    CBORSet (CBORSet),
-    LeaseSecret (Upload),
+    AllocationResult (..),
+    CBORSet (..),
+    LeaseSecret (..),
     QueryRange,
-    ReadTestWriteResult (ReadTestWriteResult),
+    ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
-    ReadVector (ReadVector),
+    ReadVector (..),
     ShareData,
     ShareNumber (..),
     StorageIndex,
     TestOperator (Eq),
-    TestVector (TestVector),
-    TestWriteVectors (TestWriteVectors, test, write),
+    TestVector (..),
+    TestWriteVectors (..),
     UploadSecret,
     Version (Version),
     Version1Parameters (..),
@@ -62,12 +67,8 @@ import TahoeLAFS.Storage.API (
  )
 import TahoeLAFS.Storage.Backend (
     Backend (..),
-    WriteImmutableError (
-        ImmutableShareAlreadyWritten,
-        IncorrectUploadSecret,
-        MissingUploadSecret,
-        ShareNotAllocated
-    ),
+    WriteImmutableError (..),
+    WriteMutableError (..),
     withUploadSecret,
  )
 import Text.Read (readMaybe)
@@ -98,7 +99,7 @@ data UploadState = UploadState
       uploadResponse :: Maybe S3.CreateMultipartUploadResponse
     , uploadSecret :: UploadSecret
     }
-    deriving (Eq, Show)
+    deriving (Eq)
 
 -- | where's mah parts? Here they are!
 type AllocatedShares = Map (StorageIndex, ShareNumber) UploadState
@@ -208,24 +209,19 @@ newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
     s3BackendState <- newIORef mempty
     pure S3Backend{..}
 
-{- | Something has gone wrong with the backend that does not fit into the
- generic exceptions defined by tahoe-great-black-swamp.  XXX Some of these
- probably belong in tahoe-great-black-swamp, actually.
--}
-data BackendError
-    = MaximumShareSizeExceeded
-        { maximumShareSizeExceededLimit :: Integer
-        , maximumShareSizeExceededGiven :: Integer
-        }
-    | ShareAllocationIncomplete
-    deriving (Eq, Show)
-
-instance Exception BackendError
-
 -- The maximum S3 object size is 5 TB.  We currently add no bookkeeping
 -- overhead so the client-supplied share can use all of this.
 maxShareSize :: Integer
 maxShareSize = 5 * 2 ^ (40 :: Integer)
+
+{- | Something has gone wrong with the backend that does not fit into the
+ generic exceptions defined by tahoe-great-black-swamp.
+-}
+data BackendError
+    = ShareAllocationIncomplete
+    deriving (Eq, Show)
+
+instance Exception BackendError
 
 {- | A storage backend which keeps shares in objects in buckets behind and
  S3-compatible API.
@@ -365,8 +361,8 @@ instance Backend S3Backend where
             resp <- AWS.send s3BackendEnv getObj
             B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
 
-    readvAndTestvAndWritev :: S3Backend -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
-    readvAndTestvAndWritev s3@S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex (ReadTestWriteVectors{readVector, testWriteVectors}) = do
+    readvAndTestvAndWritev :: HasCallStack => S3Backend -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadTestWriteResult
+    readvAndTestvAndWritev s3@S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex secret (ReadTestWriteVectors{readVector, testWriteVectors}) =
         -- XXX
         --
         -- 1. Check results from S3 for errors
@@ -374,12 +370,28 @@ instance Backend S3Backend where
         -- 2. Chunk data somehow to avoid catastrophic performance problems
         -- from the current strategy of whole-object updates for every write.
         --
-        -- 3. Verify secrets
-        (readResults, testResults) <- concurrently doReads doTests
-        if and . fmap and $ testResults
-            then ReadTestWriteResult True readResults <$ doWrites
-            else pure $ ReadTestWriteResult False readResults
+        case testWriteVectorList of
+            [] ->
+                -- There are no writes so skip the secret check and the test/write logic.
+                ReadTestWriteResult True <$> doReads
+            (arbShareNum, _) : _ -> do
+                expectedSecret <-
+                    try (readShare s3 storageIndex arbShareNum (Just [ByteRangeFromTo 0 0])) >>= \case
+                        Left (AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) ->
+                            pure Nothing
+                        Left err -> throwIO err
+                        Right (Metadata{metadataWriteEnabler = expectedSecret}, _) -> do
+                            pure expectedSecret
+
+                when (isJust expectedSecret && Just secret /= expectedSecret) $ throwIO IncorrectWriteEnablerSecret
+
+                (readResults, testResults) <- concurrently doReads doTests
+                if and . fmap and $ testResults
+                    then ReadTestWriteResult True readResults <$ doWrites
+                    else pure $ ReadTestWriteResult False readResults
       where
+        testWriteVectorList = Map.toList testWriteVectors
+
         doReads = do
             (CBORSet knownShareNumbers) <- getMutableShareNumbers s3 storageIndex
             let shareNumberList = Set.toList knownShareNumbers
@@ -393,12 +405,12 @@ instance Backend S3Backend where
         doTests =
             mapConcurrently
                 (\(shareNum, testWriteVectors') -> zipWith runTestVector (test testWriteVectors') <$> mapM (readSomeThings shareNum) (test testWriteVectors'))
-                (Map.toList testWriteVectors)
+                testWriteVectorList
 
         doWrites =
             mapConcurrently_
                 (\(shareNum, testWriteVectors') -> readEverything shareNum >>= writeEverything shareNum . (`applyWriteVectors` write testWriteVectors'))
-                (Map.toList testWriteVectors)
+                testWriteVectorList
 
         runTestVector (TestVector _ _ Eq specimen) shareData = specimen == shareData
         runTestVector _ _ = False
@@ -415,22 +427,14 @@ instance Backend S3Backend where
             runResourceT $
                 AWS.send
                     s3BackendEnv
-                    ( S3.newPutObject
-                        s3BackendBucket
-                        (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum)
-                        (AWS.toBody bs)
+                    ( (S3.putObject_metadata .~ HashMap.singleton writeEnablerSecretMetadataKey (base64WriteEnabler secret)) $
+                        S3.newPutObject
+                            s3BackendBucket
+                            (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum)
+                            (AWS.toBody bs)
                     )
 
-    -- data ReadTestWriteVectors = ReadTestWriteVectors
-    --     { testWriteVectors :: Map ShareNumber TestWriteVectors
-    --     , readVector :: [ReadVector] }
-    -- data TestWriteVectors = TestWriteVectors
-    --     { test :: [TestVector]
-    --     , write :: [WriteVector]
-    --     , newLength :: Maybe Integer }
-    -- data WriteVector = WriteVector
-    --    { writeOffset :: Offset -- type Offset = Integer
-    --    , shareData :: ShareData }
+        base64WriteEnabler (WriteEnablerSecret bytes) = T.decodeLatin1 . Base64.encode $ bytes
 
     getMutableShareNumbers = getImmutableShareNumbers
 
@@ -457,23 +461,16 @@ storageIndexShareNumberToObjectKey prefix si (ShareNumber sn) =
     S3.ObjectKey $ T.concat [storageIndexPrefix prefix si, T.pack (show sn)]
 
 storageIndexPrefix :: T.Text -> StorageIndex -> T.Text
-storageIndexPrefix prefix si = T.concat [prefix, "/", Text.pack si, "/"]
+storageIndexPrefix prefix si = T.concat [prefix, "/", T.pack si, "/"]
 
 {-
 the remaining methods to implement:
 class Backend b where
-    version :: b -> IO Version
-
     -- | Update the lease expiration time on the shares associated with the
     -- given storage index.
     renewLease :: b -> StorageIndex -> [LeaseSecret] -> IO ()
 
     adviseCorruptImmutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
-
-    createMutableStorageIndex :: b -> StorageIndex -> AllocateBuckets -> IO AllocationResult
-    readvAndTestvAndWritev :: b -> StorageIndex -> ReadTestWriteVectors -> IO ReadTestWriteResult
-    readMutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
-    getMutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     adviseCorruptMutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
 -}
 
@@ -490,5 +487,51 @@ adjust' f k m = case Map.lookup k m of
         (newV, result) = f v
 
 validUploadSecret :: UploadSecret -> Maybe [LeaseSecret] -> Bool
-validUploadSecret us1 (Just [Upload us2]) = constEq us1 us2
+validUploadSecret us1 (Just [Upload us2]) = us1 == us2
 validUploadSecret _ _ = False
+
+data Metadata = Metadata
+    { metadataWriteEnabler :: Maybe WriteEnablerSecret
+    }
+
+readShare :: S3Backend -> StorageIndex -> ShareNumber -> QueryRange -> IO (Metadata, ShareData)
+readShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum qrange =
+    runResourceT $ second B.concat <$> readEach qrange
+  where
+    objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
+
+    readEach :: Maybe [ByteRange] -> ResourceT IO (Metadata, [ShareData])
+    readEach Nothing = do
+        resp <- AWS.send s3BackendEnv (S3.newGetObject s3BackendBucket objectKey)
+        body <- AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
+        pure (readMetadata resp, body)
+    readEach (Just []) = pure (Metadata Nothing, [])
+    readEach (Just ranges) = do
+        (metadata : _, shareData) <- unzip <$> mapM readOne ranges
+        pure (metadata, shareData)
+
+    readOne :: ByteRange -> ResourceT IO (Metadata, ShareData)
+    readOne br = do
+        let getObj =
+                set S3.getObject_range (Just . ("bytes=" <>) . T.pack . C8.unpack $ renderByteRange br) $
+                    S3.newGetObject s3BackendBucket objectKey
+        resp <- AWS.send s3BackendEnv getObj
+        body <- B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
+        pure $ (readMetadata resp, body)
+
+writeEnablerSecretMetadataKey :: T.Text
+writeEnablerSecretMetadataKey = "write-enabler-secret"
+
+readMetadata :: S3.GetObjectResponse -> Metadata
+readMetadata resp =
+    Metadata
+        { metadataWriteEnabler = (either (const Nothing) (Just . WriteEnablerSecret) . Base64.decode . T.encodeUtf8) =<< HashMap.lookup writeEnablerSecretMetadataKey (resp ^. S3.getObjectResponse_metadata)
+        }
+
+on404 :: a -> AWS.Error -> IO a
+on404 result (AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) = pure result
+on404 _ e = throwIO OhOhThisCase -- "oh oh this case" -- throwIO e
+
+data OhOhThisCase = OhOhThisCase deriving (Show)
+
+instance Exception OhOhThisCase
