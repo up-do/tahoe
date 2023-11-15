@@ -97,11 +97,13 @@ library
     , composition
     , conduit
     , containers
+    , exceptions
     , http-client
     , http-types
     , lens
     , memory
     , mtl
+    , stm-lifted
     , tahoe-great-black-swamp-types
     , text
     , unordered-containers
