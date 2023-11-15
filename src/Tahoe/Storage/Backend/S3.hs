@@ -80,6 +80,7 @@ data UploadPart
 
 -- Where's my Cow? -- Terry Pratchett
 
+-- | This saves in-progress uploads so we can finish or abort
 data UploadState = UploadState
     { uploadStateSize :: Integer
     , uploadParts :: [UploadPart]
@@ -94,12 +95,20 @@ data UploadState = UploadState
 -- | where's mah parts? Here they are!
 type AllocatedShares = Map (StorageIndex, ShareNumber) UploadState
 
--- | This saves in-progress uploads so we can finish or abort
+{- | A storage backend for tahoe-great-black-swamp which relies on S3 objects
+ to store immutable and mutable Tahoe-LAFS objects.
+-}
 data S3Backend = S3Backend
-    { s3BackendEnv :: AWS.Env
-    , s3BackendBucket :: S3.BucketName
-    , s3BackendPrefix :: T.Text
-    , s3BackendState :: IORef AllocatedShares
+    { -- | The Amazonka context with which to make requests of S3.
+      s3BackendEnv :: AWS.Env
+    , -- | The bucket into which all Tahoe-LAFS objects will be placed.
+      s3BackendBucket :: S3.BucketName
+    , -- | A prefix to use when naming all S3 objects placed in the bucket.
+      s3BackendPrefix :: T.Text
+    , -- | A record of state related to operations that are currently in
+      -- progress.  For example, immutable shares might have been allocated but
+      -- all bytes may not yet have been uploaded.
+      s3BackendState :: IORef AllocatedShares
     }
 
 internalAllocate :: StorageIndex -> UploadSecret -> AllocateBuckets -> AllocatedShares -> (AllocatedShares, AllocationResult)
