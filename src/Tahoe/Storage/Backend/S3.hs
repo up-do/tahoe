@@ -10,21 +10,21 @@ import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
 import Conduit (ResourceT, sinkList)
 import Control.Concurrent.Async (concurrently, mapConcurrently, mapConcurrently_)
-import Control.Concurrent.STM.Lifted (STM, TVar, atomically, newTVarIO, readTVar, writeTVar)
+import Control.Concurrent.STM.Lifted (STM, atomically)
+import qualified Control.Concurrent.STM.Map as SMap
 import Control.Exception (Exception, SomeException, catch, throw, throwIO, try)
 import Control.Lens (set, view, (.~), (?~), (^.))
 import Control.Monad (void, when)
-import Control.Monad.Catch (onException)
+import Control.Monad.Catch (MonadCatch, onException)
 import Data.Bifunctor (Bifunctor (first, second))
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base64 as Base64
 import qualified Data.ByteString.Char8 as C8
-import Data.Composition ((.:))
 import Data.Either (rights)
 import Data.Foldable (fold, foldl')
 import qualified Data.HashMap.Strict as HashMap
+import Data.Hashable (Hashable (hashWithSalt))
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, mapMaybe)
 import qualified Data.Set as Set
@@ -92,7 +92,7 @@ data UploadState = UploadState
     deriving (Eq)
 
 -- | where's mah parts? Here they are!
-type AllocatedShares = Map (StorageIndex, ShareNumber) UploadState
+type AllocatedShares = SMap.Map (StorageIndex, ShareNumber) UploadState
 
 {- | A storage backend for tahoe-great-black-swamp which relies on S3 objects
  to store immutable and mutable Tahoe-LAFS objects.
@@ -107,14 +107,16 @@ data S3Backend = S3Backend
     , -- | A record of state related to operations that are currently in
       -- progress.  For example, immutable shares might have been allocated but
       -- all bytes may not yet have been uploaded.
-      s3BackendState :: TVar AllocatedShares
+      s3BackendState :: AllocatedShares
     }
 
-internalAllocate :: StorageIndex -> UploadSecret -> Integer -> ShareNumber -> AllocatedShares -> (AllocatedShares, AllocationResult)
-internalAllocate storageIndex secret allocatedSize shareNumber curState =
-    if shareAlreadyAllocated shareNumber
-        then (curState, mempty{alreadyHave = [shareNumber]})
-        else (Map.insert (storageIndex, shareNumber) newShareState curState, mempty{allocated = [shareNumber]})
+internalAllocate :: StorageIndex -> UploadSecret -> Integer -> ShareNumber -> AllocatedShares -> STM Bool
+internalAllocate storageIndex secret allocatedSize shareNumber curState = do
+    SMap.member (storageIndex, shareNumber) curState >>= \case
+        True -> pure False
+        False -> do
+            SMap.insert (storageIndex, shareNumber) newShareState curState
+            pure True
   where
     newShareState =
         UploadState
@@ -124,15 +126,17 @@ internalAllocate storageIndex secret allocatedSize shareNumber curState =
             , uploadSecret = secret
             }
 
-    shareAlreadyAllocated shnum = Map.member (storageIndex, shnum) curState
+undoInternalAllocate :: StorageIndex -> ShareNumber -> AllocatedShares -> STM ()
+undoInternalAllocate storageIndex shareNum = SMap.delete (storageIndex, shareNum)
 
-undoInternalAllocate :: StorageIndex -> ShareNumber -> AllocatedShares -> AllocatedShares
-undoInternalAllocate storageIndex shareNum = Map.delete (storageIndex, shareNum)
-
-internalAllocateComplete :: StorageIndex -> ShareNumber -> S3.CreateMultipartUploadResponse -> AllocatedShares -> AllocatedShares
-internalAllocateComplete storageIndex shareNum response curState = newState
+internalAllocateComplete :: StorageIndex -> ShareNumber -> S3.CreateMultipartUploadResponse -> AllocatedShares -> STM ()
+internalAllocateComplete storageIndex shareNum response curState = do
+    SMap.lookup stateKey curState >>= \case
+        Just state ->
+            SMap.insert stateKey state{uploadResponse = Just response} curState
+        Nothing ->
+            error "Oh nooo contact Shae in building 42"
   where
-    newState = Map.adjust (\st -> st{uploadResponse = Just response}) stateKey curState
     stateKey = (storageIndex, shareNum)
 
 {- | If the identified share has been allocated and the given secrets match
@@ -150,31 +154,33 @@ internalStartUpload ::
     AllocatedShares ->
     -- | The updated total share state and the state necessary to complete the
     -- upload to the S3 server.
-    (AllocatedShares, Maybe PartUpload)
-internalStartUpload secrets storageIndex shareNum curState =
-    case uploadSecret <$> Map.lookup stateKey curState of
+    STM (Maybe PartUpload)
+internalStartUpload secrets storageIndex shareNum curState = do
+    uploadState <- SMap.lookup stateKey curState
+    let secret = uploadSecret <$> uploadState
+    case secret of
         Nothing -> throw ShareNotAllocated
-        Just secret
-            | validUploadSecret secret secrets ->
+        Just secret'
+            | validUploadSecret secret' secrets ->
                 adjust' (first Just . startPartUpload) stateKey curState
             | otherwise -> throw IncorrectUploadSecret
   where
     stateKey = (storageIndex, shareNum)
 
 internalFinishUpload ::
-    (Ord a, Ord b) =>
     Int ->
     C8.ByteString ->
-    a ->
-    b ->
+    StorageIndex ->
+    ShareNumber ->
     S3.UploadPartResponse ->
-    Map (a, b) UploadState ->
-    (Map (a, b) UploadState, Maybe (Bool, [S3.CompletedPart]))
+    AllocatedShares ->
+    STM (Maybe (Bool, [S3.CompletedPart]))
 internalFinishUpload partNum' shareData storageIndex shareNum response =
     adjust' (finishPartUpload (PartNumber partNum') (fromIntegral $ B.length shareData) response) stateKey
   where
     stateKey = (storageIndex, shareNum)
 
+infiniteRetry :: MonadCatch m => m b -> m b
 infiniteRetry a = a `onException` infiniteRetry a
 
 externalAllocate :: S3Backend -> StorageIndex -> ShareNumber -> ResourceT IO S3.CreateMultipartUploadResponse
@@ -249,12 +255,11 @@ finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadS
 -}
 newS3Backend :: AWS.Env -> S3.BucketName -> T.Text -> IO S3Backend
 newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
-    s3BackendState <- newTVarIO mempty
-
     -- XXX Load existing s3BackendState from S3 itself.  List the
     -- MultipartUploads and figure out what is in progress.  Also need to
     -- encode uploadStateSize and uploadSecret in the MultipartUpload somehow,
     -- probably.
+    s3BackendState <- atomically SMap.empty
 
     pure S3Backend{..}
 
@@ -345,7 +350,7 @@ instance Backend S3Backend where
 
         -- If possible, update internal state to record a new part upload
         -- being attempted.
-        uploadInfo <- modifyBackendStateIO s3BackendState (internalStartUpload secrets storageIndex shareNum)
+        uploadInfo <- atomically (internalStartUpload secrets storageIndex shareNum s3BackendState)
 
         case uploadInfo of
             Nothing -> throwIO ImmutableShareAlreadyWritten
@@ -355,7 +360,7 @@ instance Backend S3Backend where
                     uploadPart = S3.newUploadPart s3BackendBucket objKey partNum' uploadId (AWS.toBody shareData)
                 -- XXX This could, of course, fail...  Then we have some state to roll back.
                 response <- runResourceT $ AWS.send s3BackendEnv uploadPart
-                newState <- modifyBackendStateIO s3BackendState (internalFinishUpload partNum' shareData storageIndex shareNum response)
+                newState <- atomically $ internalFinishUpload partNum' shareData storageIndex shareNum response s3BackendState
                 case newState of
                     Nothing ->
                         error "It went missing?"
@@ -375,7 +380,7 @@ instance Backend S3Backend where
     abortImmutableUpload _ _ _ Nothing = throwIO MissingUploadSecret
     abortImmutableUpload (S3Backend{..}) storageIndex shareNum secrets = do
         -- Try to find the matching upload state and discard it if the secret matches.
-        toCancel <- modifyBackendStateIO s3BackendState (adjust' internalCancel stateKey)
+        toCancel <- atomically $ adjust' internalCancel stateKey s3BackendState
         -- If we found it, also cancel the state in the S3 server.
         maybe (throwIO IncorrectUploadSecret) cancelMultipartUpload toCancel
       where
@@ -540,15 +545,18 @@ class Backend b where
 
 {- | If a map includes the given key, compute a new value and a result value for
  the current value.  If the new computed value is Nothing the key is removed.
- If the map does not include the key, return the map unmodified and no result
- value.  Otherwise, return the adjusted map and the result value.
+ If the map does not include the key, do nothing.  Otherwise, replace the old
+ value with the new value and return the result value.
 -}
-adjust' :: Ord k => (v -> (Maybe v, b)) -> k -> Map.Map k v -> (Map k v, Maybe b)
-adjust' f k m = case Map.lookup k m of
-    Nothing -> (m, Nothing)
-    Just v -> (Map.update (const newV) k m, Just result)
-      where
-        (newV, result) = f v
+adjust' :: Hashable k => (v -> (Maybe v, b)) -> k -> SMap.Map k v -> STM (Maybe b)
+adjust' f k m = do
+    SMap.lookup k m >>= \case
+        Nothing -> pure Nothing
+        Just v -> do
+            maybe (SMap.delete k m) (\v' -> SMap.insert k v' m) newV
+            pure $ Just result
+          where
+            (newV, result) = f v
 
 validUploadSecret :: UploadSecret -> Maybe [LeaseSecret] -> Bool
 validUploadSecret us1 (Just [Upload us2]) = us1 == us2
@@ -581,7 +589,7 @@ readShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageInd
                     S3.newGetObject s3BackendBucket objectKey
         resp <- AWS.send s3BackendEnv getObj
         body <- B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
-        pure $ (readMetadata resp, body)
+        pure (readMetadata resp, body)
 
 writeEnablerSecretMetadataKey :: T.Text
 writeEnablerSecretMetadataKey = "write-enabler-secret"
@@ -596,32 +604,6 @@ on404 :: a -> AWS.Error -> IO a
 on404 result (AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) = pure result
 on404 _ e = throwIO e
 
-modifyBackendState :: TVar a -> (a -> (a, b)) -> STM b
-modifyBackendState tv f = do
-    existing <- readTVar tv
-    let (new, result) = f existing
-    writeTVar tv new
-    pure result
-
-modifyBackendStateIO :: TVar a -> (a -> (a, b)) -> IO b
-modifyBackendStateIO = atomically .: modifyBackendState
-
-modifyBackendState' :: TVar a -> (a -> a) -> STM ()
-modifyBackendState' tv f = modifyBackendState tv g
-  where
-    g = (,()) . f
-
-modifyBackendStateIO' :: TVar a -> (a -> a) -> IO ()
-modifyBackendStateIO' = atomically .: modifyBackendState'
-
-runTransaction :: IO a -> IO b -> IO c -> IO b
-runTransaction actionA actionB rollbackActionA = do
-    void actionA
-    x <- try actionB
-    case x of
-        Left e -> rollbackActionA >> throwIO (e :: SomeException)
-        Right r -> pure r
-
 {- | Allocate tracking state, locally and in the S3 server, for a new share of
  the given size at the given location.
 -}
@@ -634,25 +616,22 @@ createOneImmutableShare ::
     IO AllocationResult
 createOneImmutableShare s3@S3Backend{..} storageIndex allocatedSize uploadSecret shareNum = do
     -- Initialize local tracking state
-    result@AllocationResult{allocated} <- modifyBackendStateIO s3BackendState (internalAllocate storageIndex uploadSecret allocatedSize shareNum)
+    allocated <- atomically $ internalAllocate storageIndex uploadSecret allocatedSize shareNum s3BackendState
 
-    -- Create corresponding state in the S3 server.  XXX This
-    -- could fail.  One way to signal that failure to the client
-    -- is to let the whole operation fail.  If we do that then we
-    -- haven't told the client we allocated anything.  That means
-    -- we really should not have allocated anything.  So we have
-    -- to clean up our internal state and (if we can!) any state
-    -- we created in the S3 server.
-    responses <-
-        runResourceT (traverse (externalAllocate s3 storageIndex) allocated) `onException` do
-            modifyBackendStateIO' s3BackendState (undoInternalAllocate storageIndex shareNum)
+    if allocated
+        then do
+            -- Create corresponding state in the S3 server.
+            response <-
+                runResourceT (externalAllocate s3 storageIndex shareNum) `onException` do
+                    atomically (undoInternalAllocate storageIndex shareNum s3BackendState)
 
-    -- Update the local state with the details of the allocations
-    -- on the S3 server.  We need the multipart upload identifier
-    -- to associate future part uploads with the right thing.
-    modifyBackendStateIO' s3BackendState $ \st -> foldr (uncurry $ internalAllocateComplete storageIndex) st (zip allocated responses)
+            -- Update the local state with the details of the allocations
+            -- on the S3 server.  We need the multipart upload identifier
+            -- to associate future part uploads with the right thing.
+            atomically $ internalAllocateComplete storageIndex shareNum response s3BackendState
 
-    pure result
+            pure mempty{allocated = [shareNum]}
+        else pure mempty{alreadyHave = [shareNum]}
 
 -- XXX Take these from tahoe-great-black-swamp-types
 instance Semigroup AllocationResult where
@@ -660,3 +639,6 @@ instance Semigroup AllocationResult where
 
 instance Monoid AllocationResult where
     mempty = AllocationResult mempty mempty
+
+instance Hashable ShareNumber where
+    hashWithSalt i (ShareNumber num) = hashWithSalt i num

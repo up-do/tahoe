@@ -98,6 +98,7 @@ library
     , conduit
     , containers
     , exceptions
+    , hashable
     , http-client
     , http-types
     , lens
@@ -106,6 +107,7 @@ library
     , stm-lifted
     , tahoe-great-black-swamp-types
     , text
+    , ttrie
     , unordered-containers
 
   -- TODO 0.4.0.0
