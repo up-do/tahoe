@@ -63,6 +63,9 @@ spec = do
                 applyWriteVectors "abc" [WriteVector 0 "xy", WriteVector 1 "zw"] `shouldBe` "xzw"
 
     context "backend" $ do
+        describe "Timeouts" $
+            it "has behavior" $
+                False
         describe "S3Backend" $ makeStorageSpec s3Backend cleanupS3
 
 -- Delete all objects with a prefix matching this backend.  Leave the
