@@ -61,7 +61,9 @@ common language
 
   -- The language extensions to enable for all modules.
   default-extensions:
+    BlockArguments
     DerivingStrategies
+    FlexibleContexts
     GeneralizedNewtypeDeriving
     InstanceSigs
     LambdaCase
@@ -70,6 +72,7 @@ common language
     RecordWildCards
     ScopedTypeVariables
     TupleSections
+    TypeApplications
 
 library
   import:
