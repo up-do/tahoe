@@ -187,6 +187,8 @@ test-suite tahoe-s3-test
     , lens
     , QuickCheck
     , quickcheck-instances
+    , stm
+    , stm-delay
     , tahoe-great-black-swamp
     , tahoe-great-black-swamp-testing
     , tahoe-great-black-swamp-types

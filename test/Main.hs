@@ -10,6 +10,7 @@ import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_key)
 import qualified Amazonka.S3.Lens as S3
+import Control.Concurrent.STM (retry)
 import Control.Lens (view, (.~), (?~), (^.), _Just)
 import Control.Monad (
     guard,
@@ -25,6 +26,7 @@ import Tahoe.Storage.Backend (
     WriteVector (WriteVector),
  )
 import Tahoe.Storage.Backend.S3 (
+    HasDelay (..),
     S3Backend (..),
     applyWriteVectors,
     newS3Backend,
@@ -66,7 +68,7 @@ spec = do
 -- Delete all objects with a prefix matching this backend.  Leave the
 -- bucket alone in case there are other objects unrelated to this bucket
 -- in it.
-cleanupS3 :: S3Backend -> IO ()
+cleanupS3 :: S3Backend delay -> IO ()
 cleanupS3 (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) = runResourceT $ do
     resp <- AWS.send s3BackendEnv (S3.listObjects_prefix ?~ s3BackendPrefix $ S3.newListObjects s3BackendBucket)
     let objectKeys = catMaybes . traverse (S3.newObjectIdentifier . (^. object_key) <$>) $ resp ^. listObjectsResponse_contents
@@ -74,7 +76,18 @@ cleanupS3 (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) = runResou
     unless (null objectKeys) . void $
         AWS.send s3BackendEnv (S3.newDeleteObjects s3BackendBucket (delete_objects .~ objectKeys $ S3.newDelete))
 
-s3Backend :: IO S3Backend
+data DelayDouble = Unelapsed | Elapsed
+
+instance HasDelay DelayDouble where
+    new _ = pure Unelapsed
+    wait Unelapsed = retry
+    wait Elapsed = pure ()
+    update Unelapsed _ = pure ()
+    update Elapsed _ = error "bug in your code"
+    cancel Unelapsed = pure ()
+    cancel Elapsed = error "bug in your code"
+
+s3Backend :: IO (S3Backend DelayDouble)
 s3Backend = runResourceT $ do
     let setLocalEndpoint = AWS.setEndpoint False "127.0.0.1" 9000
         setAddressingStyle s = s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}
@@ -98,7 +111,7 @@ s3Backend = runResourceT $ do
             guard (exists == AWS.AcceptSuccess)
 
     prefix <- unusedPrefixFrom env' name $ T.singleton <$> ['a' .. 'z']
-    liftIO $ newS3Backend env' name prefix
+    liftIO $ newS3Backend @DelayDouble env' name prefix
   where
     name = S3.BucketName "45336944-25bf-4fb1-8e82-9ba2631bda67"
 
