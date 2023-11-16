@@ -5,7 +5,9 @@ import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
 import Conduit (ResourceT, sinkList)
+import Control.Concurrent (forkIO)
 import Control.Concurrent.Async (concurrently, mapConcurrently, mapConcurrently_)
+import Control.Concurrent.STM.Delay (Delay, newDelay, waitDelay)
 import Control.Concurrent.STM.Lifted (STM, atomically)
 import qualified Control.Concurrent.STM.Map as SMap
 import Control.Exception (Exception, SomeException, catch, throw, throwIO, try)
@@ -322,15 +324,29 @@ instance Backend S3Backend where
         | otherwise =
             -- Creation may also fail because no upload secret has been given.
             withUploadSecret secrets $ \uploadSecret -> do
+                -- Create a delay for timing out these uploads
+                delay <- newDelay (1_000_000 * 600)
+
                 -- Try to allocate each share from the request.
                 results <-
                     mapConcurrently
-                        (try @SomeException . createOneImmutableShare s3 storageIndex allocatedSize uploadSecret)
+                        (try @SomeException . createOneImmutableShare s3 storageIndex allocatedSize uploadSecret delay)
                         shareNumbers
+
                 -- Combine all of the successful allocations for the response
                 -- to the caller.  We expect that an errors encountered are
                 -- already handled sufficiently to leave state consistent.
-                pure . fold . rights $ results
+                let result = fold . rights $ results
+
+                -- Arrange for the state to be cleaned up on timeout.
+                void $
+                    forkIO $ do
+                        externalState <- atomically $ do
+                            waitDelay delay
+                            cleanupInternalImmutable s3 storageIndex (allocated result)
+                        cleanupExternalImmutable s3 externalState
+
+                pure result
 
     writeImmutableShare :: S3Backend -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> QueryRange -> IO ()
     writeImmutableShare _s3 _storageIndex _shareNum Nothing _shareData _ = throwIO MissingUploadSecret
@@ -608,9 +624,10 @@ createOneImmutableShare ::
     StorageIndex ->
     Integer ->
     UploadSecret ->
+    Delay ->
     ShareNumber ->
     IO AllocationResult
-createOneImmutableShare s3@S3Backend{..} storageIndex allocatedSize uploadSecret shareNum = do
+createOneImmutableShare s3@S3Backend{..} storageIndex allocatedSize uploadSecret timeout shareNum = do
     -- Initialize local tracking state
     allocated <- atomically $ internalAllocate storageIndex uploadSecret allocatedSize shareNum s3BackendState
 
@@ -638,3 +655,16 @@ instance Monoid AllocationResult where
 
 instance Hashable ShareNumber where
     hashWithSalt i (ShareNumber num) = hashWithSalt i num
+
+{- | Discard internal partial-upload state related to the given shares.
+ Return information about their associated external partial-upload state for
+ separate cleanup.
+-}
+cleanupInternalImmutable :: S3Backend -> StorageIndex -> [ShareNumber] -> STM [S3.CreateMultipartUploadResponse]
+cleanupInternalImmutable S3Backend{..} storageIndex shareNums = undefined
+
+{- | Discard external partial-upload state related to the given multipart
+ upload responses.
+-}
+cleanupExternalImmutable :: S3Backend -> [S3.CreateMultipartUploadResponse] -> IO ()
+cleanupExternalImmutable = undefined

@@ -68,6 +68,7 @@ common language
     InstanceSigs
     LambdaCase
     NamedFieldPuns
+    NumericUnderscores
     OverloadedStrings
     RecordWildCards
     ScopedTypeVariables
@@ -107,6 +108,7 @@ library
     , lens
     , memory
     , mtl
+    , stm-delay
     , stm-lifted
     , tahoe-great-black-swamp-types
     , text
