@@ -22,12 +22,12 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Base64 as Base64
 import qualified Data.ByteString.Char8 as C8
 import Data.Either (rights)
-import Data.Foldable (fold, foldl')
+import Data.Foldable (fold, foldl', traverse_)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable (hashWithSalt))
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust, mapMaybe)
+import Data.Maybe (catMaybes, isJust, mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -283,6 +283,10 @@ newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
 maxShareSize :: Integer
 maxShareSize = 5 * 2 ^ (40 :: Integer)
 
+{- | The number of microseconds which must pass with no progress made
+ uploading any of a number of shares allocated together before the server
+ will consider the upload failed and garbage collect related state.
+-}
 immutableUploadProgressTimeout :: Int
 immutableUploadProgressTimeout = 1_000_000 * 600
 
@@ -363,8 +367,15 @@ instance HasDelay delay => Backend (S3Backend delay) where
                     forkIO $ do
                         externalState <- atomically $ do
                             wait delay
-                            cleanupInternalImmutable s3 storageIndex (allocated result)
-                        cleanupExternalImmutable s3 externalState
+                            traverse (cleanupInternalImmutable s3 storageIndex) (allocated result)
+
+                        let f :: (ShareNumber, S3.CreateMultipartUploadResponse) -> ResourceT IO ()
+                            f = uncurry $ cleanupExternalImmutable s3 storageIndex
+
+                            xs :: [(ShareNumber, S3.CreateMultipartUploadResponse)]
+                            xs = mapMaybe sequenceA (zip (allocated result) externalState)
+
+                        runResourceT $ traverse_ f xs
 
                 pure result
 
@@ -685,11 +696,22 @@ instance Hashable ShareNumber where
  Return information about their associated external partial-upload state for
  separate cleanup.
 -}
-cleanupInternalImmutable :: S3Backend delay -> StorageIndex -> [ShareNumber] -> STM [S3.CreateMultipartUploadResponse]
-cleanupInternalImmutable S3Backend{..} storageIndex shareNums = undefined
+cleanupInternalImmutable :: S3Backend delay -> StorageIndex -> ShareNumber -> STM (Maybe S3.CreateMultipartUploadResponse)
+cleanupInternalImmutable S3Backend{..} storageIndex shareNum =
+    SMap.lookup (storageIndex, shareNum) s3BackendState >>= \case
+        Nothing -> pure Nothing
+        Just state -> do
+            SMap.delete (storageIndex, shareNum) s3BackendState
+            -- XXX What if we don't have the response yet?
+            pure (uploadResponse state)
 
 {- | Discard external partial-upload state related to the given multipart
  upload responses.
 -}
-cleanupExternalImmutable :: S3Backend delay -> [S3.CreateMultipartUploadResponse] -> IO ()
-cleanupExternalImmutable = undefined
+cleanupExternalImmutable :: S3Backend delay -> StorageIndex -> ShareNumber -> S3.CreateMultipartUploadResponse -> ResourceT IO ()
+cleanupExternalImmutable S3Backend{..} storageIndex shareNum createResponse =
+    void $ AWS.send s3BackendEnv abortRequest
+  where
+    abortRequest = S3.newAbortMultipartUpload s3BackendBucket objKey uploadId
+    objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
+    uploadId = createResponse ^. S3.createMultipartUploadResponse_uploadId

@@ -64,6 +64,7 @@ common language
     BlockArguments
     DerivingStrategies
     FlexibleContexts
+    FlexibleInstances
     GeneralizedNewtypeDeriving
     InstanceSigs
     LambdaCase
@@ -157,7 +158,7 @@ test-suite tahoe-s3-test
   default-language: Haskell2010
 
   -- Modules included in this executable, other than Main.
-  -- other-modules:
+  other-modules:    Delay
 
   -- LANGUAGE extensions used by modules in this package.
   -- other-extensions:
@@ -196,3 +197,4 @@ test-suite tahoe-s3-test
     , tasty
     , temporary
     , text
+    , ttrie
