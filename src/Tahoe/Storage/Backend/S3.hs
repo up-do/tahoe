@@ -430,18 +430,24 @@ instance HasDelay delay => Backend (S3Backend delay) where
         -- Try to find the matching upload state and discard it if the secret matches.
         toCancel <- atomically $ adjust' internalCancel stateKey s3BackendState
         -- If we found it, also cancel the state in the S3 server.
-        maybe (throwIO IncorrectUploadSecret) cancelMultipartUpload toCancel
+        case toCancel of
+          Nothing -> throwIO IncorrectUploadSecret
+          Just (oldDelay, uploadId) -> do
+            cancelMultipartUpload uploadId
+            cancel oldDelay
       where
         stateKey = (storageIndex, shareNum)
+
+        -- XXX should cancel timeout probably
 
         cancelMultipartUpload uploadId = runResourceT $ do
             -- XXX Check the response for errors
             _resp <- AWS.send s3BackendEnv $ S3.newAbortMultipartUpload s3BackendBucket (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum) uploadId
             pure ()
 
-        internalCancel UploadState{uploadResponse, uploadSecret}
+        internalCancel UploadState{uploadResponse, uploadSecret, uploadTimeoutDelay}
             | validUploadSecret uploadSecret secrets =
-                maybe (throw ShareAllocationIncomplete) ((Nothing,) . (^. S3.createMultipartUploadResponse_uploadId)) uploadResponse
+                maybe (throw ShareAllocationIncomplete) ((Nothing,) . (uploadTimeoutDelay,) . (^. S3.createMultipartUploadResponse_uploadId)) uploadResponse
             | otherwise = throw IncorrectUploadSecret
 
     getImmutableShareNumbers (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = runResourceT $ do
