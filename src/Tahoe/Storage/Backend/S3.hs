@@ -351,6 +351,10 @@ instance HasDelay delay => Backend (S3Backend delay) where
                 -- Create a delay for timing out these uploads
                 delay <- new immutableUploadProgressTimeout
 
+                -- recursive function that re-starts on "someoneUpdatedTheDelay" (or does cleanup)
+                -- how do we make "someoneUpdatedTheDelay" exposed in our state? TVar? TChan? continuation?
+                race someoneUpdatedTheDelay (asyncDelay >> cleanup)
+
                 -- Try to allocate each share from the request.
                 results <-
                     mapConcurrently
@@ -373,8 +377,7 @@ instance HasDelay delay => Backend (S3Backend delay) where
                             -- makes this fail, but we don't get this
                             -- to go up the tree to the test and fail
                             -- it...
-                            wait delay
-                            traverse (cleanupInternalImmutable s3 storageIndex) (allocated result)
+                          traverse (cleanupInternalImmutable s3 storageIndex) (allocated result)
 
                         let f :: (ShareNumber, S3.CreateMultipartUploadResponse) -> ResourceT IO ()
                             f = uncurry $ cleanupExternalImmutable s3 storageIndex
