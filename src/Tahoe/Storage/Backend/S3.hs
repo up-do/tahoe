@@ -363,9 +363,16 @@ instance HasDelay delay => Backend (S3Backend delay) where
                 let result = fold . rights $ results
 
                 -- Arrange for the state to be cleaned up on timeout.
+
+                -- XXX "wait delay" sleeps forever on a cancelled
+                -- Delay .. so need to cancel this thread somehow
                 void $
                     forkIO $ do
                         externalState <- atomically $ do
+                            -- note to self: a Cancelled in the test
+                            -- makes this fail, but we don't get this
+                            -- to go up the tree to the test and fail
+                            -- it...
                             wait delay
                             traverse (cleanupInternalImmutable s3 storageIndex) (allocated result)
 

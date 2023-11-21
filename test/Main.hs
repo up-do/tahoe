@@ -11,7 +11,7 @@ import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_key)
 import qualified Amazonka.S3.Lens as S3
-import Control.Concurrent.STM (STM, TVar, atomically, newTVar, newTVarIO, readTVar, retry, writeTVar)
+import Control.Concurrent.STM (STM, TVar, atomically, newTVar, newTVarIO, readTVar, readTVarIO, retry, writeTVar)
 import qualified Control.Concurrent.STM.Map as SMap
 import Control.Lens (view, (.~), (?~), (^.), _Just)
 import Control.Monad (
@@ -23,13 +23,13 @@ import Control.Monad (
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Maybe (catMaybes)
 import qualified Data.Text as T
-import Delay (DelayDouble (Unelapsed), timePasses)
+import Delay (DelayDouble (..), timePasses)
 import qualified Network.HTTP.Types as HTTP
 import qualified System.IO as IO
 import Tahoe.Storage.Backend (
     AllocateBuckets (AllocateBuckets),
     AllocationResult (AllocationResult),
-    Backend (createImmutableStorageIndex, writeImmutableShare),
+    Backend (..),
     LeaseSecret (Upload),
     ShareNumber (ShareNumber),
     StorageIndex,
@@ -102,6 +102,27 @@ spec = do
                 -- And ensure you can no longer attempt writes to this share.
                 writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Hello world" Nothing
                     `shouldThrow` (== ShareNotAllocated)
+
+            it "timeout is cancelled when upload cancelled" $ do
+                let storageIndex = "abcd"
+                    secrets = Just [Upload (UploadSecret "hello")]
+                    shareNums = ShareNumber <$> [1, 2, 3]
+                    allocate = AllocateBuckets shareNums 123
+                backend <- s3Backend
+
+                -- Allocate some stuff
+                createImmutableStorageIndex backend storageIndex secrets allocate
+                    `shouldReturn` AllocationResult [] shareNums
+
+                -- remember the upload-state for this upload
+                Just x <- atomically (SMap.lookup (storageIndex, ShareNumber 1) (s3BackendState backend))
+
+                -- And ensure you can no longer attempt writes to this share.
+                abortImmutableUpload backend storageIndex (ShareNumber 1) secrets
+
+                -- the Delay should be cancelled
+                readTVarIO (uploadTimeoutDelay x)
+                  `shouldReturn` Cancelled
 
             it "does not timeout when progress is being made" $ do
                 let storageIndex = "abcd"
