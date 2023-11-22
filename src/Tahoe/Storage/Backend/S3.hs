@@ -8,10 +8,10 @@ import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
 import Conduit (ResourceT, sinkList)
-import Control.Concurrent (forkIO)
-import Control.Concurrent.Async (concurrently, mapConcurrently, mapConcurrently_)
+import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.Async (async, concurrently, mapConcurrently, mapConcurrently_, race)
 import Control.Concurrent.STM.Delay (Delay, cancelDelay, newDelay, updateDelay, waitDelay)
-import Control.Concurrent.STM.Lifted (STM, atomically)
+import Control.Concurrent.STM.Lifted (STM, atomically, newTChan, newTChanIO, newTVarIO, readTChanIO, writeTChanIO)
 import qualified Control.Concurrent.STM.Map as SMap
 import Control.Exception (Exception, SomeException, catch, throw, throwIO, try)
 import Control.Lens (set, view, (.~), (?~), (^.))
@@ -31,6 +31,7 @@ import Data.Maybe (catMaybes, isJust, mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import GHC.Conc (throwSTM)
 import GHC.Stack (HasCallStack)
 import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo), Status (Status, statusCode))
 import Network.HTTP.Types.Header (renderByteRange)
@@ -58,6 +59,7 @@ import Tahoe.Storage.Backend (
     WriteMutableError (..),
     WriteVector (..),
  )
+import Tahoe.Storage.Backend.Internal.Delay (HasDelay (..), TimeoutOperation (Cancelled, Delayed))
 import TahoeLAFS.Storage.Backend (
     withUploadSecret,
  )
@@ -87,7 +89,7 @@ data UploadState delay where
         , uploadParts :: [UploadPart]
         , uploadResponse :: Maybe S3.CreateMultipartUploadResponse
         , uploadSecret :: UploadSecret
-        , uploadTimeoutDelay :: delay
+        , uploadProgressTimeout :: delay
         } ->
         UploadState delay
 
@@ -97,18 +99,6 @@ data UploadState delay where
  memory usage.  It might be nice to deal with this eventually.
 -}
 type AllocatedShares delay = SMap.Map (StorageIndex, ShareNumber) (UploadState delay)
-
-class HasDelay a where
-    new :: Int -> IO a
-    wait :: a -> STM ()
-    update :: a -> Int -> IO ()
-    cancel :: a -> IO ()
-
-instance HasDelay Delay where
-    new = newDelay
-    wait = waitDelay
-    update = updateDelay
-    cancel = cancelDelay
 
 {- | A storage backend for tahoe-great-black-swamp which relies on S3 objects
  to store immutable and mutable Tahoe-LAFS objects.
@@ -138,7 +128,7 @@ internalAllocate storageIndex secret allocatedSize shareNumber timeout curState 
             , uploadParts = []
             , uploadResponse = Nothing
             , uploadSecret = secret
-            , uploadTimeoutDelay = timeout
+            , uploadProgressTimeout = timeout
             }
 
 undoInternalAllocate :: StorageIndex -> ShareNumber -> AllocatedShares delay -> STM ()
@@ -311,7 +301,7 @@ instance Exception BackendError
 
   Objects are given S3 keys like `<storage index>/<share number>`.
 -}
-instance HasDelay delay => Backend (S3Backend delay) where
+instance forall delay. HasDelay delay => Backend (S3Backend delay) where
     version _ = pure $ Version params appVer
       where
         params =
@@ -348,17 +338,12 @@ instance HasDelay delay => Backend (S3Backend delay) where
         | otherwise =
             -- Creation may also fail because no upload secret has been given.
             withUploadSecret secrets $ \uploadSecret -> do
-                -- Create a delay for timing out these uploads
-                delay <- new immutableUploadProgressTimeout
-
-                -- recursive function that re-starts on "someoneUpdatedTheDelay" (or does cleanup)
-                -- how do we make "someoneUpdatedTheDelay" exposed in our state? TVar? TChan? continuation?
-                race someoneUpdatedTheDelay (asyncDelay >> cleanup)
+                delayed <- new :: IO delay
 
                 -- Try to allocate each share from the request.
                 results <-
                     mapConcurrently
-                        (try @SomeException . createOneImmutableShare s3 storageIndex allocatedSize uploadSecret delay)
+                        (try @SomeException . createOneImmutableShare s3 storageIndex allocatedSize uploadSecret delayed)
                         shareNumbers
 
                 -- Combine all of the successful allocations for the response
@@ -366,28 +351,44 @@ instance HasDelay delay => Backend (S3Backend delay) where
                 -- already handled sufficiently to leave state consistent.
                 let result = fold . rights $ results
 
-                -- Arrange for the state to be cleaned up on timeout.
-
-                -- XXX "wait delay" sleeps forever on a cancelled
-                -- Delay .. so need to cancel this thread somehow
-                void $
-                    forkIO $ do
-                        externalState <- atomically $ do
-                            -- note to self: a Cancelled in the test
-                            -- makes this fail, but we don't get this
-                            -- to go up the tree to the test and fail
-                            -- it...
-                          traverse (cleanupInternalImmutable s3 storageIndex) (allocated result)
-
-                        let f :: (ShareNumber, S3.CreateMultipartUploadResponse) -> ResourceT IO ()
-                            f = uncurry $ cleanupExternalImmutable s3 storageIndex
-
-                            xs :: [(ShareNumber, S3.CreateMultipartUploadResponse)]
-                            xs = mapMaybe sequenceA (zip (allocated result) externalState)
-
-                        runResourceT $ traverse_ f xs
+                -- recursive function that re-starts on "someoneUpdatedTheDelay" (or does cleanup)
+                -- how do we make "someoneUpdatedTheDelay" exposed in our state? TVar? TChan? continuation?
+                cleanupAfterProgressTimeout immutableUploadProgressTimeout delayed (cleanup result)
 
                 pure result
+      where
+        cleanupAfterProgressTimeout n delayed cleanup' = do
+            print $ "About to race a timeout of " <> show n <> "microseconds"
+            res <- race (wait delayed) (async $ delay' delayed n)
+            case res of
+                Left (Delayed n') ->
+                    -- The timeout was delayed.  Begin again.
+                    cleanupAfterProgressTimeout n' delayed cleanup'
+                Left Cancelled ->
+                    -- The timeout was cancelled.  We're done.
+                    pure ()
+                Right _ ->
+                    -- The timeout elapsed and we cleaned up.  We're done.
+                    cleanup'
+
+        -- Arrange for the state to be cleaned up on timeout.
+
+        -- XXX "wait delay" sleeps forever on a cancelled
+        -- Delay .. so need to cancel this thread somehow
+        cleanup result = do
+            -- note to self: a Cancelled in the test
+            -- makes this fail, but we don't get this
+            -- to go up the tree to the test and fail
+            -- it...
+            externalState <- atomically $ traverse (cleanupInternalImmutable s3 storageIndex) (allocated result)
+
+            let f :: (ShareNumber, S3.CreateMultipartUploadResponse) -> ResourceT IO ()
+                f = uncurry $ cleanupExternalImmutable s3 storageIndex
+
+                xs :: [(ShareNumber, S3.CreateMultipartUploadResponse)]
+                xs = mapMaybe sequenceA (zip (allocated result) externalState)
+
+            runResourceT $ traverse_ f xs
 
     writeImmutableShare :: S3Backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> QueryRange -> IO ()
     writeImmutableShare _s3 _storageIndex _shareNum Nothing _shareData _ = throwIO MissingUploadSecret
@@ -412,7 +413,7 @@ instance HasDelay delay => Backend (S3Backend delay) where
                 s <- atomically $ SMap.lookup (storageIndex, shareNum) s3BackendState
                 case s of
                     Nothing -> pure ()
-                    Just UploadState{..} -> update uploadTimeoutDelay immutableUploadProgressTimeout
+                    Just UploadState{..} -> update uploadProgressTimeout immutableUploadProgressTimeout
 
                 let objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
                     uploadPart = S3.newUploadPart s3BackendBucket objKey partNum' uploadId (AWS.toBody shareData)
@@ -441,10 +442,10 @@ instance HasDelay delay => Backend (S3Backend delay) where
         toCancel <- atomically $ adjust' internalCancel stateKey s3BackendState
         -- If we found it, also cancel the state in the S3 server.
         case toCancel of
-          Nothing -> throwIO IncorrectUploadSecret
-          Just (oldDelay, uploadId) -> do
-            cancelMultipartUpload uploadId
-            cancel oldDelay
+            Nothing -> throwIO IncorrectUploadSecret
+            Just (progressTimeout, uploadId) -> do
+                cancelMultipartUpload uploadId
+                cancel progressTimeout
       where
         stateKey = (storageIndex, shareNum)
 
@@ -455,9 +456,9 @@ instance HasDelay delay => Backend (S3Backend delay) where
             _resp <- AWS.send s3BackendEnv $ S3.newAbortMultipartUpload s3BackendBucket (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum) uploadId
             pure ()
 
-        internalCancel UploadState{uploadResponse, uploadSecret, uploadTimeoutDelay}
+        internalCancel UploadState{uploadResponse, uploadSecret, uploadProgressTimeout}
             | validUploadSecret uploadSecret secrets =
-                maybe (throw ShareAllocationIncomplete) ((Nothing,) . (uploadTimeoutDelay,) . (^. S3.createMultipartUploadResponse_uploadId)) uploadResponse
+                maybe (throw ShareAllocationIncomplete) ((Nothing,) . (uploadProgressTimeout,) . (^. S3.createMultipartUploadResponse_uploadId)) uploadResponse
             | otherwise = throw IncorrectUploadSecret
 
     getImmutableShareNumbers (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = runResourceT $ do
@@ -679,9 +680,9 @@ createOneImmutableShare ::
     delay ->
     ShareNumber ->
     IO AllocationResult
-createOneImmutableShare s3@S3Backend{..} storageIndex allocatedSize uploadSecret timeout shareNum = do
+createOneImmutableShare s3@S3Backend{..} storageIndex allocatedSize uploadSecret delay shareNum = do
     -- Initialize local tracking state
-    allocated <- atomically $ internalAllocate storageIndex uploadSecret allocatedSize shareNum timeout s3BackendState
+    allocated <- atomically $ internalAllocate storageIndex uploadSecret allocatedSize shareNum delay s3BackendState
 
     if allocated
         then do
@@ -708,6 +709,10 @@ instance Monoid AllocationResult where
 instance Hashable ShareNumber where
     hashWithSalt i (ShareNumber num) = hashWithSalt i num
 
+data CleanupError = InternalImmutableStateMissing deriving (Eq, Show)
+
+instance Exception CleanupError
+
 {- | Discard internal partial-upload state related to the given shares.
  Return information about their associated external partial-upload state for
  separate cleanup.
@@ -715,7 +720,7 @@ instance Hashable ShareNumber where
 cleanupInternalImmutable :: S3Backend delay -> StorageIndex -> ShareNumber -> STM (Maybe S3.CreateMultipartUploadResponse)
 cleanupInternalImmutable S3Backend{..} storageIndex shareNum =
     SMap.lookup (storageIndex, shareNum) s3BackendState >>= \case
-        Nothing -> pure Nothing
+        Nothing -> throwSTM InternalImmutableStateMissing
         Just state -> do
             SMap.delete (storageIndex, shareNum) s3BackendState
             -- XXX What if we don't have the response yet?

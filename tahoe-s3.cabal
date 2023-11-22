@@ -82,7 +82,9 @@ library
     , language
 
   -- Modules exported by the library.
-  exposed-modules: Tahoe.Storage.Backend.S3
+  exposed-modules:
+    Tahoe.Storage.Backend.Internal.Delay
+    Tahoe.Storage.Backend.S3
 
   -- Modules included in this library but not exported.
   -- other-modules:
@@ -190,6 +192,7 @@ test-suite tahoe-s3-test
     , quickcheck-instances
     , stm
     , stm-delay
+    , stm-lifted
     , tahoe-great-black-swamp
     , tahoe-great-black-swamp-testing
     , tahoe-great-black-swamp-types

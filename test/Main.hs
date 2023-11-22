@@ -21,9 +21,9 @@ import Control.Monad (
     (<=<),
  )
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isJust)
 import qualified Data.Text as T
-import Delay (DelayDouble (..), timePasses)
+import Delay (FakeDelay (..), timePasses)
 import qualified Network.HTTP.Types as HTTP
 import qualified System.IO as IO
 import Tahoe.Storage.Backend (
@@ -37,10 +37,12 @@ import Tahoe.Storage.Backend (
     WriteImmutableError (ImmutableShareAlreadyWritten, ShareNotAllocated),
     WriteVector (WriteVector),
  )
-import Tahoe.Storage.Backend.S3 (
+import Tahoe.Storage.Backend.Internal.Delay (
     HasDelay (..),
+ )
+import Tahoe.Storage.Backend.S3 (
     S3Backend (..),
-    UploadState (uploadTimeoutDelay),
+    UploadState (uploadProgressTimeout),
     applyWriteVectors,
     immutableUploadProgressTimeout,
     newS3Backend,
@@ -58,6 +60,7 @@ import Test.Hspec (
     parallel,
     shouldBe,
     shouldReturn,
+    shouldSatisfy,
     shouldThrow,
  )
 
@@ -93,8 +96,8 @@ spec = do
                     `shouldReturn` AllocationResult [] shareNums
 
                 -- Make sure we start off in a good state with respect to the timeout.
-                atomically (lookupDelay (storageIndex, ShareNumber 1) backend)
-                    `shouldReturn` Just (Unelapsed immutableUploadProgressTimeout)
+                delay <- atomically (lookupDelay (storageIndex, ShareNumber 1) backend)
+                delay `shouldSatisfy` isJust
 
                 -- Now force the expiration, as if too much time had passed with no progress.
                 atomically $ s3TimePasses immutableUploadProgressTimeout (storageIndex, ShareNumber 1) backend
@@ -120,9 +123,11 @@ spec = do
                 -- And ensure you can no longer attempt writes to this share.
                 abortImmutableUpload backend storageIndex (ShareNumber 1) secrets
 
-                -- the Delay should be cancelled
-                readTVarIO (uploadTimeoutDelay x)
-                  `shouldReturn` Cancelled
+                -- the Delay should be cancelled so if we let the progress
+                -- timeout elapse now, nothing should happen.  in particular,
+                -- no exception should come out of the cleanup code telling us
+                -- it couldn't find the state.
+                atomically $ s3TimePasses immutableUploadProgressTimeout (storageIndex, ShareNumber 1) backend
 
             it "does not timeout when progress is being made" $ do
                 let storageIndex = "abcd"
@@ -134,10 +139,6 @@ spec = do
                 -- Allocate some stuff
                 createImmutableStorageIndex backend storageIndex secrets allocate
                     `shouldReturn` AllocationResult [] shareNums
-
-                -- Make sure we start off in a good state with respect to the timeout.
-                atomically (lookupDelay (storageIndex, ShareNumber 1) backend)
-                    `shouldReturn` Just (Unelapsed immutableUploadProgressTimeout)
 
                 -- Allow less than the timeout to pass
                 atomically $ s3TimePasses (immutableUploadProgressTimeout `div` 3 * 2) (storageIndex, ShareNumber 1) backend
@@ -157,17 +158,17 @@ spec = do
 
 -- Consume one of the "delay tokens" or expire the delay if none are
 -- remaining.
-s3TimePasses :: Int -> (StorageIndex, ShareNumber) -> S3Backend (TVar DelayDouble) -> STM ()
+s3TimePasses :: Int -> (StorageIndex, ShareNumber) -> S3Backend FakeDelay -> STM ()
 s3TimePasses amount key S3Backend{..} = do
-    delay <- fmap uploadTimeoutDelay <$> SMap.lookup key s3BackendState
-    case delay of
+    maybeDelay <- fmap uploadProgressTimeout <$> SMap.lookup key s3BackendState
+    case maybeDelay of
         Nothing -> error "no such thing to expire"
         Just tv -> timePasses amount tv
 
-lookupDelay :: (StorageIndex, ShareNumber) -> S3Backend (TVar b) -> STM (Maybe b)
+lookupDelay :: (StorageIndex, ShareNumber) -> S3Backend b -> STM (Maybe b)
 lookupDelay key backend = do
     state <- SMap.lookup key (s3BackendState backend)
-    traverse (readTVar . uploadTimeoutDelay) state
+    pure $ uploadProgressTimeout <$> state
 
 -- Delete all objects with a prefix matching this backend.  Leave the
 -- bucket alone in case there are other objects unrelated to this bucket
@@ -180,7 +181,7 @@ cleanupS3 (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) = runResou
     unless (null objectKeys) . void $
         AWS.send s3BackendEnv (S3.newDeleteObjects s3BackendBucket (delete_objects .~ objectKeys $ S3.newDelete))
 
-s3Backend :: IO (S3Backend (TVar DelayDouble))
+s3Backend :: IO (S3Backend FakeDelay)
 s3Backend = runResourceT $ do
     let setLocalEndpoint = AWS.setEndpoint False "127.0.0.1" 9000
         setAddressingStyle s = s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}
