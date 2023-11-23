@@ -1,23 +1,45 @@
 module Delay where
 
-import Control.Concurrent.STM.Lifted (STM, TChan, newTChanIO, readTChanIO, writeTChan, writeTChanIO)
+import Control.Concurrent.STM.Lifted (STM, TChan, TVar, newTChanIO, newTVarIO, readTChanIO, readTVar, readTVarIO, writeTChan, writeTChanIO)
 import Tahoe.Storage.Backend.Internal.Delay (HasDelay (..), TimeoutOperation (Cancelled, Delayed))
 
-data FakeDelay = FakeDelay (TChan TimeoutOperation) (TChan Int)
+data DelayState = DelayExpired | DelayCancelled | DelayActive deriving (Eq, Show)
+
+data FakeDelay = FakeDelay
+    { delayChan :: TChan TimeoutOperation
+    , delayBackChan :: TChan Int
+    , delayState :: TVar DelayState
+    }
 
 instance Show FakeDelay where
-    show (FakeDelay _ _) = "<FakeDelay>"
+    show FakeDelay{} = "<FakeDelay>"
 
 instance HasDelay FakeDelay where
-    new = FakeDelay <$> newTChanIO <*> newTChanIO
+    new = FakeDelay <$> newTChanIO <*> newTChanIO <*> newTVarIO DelayActive
 
-    delay' (FakeDelay _ backChannel) = fakeThreadDelay backChannel
+    delay' FakeDelay{delayBackChan, delayState} duration = do
+        readTVarIO delayState >>= \case
+            DelayExpired -> error "Cannot delay' expired delay"
+            DelayCancelled -> error "Cannot delay' cancelled delay"
+            DelayActive -> fakeThreadDelay delayBackChan duration
 
-    update (FakeDelay chan _) duration = writeTChanIO chan (Delayed duration)
+    update FakeDelay{delayChan, delayState} duration = do
+        readTVarIO delayState >>= \case
+            DelayExpired -> error "Cannot update expired delay"
+            DelayCancelled -> error "Cannot update cancelled delay"
+            DelayActive -> writeTChanIO delayChan (Delayed duration)
 
-    cancel (FakeDelay chan _) = writeTChanIO chan Cancelled
+    cancel FakeDelay{delayChan, delayState} = do
+        readTVarIO delayState >>= \case
+            DelayExpired -> error "Cannot cancel expired delay"
+            DelayCancelled -> error "Cannot cancel cancelled delay"
+            DelayActive -> writeTChanIO delayChan Cancelled
 
-    wait (FakeDelay chan _) = readTChanIO chan
+    wait FakeDelay{delayChan, delayState} = do
+        readTVarIO delayState >>= \case
+            DelayExpired -> error "Cannot wait expired delay"
+            DelayCancelled -> error "Cannot wait cancelled delay"
+            DelayActive -> readTChanIO delayChan
 
 fakeThreadDelay :: TChan Int -> Int -> IO ()
 fakeThreadDelay backChannel n = do
@@ -57,8 +79,8 @@ fakeThreadDelay backChannel n = do
 -- Consume one of the "delay tokens" or expire the delay if none are
 -- remaining.
 timePasses :: Int -> FakeDelay -> STM ()
-timePasses amount (FakeDelay _ backChannel) = do
-    writeTChan backChannel amount
+timePasses amount FakeDelay{delayBackChan} = do
+    writeTChan delayBackChan amount
 
 -- state <- readTVar tv
 -- case state of
