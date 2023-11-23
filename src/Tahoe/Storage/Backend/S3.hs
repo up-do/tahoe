@@ -93,6 +93,9 @@ data UploadState delay where
         } ->
         UploadState delay
 
+instance Show (UploadState delay) where
+    show UploadState{..} = "<UploadState size=" <> show uploadStateSize <> ">"
+
 {- | where's mah parts? Here they are!
 
  TODO This might leak space because normal deletes on SMap.Map don't reduce
@@ -351,15 +354,14 @@ instance forall delay. HasDelay delay => Backend (S3Backend delay) where
                 -- already handled sufficiently to leave state consistent.
                 let result = fold . rights $ results
 
-                -- recursive function that re-starts on "someoneUpdatedTheDelay" (or does cleanup)
-                -- how do we make "someoneUpdatedTheDelay" exposed in our state? TVar? TChan? continuation?
-                cleanupAfterProgressTimeout immutableUploadProgressTimeout delayed (cleanup result)
+                -- wait on the delay and then clean up the resources allocated
+                -- for these uploads
+                void $ forkIO $ cleanupAfterProgressTimeout immutableUploadProgressTimeout delayed (cleanup result)
 
                 pure result
       where
         cleanupAfterProgressTimeout n delayed cleanup' = do
-            print $ "About to race a timeout of " <> show n <> "microseconds"
-            res <- race (wait delayed) (async $ delay' delayed n)
+            res <- race (wait delayed) (delay' delayed n)
             case res of
                 Left (Delayed n') ->
                     -- The timeout was delayed.  Begin again.

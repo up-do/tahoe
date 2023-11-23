@@ -89,6 +89,7 @@ spec = do
                     secrets = Just [Upload (UploadSecret "hello")]
                     shareNums = ShareNumber <$> [1, 2, 3]
                     allocate = AllocateBuckets shareNums 123
+
                 backend <- s3Backend
 
                 -- Allocate some stuff
@@ -96,7 +97,7 @@ spec = do
                     `shouldReturn` AllocationResult [] shareNums
 
                 -- Make sure we start off in a good state with respect to the timeout.
-                delay <- atomically (lookupDelay (storageIndex, ShareNumber 1) backend)
+                delay <- atomically $ lookupDelay (storageIndex, ShareNumber 1) backend
                 delay `shouldSatisfy` isJust
 
                 -- Now force the expiration, as if too much time had passed with no progress.
@@ -118,7 +119,7 @@ spec = do
                     `shouldReturn` AllocationResult [] shareNums
 
                 -- remember the upload-state for this upload
-                Just x <- atomically (SMap.lookup (storageIndex, ShareNumber 1) (s3BackendState backend))
+                Just state <- atomically (SMap.lookup (storageIndex, ShareNumber 1) (s3BackendState backend))
 
                 -- And ensure you can no longer attempt writes to this share.
                 abortImmutableUpload backend storageIndex (ShareNumber 1) secrets
@@ -127,7 +128,7 @@ spec = do
                 -- timeout elapse now, nothing should happen.  in particular,
                 -- no exception should come out of the cleanup code telling us
                 -- it couldn't find the state.
-                atomically $ s3TimePasses immutableUploadProgressTimeout (storageIndex, ShareNumber 1) backend
+                atomically $ timePasses immutableUploadProgressTimeout (uploadProgressTimeout state)
 
             it "does not timeout when progress is being made" $ do
                 let storageIndex = "abcd"

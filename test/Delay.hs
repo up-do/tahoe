@@ -21,9 +21,7 @@ instance HasDelay FakeDelay where
 
 fakeThreadDelay :: TChan Int -> Int -> IO ()
 fakeThreadDelay backChannel n = do
-    print "Going to read from backChannel"
     elapsed <- readTChanIO backChannel
-    print $ "Want to wait " <> show n <> " microseconds, about to let " <> show elapsed <> "microseconds pass"
     if elapsed >= n then pure () else fakeThreadDelay backChannel (n - elapsed)
 
 -- data DelayDouble
