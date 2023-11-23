@@ -9,6 +9,7 @@ class HasDelay a where
     -- microseconds.
     new :: IO a
 
+    -- | Produce a result after a delay of a given number of microseconds.
     delay' :: a -> Int -> IO ()
 
     -- | Change the completion time for the delay to be the given number of
