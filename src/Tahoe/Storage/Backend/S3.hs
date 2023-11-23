@@ -373,15 +373,9 @@ instance forall delay. HasDelay delay => Backend (S3Backend delay) where
                     -- The timeout elapsed and we cleaned up.  We're done.
                     cleanup'
 
-        -- Arrange for the state to be cleaned up on timeout.
-
-        -- XXX "wait delay" sleeps forever on a cancelled
-        -- Delay .. so need to cancel this thread somehow
+        -- Clean up state related to the given AllocationResult because the
+        -- upload was aborted or timed out.
         cleanup result = do
-            -- note to self: a Cancelled in the test
-            -- makes this fail, but we don't get this
-            -- to go up the tree to the test and fail
-            -- it...
             externalState <- atomically $ traverse (cleanupInternalImmutable s3 storageIndex) (allocated result)
 
             let f :: (ShareNumber, S3.CreateMultipartUploadResponse) -> ResourceT IO ()
@@ -450,8 +444,6 @@ instance forall delay. HasDelay delay => Backend (S3Backend delay) where
                 cancel progressTimeout
       where
         stateKey = (storageIndex, shareNum)
-
-        -- XXX should cancel timeout probably
 
         cancelMultipartUpload uploadId = runResourceT $ do
             -- XXX Check the response for errors
