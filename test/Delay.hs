@@ -46,36 +46,6 @@ fakeThreadDelay backChannel n = do
     elapsed <- readTChanIO backChannel
     if elapsed >= n then pure () else fakeThreadDelay backChannel (n - elapsed)
 
--- data DelayDouble
---     = Unelapsed Int
---     | Elapsed
---     | Cancelled
---     deriving (Show, Eq, Ord)
-
--- instance HasDelay (TVar DelayDouble) where
---     new = newTVarIO . Unelapsed
---     wait d =
---         readTVar d >>= \case
---             Elapsed -> pure ()
---             Unelapsed _ -> retry
---             Cancelled -> error "waiting for cancelled Delay"
-
---     -- "real" STM wait will simply wait forever though
-
---     update d n =
---         atomically $
---             readTVar d >>= \case
---                 Elapsed -> error "updating elapsed delay"
---                 Unelapsed _ -> writeTVar d (Unelapsed n)
---                 Cancelled -> pure ()
-
---     cancel d =
---         atomically $
---             readTVar d >>= \case
---                 Elapsed -> error "canceling elapsed delay"
---                 Unelapsed _ -> writeTVar d Cancelled
---                 Cancelled -> pure ()
-
 -- Consume one of the "delay tokens" or expire the delay if none are
 -- remaining.
 timePasses :: Int -> FakeDelay -> STM ()
