@@ -8,10 +8,9 @@ import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
 import Conduit (ResourceT, sinkList)
-import Control.Concurrent (forkIO, threadDelay)
-import Control.Concurrent.Async (async, concurrently, mapConcurrently, mapConcurrently_, race)
-import Control.Concurrent.STM.Delay (Delay, cancelDelay, newDelay, updateDelay, waitDelay)
-import Control.Concurrent.STM.Lifted (STM, atomically, newTChan, newTChanIO, newTVarIO, readTChanIO, writeTChanIO)
+import Control.Concurrent (forkIO)
+import Control.Concurrent.Async (concurrently, mapConcurrently, mapConcurrently_, race)
+import Control.Concurrent.STM.Lifted (STM, atomically)
 import qualified Control.Concurrent.STM.Map as SMap
 import Control.Exception (Exception, SomeException, catch, throw, throwIO, try)
 import Control.Lens (set, view, (.~), (?~), (^.))
@@ -27,7 +26,7 @@ import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable (hashWithSalt))
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
-import Data.Maybe (catMaybes, isJust, mapMaybe)
+import Data.Maybe (isJust, mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
