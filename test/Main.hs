@@ -1,4 +1,5 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -10,23 +11,40 @@ import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import Amazonka.S3.Lens (delete_objects, listObjectsResponse_contents, object_key)
 import qualified Amazonka.S3.Lens as S3
+import Control.Concurrent.STM (STM, TVar, atomically, newTVar, newTVarIO, readTVar, readTVarIO, retry, writeTVar)
+import qualified Control.Concurrent.STM.Map as SMap
 import Control.Lens (view, (.~), (?~), (^.), _Just)
 import Control.Monad (
     guard,
     unless,
     void,
+    (<=<),
  )
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isJust)
 import qualified Data.Text as T
+import Delay (FakeDelay (..), timePasses)
 import qualified Network.HTTP.Types as HTTP
 import qualified System.IO as IO
 import Tahoe.Storage.Backend (
+    AllocateBuckets (AllocateBuckets),
+    AllocationResult (AllocationResult),
+    Backend (..),
+    LeaseSecret (Upload),
+    ShareNumber (ShareNumber),
+    StorageIndex,
+    UploadSecret (UploadSecret),
+    WriteImmutableError (ImmutableShareAlreadyWritten, ShareNotAllocated),
     WriteVector (WriteVector),
+ )
+import Tahoe.Storage.Backend.Internal.Delay (
+    HasDelay (..),
  )
 import Tahoe.Storage.Backend.S3 (
     S3Backend (..),
+    UploadState (uploadProgressTimeout),
     applyWriteVectors,
+    immutableUploadProgressTimeout,
     newS3Backend,
  )
 import Tahoe.Storage.Testing.Spec (
@@ -36,10 +54,14 @@ import Test.Hspec (
     Spec,
     context,
     describe,
+    example,
     hspec,
     it,
     parallel,
     shouldBe,
+    shouldReturn,
+    shouldSatisfy,
+    shouldThrow,
  )
 
 main :: IO ()
@@ -61,12 +83,98 @@ spec = do
                 applyWriteVectors "abc" [WriteVector 0 "xy", WriteVector 1 "zw"] `shouldBe` "xzw"
 
     context "backend" $ do
+        describe "immutable uploads" $ do
+            it "timeout when progress is not being made" $ do
+                let storageIndex = "abcd"
+                    secrets = Just [Upload (UploadSecret "hello")]
+                    shareNums = ShareNumber <$> [1, 2, 3]
+                    allocate = AllocateBuckets shareNums 123
+
+                backend <- s3Backend
+
+                -- Allocate some stuff
+                createImmutableStorageIndex backend storageIndex secrets allocate
+                    `shouldReturn` AllocationResult [] shareNums
+
+                -- Make sure we start off in a good state with respect to the timeout.
+                delay <- atomically $ lookupDelay (storageIndex, ShareNumber 1) backend
+                delay `shouldSatisfy` isJust
+
+                -- Now force the expiration, as if too much time had passed with no progress.
+                atomically $ s3TimePasses immutableUploadProgressTimeout (storageIndex, ShareNumber 1) backend
+
+                -- And ensure you can no longer attempt writes to this share.
+                writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Hello world" Nothing
+                    `shouldThrow` (== ShareNotAllocated)
+
+            it "timeout is cancelled when upload cancelled" $ do
+                let storageIndex = "abcd"
+                    secrets = Just [Upload (UploadSecret "hello")]
+                    shareNums = ShareNumber <$> [1, 2, 3]
+                    allocate = AllocateBuckets shareNums 123
+                backend <- s3Backend
+
+                -- Allocate some stuff
+                createImmutableStorageIndex backend storageIndex secrets allocate
+                    `shouldReturn` AllocationResult [] shareNums
+
+                -- remember the upload-state for this upload
+                Just state <- atomically (SMap.lookup (storageIndex, ShareNumber 1) (s3BackendState backend))
+
+                -- And ensure you can no longer attempt writes to this share.
+                abortImmutableUpload backend storageIndex (ShareNumber 1) secrets
+
+                -- the Delay should be cancelled so if we let the progress
+                -- timeout elapse now, nothing should happen.  in particular,
+                -- no exception should come out of the cleanup code telling us
+                -- it couldn't find the state.
+                atomically $ timePasses immutableUploadProgressTimeout (uploadProgressTimeout state)
+
+            it "does not timeout when progress is being made" $ do
+                let storageIndex = "abcd"
+                    secrets = Just [Upload (UploadSecret "hello")]
+                    shareNums = ShareNumber <$> [1, 2, 3]
+                    allocate = AllocateBuckets shareNums 123
+                backend <- s3Backend
+
+                -- Allocate some stuff
+                createImmutableStorageIndex backend storageIndex secrets allocate
+                    `shouldReturn` AllocationResult [] shareNums
+
+                -- Allow less than the timeout to pass
+                atomically $ s3TimePasses (immutableUploadProgressTimeout `div` 3 * 2) (storageIndex, ShareNumber 1) backend
+
+                -- Then make some progress
+                writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Hello world" Nothing
+
+                -- Then allow more time to pass such that the total elapsed time exceeds the progress timeout.
+                atomically $ s3TimePasses (immutableUploadProgressTimeout `div` 3 * 2) (storageIndex, ShareNumber 1) backend
+
+                -- Then make some more progress.  This is allowed because the
+                -- full progress timeout never elapsed without some progress
+                -- being made.
+                writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Goodbye world" Nothing
+
         describe "S3Backend" $ makeStorageSpec s3Backend cleanupS3
+
+-- Consume one of the "delay tokens" or expire the delay if none are
+-- remaining.
+s3TimePasses :: Int -> (StorageIndex, ShareNumber) -> S3Backend FakeDelay -> STM ()
+s3TimePasses amount key S3Backend{..} = do
+    maybeDelay <- fmap uploadProgressTimeout <$> SMap.lookup key s3BackendState
+    case maybeDelay of
+        Nothing -> error "no such thing to expire"
+        Just tv -> timePasses amount tv
+
+lookupDelay :: (StorageIndex, ShareNumber) -> S3Backend b -> STM (Maybe b)
+lookupDelay key backend = do
+    state <- SMap.lookup key (s3BackendState backend)
+    pure $ uploadProgressTimeout <$> state
 
 -- Delete all objects with a prefix matching this backend.  Leave the
 -- bucket alone in case there are other objects unrelated to this bucket
 -- in it.
-cleanupS3 :: S3Backend -> IO ()
+cleanupS3 :: S3Backend delay -> IO ()
 cleanupS3 (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) = runResourceT $ do
     resp <- AWS.send s3BackendEnv (S3.listObjects_prefix ?~ s3BackendPrefix $ S3.newListObjects s3BackendBucket)
     let objectKeys = catMaybes . traverse (S3.newObjectIdentifier . (^. object_key) <$>) $ resp ^. listObjectsResponse_contents
@@ -74,7 +182,7 @@ cleanupS3 (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) = runResou
     unless (null objectKeys) . void $
         AWS.send s3BackendEnv (S3.newDeleteObjects s3BackendBucket (delete_objects .~ objectKeys $ S3.newDelete))
 
-s3Backend :: IO S3Backend
+s3Backend :: IO (S3Backend FakeDelay)
 s3Backend = runResourceT $ do
     let setLocalEndpoint = AWS.setEndpoint False "127.0.0.1" 9000
         setAddressingStyle s = s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}
