@@ -1,3 +1,6 @@
+{- | A Tahoe-LAFS Great Black Swamp storage backend which relies on an S3 server
+ for data storage.
+-}
 module Tahoe.Storage.Backend.S3 where
 
 import Amazonka (runResourceT)
@@ -99,19 +102,23 @@ instance Show (UploadState delay) where
 -}
 type AllocatedShares delay = SMap.Map (StorageIndex, ShareNumber) (UploadState delay)
 
-{- | A storage backend for tahoe-great-black-swamp which relies on S3 objects
- to store immutable and mutable Tahoe-LAFS objects.
--}
+-- | The top-level type of the S3 backend implementation.
 data S3Backend delay where
     S3Backend ::
-        { s3BackendEnv :: AWS.Env
-        , s3BackendBucket :: S3.BucketName
-        , s3BackendPrefix :: T.Text
-        , s3BackendState :: AllocatedShares delay
+        { -- | Details about how to talk to the S3 server (for example, to
+          -- establish connections and authorizer requests).
+          s3BackendEnv :: AWS.Env
+        , -- | The name of the S3 bucket in which this backend will store all
+          -- data.
+          s3BackendBucket :: S3.BucketName
+        , -- | A prefix to apply to all S3 object keys operated on by this
+          -- backend.
+          s3BackendPrefix :: T.Text
+        , -- | Internal state relating to immutable uploads that are in
+          -- progress.
+          s3BackendState :: AllocatedShares delay
         } ->
         S3Backend delay
-
--- data Safe c = (Collection c a) => Safe c a
 
 internalAllocate :: StorageIndex -> UploadSecret -> Integer -> ShareNumber -> delay -> AllocatedShares delay -> STM Bool
 internalAllocate storageIndex secret allocatedSize shareNumber timeout curState = do
