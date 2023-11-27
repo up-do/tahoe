@@ -20,10 +20,21 @@ class HasDelay a where
     -- updating it causes an exception to be thrown.
     cancel :: a -> IO ()
 
+    -- | Wait for some change in the delay configuration.
     wait :: a -> IO TimeoutOperation
 
-data TimeoutOperation = Delayed Int | Cancelled deriving (Show, Eq)
+-- | Represent a change to a scheduled delay.
+data TimeoutOperation
+    = -- | The delay is rescheduled to be a given number of microseconds after
+      -- the current time.
+      Delayed Int
+    | -- | The delay is cancelled.
+      Cancelled
+    deriving (Show, Eq)
 
+{- | A delay which uses ``threadDelay`` to let time pass and a ``TChan`` to
+ pass control messages.
+-}
 instance HasDelay (TChan TimeoutOperation) where
     new = newTChanIO
 
