@@ -63,8 +63,10 @@ common language
   default-extensions:
     BlockArguments
     DerivingStrategies
+    ExplicitForAll
     FlexibleContexts
     FlexibleInstances
+    GADTs
     GeneralizedNewtypeDeriving
     InstanceSigs
     LambdaCase

@@ -1,6 +1,3 @@
-{-# LANGUAGE ExplicitForAll #-}
-{-# LANGUAGE GADTs #-}
-
 module Tahoe.Storage.Backend.S3 where
 
 import Amazonka (runResourceT)
