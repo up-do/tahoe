@@ -85,6 +85,7 @@ library
 
   -- Modules exported by the library.
   exposed-modules:
+    Tahoe.Storage.Backend.Internal.BufferedUploadTree
     Tahoe.Storage.Backend.Internal.Delay
     Tahoe.Storage.Backend.S3
 
@@ -107,6 +108,7 @@ library
     , conduit
     , containers
     , exceptions
+    , fingertree
     , hashable
     , http-client
     , http-types

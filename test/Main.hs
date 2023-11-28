@@ -24,6 +24,7 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Maybe (catMaybes, isJust)
 import qualified Data.Text as T
 import Delay (FakeDelay (..), timePasses)
+import Network.HTTP.Types (ByteRange (ByteRangeFromTo))
 import qualified Network.HTTP.Types as HTTP
 import qualified System.IO as IO
 import Tahoe.Storage.Backend (
@@ -138,22 +139,28 @@ spec = do
                 backend <- s3Backend
 
                 -- Allocate some stuff
+                print "First"
                 createImmutableStorageIndex backend storageIndex secrets allocate
                     `shouldReturn` AllocationResult [] shareNums
 
                 -- Allow less than the timeout to pass
+                print "Second"
                 atomically $ s3TimePasses (immutableUploadProgressTimeout `div` 3 * 2) (storageIndex, ShareNumber 1) backend
 
                 -- Then make some progress
-                writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Hello world" Nothing
+                print "Third"
+                writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Hello world" (Just [ByteRangeFromTo 0 10])
 
                 -- Then allow more time to pass such that the total elapsed time exceeds the progress timeout.
+                print "Fourth"
                 atomically $ s3TimePasses (immutableUploadProgressTimeout `div` 3 * 2) (storageIndex, ShareNumber 1) backend
 
                 -- Then make some more progress.  This is allowed because the
                 -- full progress timeout never elapsed without some progress
                 -- being made.
-                writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Goodbye world" Nothing
+                print "Fifth" -- XXX It explodes here
+                writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Goodbye world" (Just [ByteRangeFromTo 11 23])
+                print "Sixth"
 
         describe "S3Backend" $ makeStorageSpec s3Backend cleanupS3
 

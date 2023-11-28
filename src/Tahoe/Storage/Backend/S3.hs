@@ -21,15 +21,17 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Base64 as Base64
 import qualified Data.ByteString.Char8 as C8
 import Data.Either (rights)
-import Data.Foldable (fold, foldl', traverse_)
+import Data.Foldable (Foldable (toList), fold, foldl', traverse_)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable (hashWithSalt))
+import qualified Data.IntervalMap.FingerTree as IMap
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Debug.Trace (trace)
 import GHC.Conc (throwSTM)
 import GHC.Stack (HasCallStack)
 import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo), Status (Status, statusCode))
@@ -40,12 +42,14 @@ import Tahoe.Storage.Backend (
     Backend (..),
     CBORSet (..),
     LeaseSecret (..),
+    Offset,
     QueryRange,
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
     ReadVector (..),
     ShareData,
     ShareNumber (..),
+    Size,
     StorageIndex,
     TestOperator (Eq),
     TestVector (..),
@@ -68,8 +72,22 @@ newtype PartNumber = PartNumber Int
     deriving newtype (Eq)
     deriving (Show)
 
-data UploadPart
-    = UploadStarted
+-- Where's my Cow? -- Terry Pratchett
+
+-- | This saves in-progress uploads so we can finish or abort
+data UploadState delay where
+    UploadState ::
+        { uploadStateSize :: Integer
+        , uploadParts :: IMap.IntervalMap Offset UploadChunkState
+        , uploadResponse :: Maybe S3.CreateMultipartUploadResponse
+        , uploadSecret :: UploadSecret
+        , uploadProgressTimeout :: delay
+        } ->
+        UploadState delay
+
+data UploadChunkState
+    = Buffered ShareData
+    | UploadStarted
         { uploadPartNumber :: PartNumber
         }
     | UploadFinished
@@ -78,19 +96,6 @@ data UploadPart
         , uploadPartResponse :: S3.UploadPartResponse
         }
     deriving (Eq, Show)
-
--- Where's my Cow? -- Terry Pratchett
-
--- | This saves in-progress uploads so we can finish or abort
-data UploadState delay where
-    UploadState ::
-        { uploadStateSize :: Integer
-        , uploadParts :: [UploadPart]
-        , uploadResponse :: Maybe S3.CreateMultipartUploadResponse
-        , uploadSecret :: UploadSecret
-        , uploadProgressTimeout :: delay
-        } ->
-        UploadState delay
 
 instance Show (UploadState delay) where
     show UploadState{..} = "<UploadState size=" <> show uploadStateSize <> ">"
@@ -131,7 +136,7 @@ internalAllocate storageIndex secret allocatedSize shareNumber timeout curState 
     newShareState =
         UploadState
             { uploadStateSize = allocatedSize
-            , uploadParts = []
+            , uploadParts = IMap.empty
             , uploadResponse = Nothing
             , uploadSecret = secret
             , uploadProgressTimeout = timeout
@@ -161,19 +166,23 @@ internalStartUpload ::
     StorageIndex ->
     -- | The number of the share the upload will be part of.
     ShareNumber ->
+    -- | The position of some new bytes belonging to this share.
+    Offset ->
+    -- | The new bytes themselves.
+    ShareData ->
     -- | The current total share state.
     AllocatedShares delay ->
     -- | The updated total share state and the state necessary to complete the
     -- upload to the S3 server.
     STM (Maybe PartUpload)
-internalStartUpload secrets storageIndex shareNum curState = do
+internalStartUpload secrets storageIndex shareNum offset shareData curState = do
     uploadState <- SMap.lookup stateKey curState
     let secret = uploadSecret <$> uploadState
     case secret of
         Nothing -> throw ShareNotAllocated
         Just secret'
             | validUploadSecret secret' secrets ->
-                adjust' (first Just . startPartUpload) stateKey curState
+                adjust' (first Just . startPartUpload offset shareData) stateKey curState
             | otherwise -> throw IncorrectUploadSecret
   where
     stateKey = (storageIndex, shareNum)
@@ -220,17 +229,127 @@ externalAllocate S3Backend{..} storageIndex shareNum =
 --         liftIO $ modifyIORef' s3BackendState (newMap `Map.union`)
 --         pure $ AllocationResult{alreadyHave = [], allocated = shareNumbers}
 
-data PartUpload = Started PartNumber T.Text | NotReady
+data PartUpload
+    = -- | The associated CreateMultipartUpload has not yet completed.  XXX We
+      -- should perhaps conceal this case?
+      NotReady
+    | -- | A write overlapped with some positions which were already written.
+      Collision
+    | -- | Some data has been accepted but it is not yet enough to be worth
+      -- beginning a PartUpload.  We will hang on to it until more data is
+      -- contributed.
+      Buffering
+    | -- | Some data should get uploaded now as a single part.
+      StartUpload PartNumber T.Text ShareData
 
--- | Add another part upload to the given state and return the part number and upload id to use with it.
-startPartUpload :: UploadState delay -> (UploadState delay, PartUpload)
-startPartUpload u@UploadState{uploadParts, uploadResponse} = result
-  where
-    result = case view S3.createMultipartUploadResponse_uploadId <$> uploadResponse of
+{- | Add some more share data to the given state.  If there is enough
+ contiguous data, also add another part upload and return the part number
+ and upload id to use with it.
+-}
+startPartUpload :: Offset -> ShareData -> UploadState delay -> (UploadState delay, PartUpload)
+startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, uploadResponse} =
+    case view S3.createMultipartUploadResponse_uploadId <$> uploadResponse of
         Nothing -> (u, NotReady)
-        Just uploadId -> (u{uploadParts = UploadStarted partNum : uploadParts}, Started partNum uploadId)
+        Just uploadId -> (state, result')
+          where
+            state = u{uploadParts = uploadParts'}
 
+            (result', uploadParts') = case intersections of
+                [] -> (action, updatedMap)
+                  where
+                    -- There is no overlap.  We can go ahead.
+
+                    -- Start by looking for adjacent mergeable values.  We
+                    -- know that our single insertion could create at most a
+                    -- group of three mergeable intervals: one immediately
+                    -- before, the one we inserted, and one immediately after.
+                    before = IMap.search (offset - 1) uploadParts
+                    after = IMap.search (offset + size) uploadParts
+
+                    (action, updatedMap) = case (before, after) of
+                        ([], [])
+                            -- Nothing before or after; do a "simple" insert.
+                            -- The data might exceed the upload threshold all
+                            -- by itself so check for that.
+                            | size < partUploadThreshold uploadStateSize ->
+                                ( Buffering
+                                , IMap.insert interval (Buffered shareData) uploadParts
+                                )
+                            | otherwise ->
+                                ( StartUpload partNum uploadId shareData
+                                , IMap.insert interval (UploadStarted partNum) uploadParts
+                                )
+                        ([], []) -> undefined
+
+                -- -- adjacent intervals so we can stop after we find one.
+                -- (action, updatedMap) = case filter canBeMerged . adjacents $ insertedMap of
+                --     [] -> (Buffered, insertedMap) -- Nope, there are none.
+                --     (ks : _) ->
+                --         -- Found one!  Merge them and use the result as a
+                --         -- replacement for the originals.
+                --         let
+                --             k = fold ks
+                --             shareData' = fold . fmap snd . IMap.intersections k $ insertedMap
+                --             state = UploadStarted partNum
+                --             start = StartUpload partNum uploadId shareData'
+                --             (before, _) = IMap.splitAfter (IMap.low k - 1) insertedMap
+                --             (_, after) = IMap.splitAfter (IMap.high k) insertedMap
+                --          in
+                --             if IMap.high k - IMap.low k >= partUploadThreshold uploadStateSize
+                --                 then (start, before `IMap.union` IMap.singleton k start `IMap.union` after)
+                --                 else (Buffered, insertedMap)
+                ixs ->
+                    -- There is some overlap.  Let's not try to deal with
+                    -- it.  Leave state unmodified and report the
+                    -- collision.
+                    (trace (show ixs) Collision, uploadParts)
+
+            intersections = IMap.intersections interval uploadParts
+            interval = IMap.Interval offset (offset + size - 1)
+            size = fromIntegral $ B.length shareData
+  where
     partNum = PartNumber $ 1 + length uploadParts
+
+{- | Merge at most one consecutive, adjacent, mergeable set of no more than 3
+ intervals.  Return the IntervalMap *without* those intervals and, separately,
+ the monoidally merged intervals and their monoidally merged values.
+-}
+mergeSingleAdjacent :: (Enum k, Ord k) => IMap.IntervalMap k UploadChunkState -> (IMap.IntervalMap k UploadChunkState, Maybe (IMap.Interval k, UploadChunkState))
+mergeSingleAdjacent m =
+    case IMap.leastView m of
+        -- Zero elements is already as merged as possible
+        Nothing -> (m, Nothing)
+        -- We've got one mergeable value...
+        Just ((ak@(IMap.Interval lowA highA), av@(Buffered aData)), n) ->
+            -- Try for a second
+            case IMap.leastView n of
+                -- There is no second so there's nothing we can possibly merge.
+                Nothing -> (m, Nothing)
+                _ -> undefined
+
+-- -- Already uploading/uploaded pieces cannot be merged
+-- Just ((IMap.Interval _ _, UploadStarted{}), _) -> (m, Nothing)
+-- Just ((IMap.Interval _ _, UploadFinished{}), _) -> (m, Nothing)
+-- -- Some buffered data may be mergeable though.
+-- Just ((a@(IMap.Interval lowA highA), aData@(Buffered shareDataA)), withoutA) ->
+--     case IMap.leastView withoutA of
+--         -- Singleton element is also already as merged as possible
+--         Nothing -> (m, Nothing)
+--         -- Two buffered pieces might be mergeable.
+--         Just ((IMap.Interval lowB highB, Buffered shareDataB), withoutEither)
+--             -- They're adjacent so replace them with their merge and
+--             -- then try to merge the whole resulting interval map.
+--             | succ highA == lowB -> mergeAdjacent (IMap.insert (IMap.Interval lowA highB) (Buffered $ shareDataA <> shareDataB) withoutEither)
+--             -- They're not adjacent but B might be adjacent to
+--             -- something later so try to merge the B-having interval
+--             -- map and then re-insert A.
+--             | otherwise -> IMap.singleton a aData `IMap.union` mergeAdjacent withoutA
+--         -- Already uploading/uploaded pieces cannot be merged.  Try to
+--         -- merge the rest but leave a and b alone.
+--         Just ((b@(IMap.Interval _ _), bData), withoutEither) ->
+--             IMap.singleton a aData
+--                 `IMap.union` IMap.singleton b bData
+--                 `IMap.union` mergeAdjacent withoutEither
 
 {- | Mark a part upload as finished and compute the new overall state of the
  multipart upload.
@@ -240,7 +359,7 @@ finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadS
     ( if multipartFinished then Nothing else Just u{uploadParts = newUploadParts}
     ,
         ( multipartFinished
-        , mapMaybe toCompleted newUploadParts
+        , mapMaybe toCompleted . toList $ newUploadParts
         )
     )
   where
@@ -251,15 +370,15 @@ finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadS
     finishPart c@(UploadStarted candidatePartNum)
         | finishedPartNum == candidatePartNum = UploadFinished finishedPartNum finishedPartSize response
         | otherwise = c
-    finishPart f@UploadFinished{} = f
+    finishPart f = f
 
-    partSize UploadStarted{} = 0
     partSize UploadFinished{uploadPartSize} = uploadPartSize
+    partSize _ = 0
 
-    toCompleted (UploadStarted _) = Nothing
     toCompleted (UploadFinished (PartNumber partNum) _ partResp) = completed
       where
         completed = S3.newCompletedPart partNum <$> (partResp ^. S3.uploadPartResponse_eTag)
+    toCompleted _ = Nothing
 
 {- | Instantiate a new S3 backend which will interact with objects in the
  given bucket using the given AWS Env.
@@ -274,10 +393,21 @@ newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
 
     pure S3Backend{..}
 
--- The maximum S3 object size is 5 TB.  We currently add no bookkeeping
--- overhead so the client-supplied share can use all of this.
+{- | The maximum S3 object size is 5 TB.  We currently add no bookkeeping
+ overhead so the client-supplied share can use all of this.
+-}
 maxShareSize :: Integer
 maxShareSize = 5 * 2 ^ (40 :: Integer)
+
+{- | Compute the threshold for the size of a contiguous chunk of buffered data
+ associated with an immutable upload which, when crossed, triggers an upload
+ of that buffered data to S3 as a "PartUpload".
+
+ There is a limit of 10,000 "parts" per "MultipartUpload" so we related the
+ share size to both the maximum share size and this limit.
+-}
+partUploadThreshold :: Size -> Size
+partUploadThreshold = (`div` 10_000)
 
 {- | The number of microseconds which must pass with no progress made
  uploading any of a number of shares allocated together before the server
@@ -390,49 +520,12 @@ instance forall delay. HasDelay delay => Backend (S3Backend delay) where
             runResourceT $ traverse_ f xs
 
     writeImmutableShare :: S3Backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> QueryRange -> IO ()
-    writeImmutableShare _s3 _storageIndex _shareNum Nothing _shareData _ = throwIO MissingUploadSecret
+    writeImmutableShare _ _ _ Nothing _ _ = throwIO MissingUploadSecret
     writeImmutableShare s3 storageIndex shareNum secrets shareData Nothing = do
         -- If no range is given, this is the whole thing.
-        writeImmutableShare s3 storageIndex shareNum secrets shareData (Just [ByteRangeFrom 0])
-    writeImmutableShare s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum secrets shareData (Just _byteRanges) = do
-        -- XXX Do something with _byteRanges
-        --
-        -- call list objects on the backend, if this share already exists, reject the new write with ImmutableShareAlreadyWritten
-        CBORSet shareNumbers <- getImmutableShareNumbers s3backend storageIndex
-        when (shareNum `elem` shareNumbers) $ throwIO ImmutableShareAlreadyWritten
-
-        -- If possible, update internal state to record a new part upload
-        -- being attempted.
-        uploadInfo <- atomically (internalStartUpload secrets storageIndex shareNum s3BackendState)
-
-        case uploadInfo of
-            Nothing -> throwIO ImmutableShareAlreadyWritten
-            Just NotReady -> throwIO ShareAllocationIncomplete
-            Just (Started (PartNumber partNum') uploadId) -> do
-                s <- atomically $ SMap.lookup (storageIndex, shareNum) s3BackendState
-                case s of
-                    Nothing -> pure ()
-                    Just UploadState{..} -> update uploadProgressTimeout immutableUploadProgressTimeout
-
-                let objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
-                    uploadPart = S3.newUploadPart s3BackendBucket objKey partNum' uploadId (AWS.toBody shareData)
-                -- XXX This could, of course, fail...  Then we have some state to roll back.
-                response <- runResourceT $ AWS.send s3BackendEnv uploadPart
-                newState <- atomically $ internalFinishUpload partNum' shareData storageIndex shareNum response s3BackendState
-                case newState of
-                    Nothing ->
-                        error "It went missing?"
-                    Just (True, []) ->
-                        error "No parts upload but we're done, huh?"
-                    Just (True, p : parts) -> do
-                        let completedMultipartUpload = (S3.completedMultipartUpload_parts ?~ (p :| parts)) S3.newCompletedMultipartUpload
-                            completeMultipartUpload =
-                                (S3.completeMultipartUpload_multipartUpload ?~ completedMultipartUpload)
-                                    (S3.newCompleteMultipartUpload s3BackendBucket objKey uploadId)
-
-                        -- XXX Oops, this could fail too.
-                        void $ runResourceT $ AWS.send s3BackendEnv completeMultipartUpload
-                    Just (False, _) -> pure ()
+        writeImmutableShare s3 storageIndex shareNum secrets shareData (Just [ByteRangeFromTo 0 (fromIntegral $ B.length shareData - 1)])
+    writeImmutableShare s3Backend storageIndex shareNum secrets shareData (Just byteRanges) =
+        traverse_ (uncurry (writeAnImmutableChunk s3Backend storageIndex shareNum secrets)) (divideByRanges byteRanges shareData)
 
     abortImmutableUpload :: S3Backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
     abortImmutableUpload _ _ _ Nothing = throwIO MissingUploadSecret
@@ -696,16 +789,6 @@ createOneImmutableShare s3@S3Backend{..} storageIndex allocatedSize uploadSecret
             pure mempty{allocated = [shareNum]}
         else pure mempty{alreadyHave = [shareNum]}
 
--- XXX Take these from tahoe-great-black-swamp-types
-instance Semigroup AllocationResult where
-    AllocationResult xa ya <> AllocationResult xb yb = AllocationResult (xa <> xb) (ya <> yb)
-
-instance Monoid AllocationResult where
-    mempty = AllocationResult mempty mempty
-
-instance Hashable ShareNumber where
-    hashWithSalt i (ShareNumber num) = hashWithSalt i num
-
 data CleanupError = InternalImmutableStateMissing deriving (Eq, Show)
 
 instance Exception CleanupError
@@ -733,3 +816,63 @@ cleanupExternalImmutable S3Backend{..} storageIndex shareNum createResponse =
     abortRequest = S3.newAbortMultipartUpload s3BackendBucket objKey uploadId
     objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
     uploadId = createResponse ^. S3.createMultipartUploadResponse_uploadId
+
+writeAnImmutableChunk :: HasDelay delay => S3Backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> Offset -> ShareData -> IO ()
+writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum secrets offset shareData =
+    do
+        -- call list objects on the backend, if this share already exists, reject the new write with ImmutableShareAlreadyWritten
+        CBORSet shareNumbers <- getImmutableShareNumbers s3backend storageIndex
+        when (shareNum `elem` shareNumbers) $ throwIO ImmutableShareAlreadyWritten
+
+        -- If possible, update internal state to reflect this new piece of
+        -- share data.  If this new data is large enough on its own, or
+        -- combines with some already-written data to exceed the threshold,
+        -- being a new part upload and record its details.
+        uploadInfo <- atomically (internalStartUpload secrets storageIndex shareNum (trace ("offset: " <> show offset <> " size: " <> show (B.length shareData)) offset) shareData s3BackendState)
+
+        case uploadInfo of
+            Nothing -> throwIO ImmutableShareAlreadyWritten
+            Just NotReady -> throwIO ShareAllocationIncomplete
+            Just Collision -> throwIO ConflictingWrite
+            Just Buffering -> updateTimeout
+            Just (StartUpload (PartNumber partNum') uploadId dataToUpload) -> do
+                updateTimeout
+
+                let objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
+                    uploadPart = S3.newUploadPart s3BackendBucket objKey partNum' uploadId (AWS.toBody dataToUpload)
+                -- XXX This could, of course, fail...  Then we have some state to roll back.
+                response <- runResourceT $ AWS.send s3BackendEnv uploadPart
+                newState <- atomically $ internalFinishUpload partNum' shareData storageIndex shareNum response s3BackendState
+                case newState of
+                    Nothing ->
+                        error "It went missing?"
+                    Just (True, []) ->
+                        error "No parts upload but we're done, huh?"
+                    Just (True, p : parts) -> do
+                        let completedMultipartUpload = (S3.completedMultipartUpload_parts ?~ (p :| parts)) S3.newCompletedMultipartUpload
+                            completeMultipartUpload =
+                                (S3.completeMultipartUpload_multipartUpload ?~ completedMultipartUpload)
+                                    (S3.newCompleteMultipartUpload s3BackendBucket objKey uploadId)
+
+                        -- XXX Oops, this could fail too.
+                        void $ runResourceT $ AWS.send s3BackendEnv completeMultipartUpload
+                    Just (False, _) -> pure ()
+  where
+    updateTimeout = do
+        s <- atomically $ SMap.lookup (storageIndex, shareNum) s3BackendState
+        case s of
+            Nothing -> pure ()
+            Just UploadState{..} -> update uploadProgressTimeout immutableUploadProgressTimeout
+
+{- | Divide a single ByteString of data into pieces based on a list of ranges,
+ keeping track of the offset of the start of each resulting piece relative
+ to the original ByteString.
+-}
+divideByRanges :: [ByteRange] -> ShareData -> [(Offset, ShareData)]
+divideByRanges [] "" = []
+divideByRanges [] _ = error "There are no more ranges but there is still share data"
+divideByRanges (_ : _) "" = error "There are more ranges but we ran out of share data"
+divideByRanges (ByteRangeFromTo from to : rs) shareData = (from, B.take size shareData) : divideByRanges rs (B.drop size shareData)
+  where
+    size = fromIntegral $ to - from + 1
+divideByRanges (_ : _) _ = error "Only `from-to` ranges are supported for uploads"
