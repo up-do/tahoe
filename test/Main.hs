@@ -21,6 +21,9 @@ import Control.Monad (
     (<=<),
  )
 import Control.Monad.IO.Class (MonadIO (liftIO))
+import qualified Data.ByteString as B
+import Data.Foldable (Foldable (toList), foldl')
+import Data.List (scanl')
 import Data.Maybe (catMaybes, isJust)
 import qualified Data.Text as T
 import Delay (FakeDelay (..), timePasses)
@@ -38,6 +41,7 @@ import Tahoe.Storage.Backend (
     WriteImmutableError (ImmutableShareAlreadyWritten, ShareNotAllocated),
     WriteVector (WriteVector),
  )
+import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.Internal.Delay (
     HasDelay (..),
  )
@@ -64,6 +68,7 @@ import Test.Hspec (
     shouldSatisfy,
     shouldThrow,
  )
+import Test.QuickCheck (Arbitrary (arbitrary), Testable (property), counterexample, forAll, shuffle, (===))
 
 main :: IO ()
 main = hspec . parallel . describe "S3" $ spec
@@ -82,6 +87,18 @@ spec = do
                 applyWriteVectors "abc" [WriteVector 0 "x", WriteVector 0 "y"] `shouldBe` "ybc"
             it "accepts partial overlaps" $ do
                 applyWriteVectors "abc" [WriteVector 0 "xy", WriteVector 1 "zw"] `shouldBe` "xzw"
+
+        describe "UploadTree" $ do
+            it "allows inserts in any order" $
+                forAll arbitrary $ \chunks -> do
+                    let sizes = B.length <$> chunks
+                        offsets = scanl' (+) 0 sizes
+                        endpoints = subtract 1 <$> drop 1 offsets
+                        intervals = zipWith UT.Interval offsets endpoints
+                        parts = zipWith UT.PartData intervals chunks
+                    forAll (shuffle parts) $ \parts' -> do
+                        let tree = foldl' (flip UT.insert) mempty parts'
+                        B.concat (UT.getShareData <$> toList tree) === B.concat chunks
 
     context "backend" $ do
         describe "immutable uploads" $ do
