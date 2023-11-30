@@ -93,15 +93,11 @@ type UploadTree = FT.FingerTree UploadTreeMeasure Part
 type PartNumber = Int
 
 
-findUploadableChunk :: UploadTree -> Int -> Int -> (Maybe Part, UploadTree)
-findUploadableChunk tree minSize maxSize =
+findUploadableChunk :: UploadTree -> Int -> (Maybe Part, UploadTree)
+findUploadableChunk tree minSize =
     tree'
   where
-    -- note: docs say "For predictable results, one should ensure that
-    -- there is only one such point, i.e. that the predicate is
-    -- monotonic." but this particular predicate isn't monotoic
-    -- (i.e. there could be two separate contiguous uploadable things)
-    position m = uploadableBytes m > minSize && uploadableBytes m <= maxSize
+    position m = uploadableBytes m >= minSize
     (left, right) = FT.split position tree
 
     tree' = case (FT.viewr left, FT.viewl right) of

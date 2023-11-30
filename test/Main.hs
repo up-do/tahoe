@@ -74,6 +74,8 @@ import Test.Hspec (
  )
 import Test.QuickCheck (Arbitrary (arbitrary), Testable (property), counterexample, forAll, shuffle, (===), NonEmptyList(..), (.&&.))
 import Test.QuickCheck.Monadic (run, monadicIO, assert)
+import Data.Word (Word8)
+import Test.QuickCheck.Modifiers (Positive(getPositive))
 
 main :: IO ()
 main = hspec . parallel . describe "S3" $ spec
@@ -140,7 +142,7 @@ spec = do
                     (UT.PartData (UT.Interval 0 0) "0")
                     ]
                   tree = foldl' (flip UT.insert) mempty parts'
-                  (uploadable, tree') = UT.findUploadableChunk tree 4 12
+                  (uploadable, tree') = UT.findUploadableChunk tree 4
               uploadable === Just (UT.PartData (UT.Interval 0 10) "0123456789A") .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
 
             it "get uploadable chunks explicit" $ do
@@ -152,9 +154,30 @@ spec = do
                     (UT.PartData (UT.Interval 0 0) "0")
                     ]
                   tree = foldl' (flip UT.insert) mempty parts'
-                  (uploadable, tree') = trace ("tree=" ++ show tree) (UT.findUploadableChunk tree 5 6)
+                  (uploadable, tree') = trace ("tree=" ++ show tree) (UT.findUploadableChunk tree 5)
               uploadable === Just (UT.PartData (UT.Interval 5 10) "56789A") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
 
+            it "wrong side tree" $ do
+              let parts' = [
+                    (UT.PartData (UT.Interval 0 1) "01"),
+                    (UT.PartData (UT.Interval 5 8) "5678")
+                    ]
+                  tree = foldl' (flip UT.insert) mempty parts'
+                  (uploadable, tree') = trace ("tree=" ++ show tree) (UT.findUploadableChunk tree 2)
+              uploadable === Just (UT.PartData (UT.Interval 0 1) "01") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
+
+            it "uploadable data with gaps" $
+                forAll arbitrary $ \sizeIncrements -> do
+                    let sizes = scanr (+) (1 :: Word8) (getPositive <$> sizeIncrements)
+                        chunks = (\n -> B.pack (replicate (fromIntegral n) n)) <$> sizes
+                        -- offsets, but with a 1-byte gap in each
+                        offsets = scanl' (\a b -> a + b + 1) 0 (fromIntegral <$> sizes)
+                        intervals = zipWith (\o chunk -> UT.Interval o (o + (B.length chunk) - 1)) offsets chunks
+                        parts = zipWith UT.PartData intervals chunks
+                    forAll (shuffle parts) $ \parts' -> do
+                        let tree = foldl' (flip UT.insert) mempty parts'
+                        length (trace ("tree=" ++ show sizes) (toList tree)) === length chunks
+                          .&&. fst (UT.findUploadableChunk tree (fromIntegral $ head sizes)) === Just (head parts)
 
     context "backend" $ do
         describe "immutable uploads" $ do
