@@ -191,6 +191,7 @@ test-suite tahoe-s3-test
     , hspec
     , hspec-expectations
     , http-types
+    , fingertree
     , lens
     , QuickCheck
     , quickcheck-instances

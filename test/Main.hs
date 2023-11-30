@@ -42,6 +42,7 @@ import Tahoe.Storage.Backend (
     WriteImmutableError (ImmutableShareAlreadyWritten, ShareNotAllocated),
     WriteVector (WriteVector),
  )
+import qualified Data.FingerTree as FT
 import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.Internal.Delay (
     HasDelay (..),
@@ -139,8 +140,8 @@ spec = do
                     (UT.PartData (UT.Interval 0 0) "0")
                     ]
                   tree = foldl' (flip UT.insert) mempty parts'
-                  (uploadable, tree') = UT.findUploadableChunk tree 12 32
-              uploadable === Nothing .&&. tree === tree'
+                  (uploadable, tree') = UT.findUploadableChunk tree 4 12
+              uploadable === Just (UT.PartData (UT.Interval 0 10) "0123456789A") .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
 
     context "backend" $ do
         describe "immutable uploads" $ do
