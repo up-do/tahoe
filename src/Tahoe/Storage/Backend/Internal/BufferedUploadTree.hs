@@ -101,7 +101,7 @@ findUploadableChunk tree minSize maxSize =
     -- there is only one such point, i.e. that the predicate is
     -- monotonic." but this particular predicate isn't monotoic
     -- (i.e. there could be two separate contiguous uploadable things)
-    position m = uploadableBytes m > minSize && uploadableBytes m < maxSize
+    position m = uploadableBytes m > minSize && uploadableBytes m <= maxSize
     (left, right) = FT.split position tree
 
     tree' = case (FT.viewr left, FT.viewl right) of

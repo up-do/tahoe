@@ -130,7 +130,7 @@ spec = do
                   tree = foldl' (flip UT.insert) mempty parts'
               B.concat (UT.getShareData <$> toList tree) === "0123456789A"
 
-            it "get uploadable chunks" $ do
+            it "get uploadable chunks explicit" $ do
               let parts' = [
                     (UT.PartData (UT.Interval 1 3) "123"),
                     (UT.PartData (UT.Interval 5 8) "5678"),
@@ -142,6 +142,19 @@ spec = do
                   tree = foldl' (flip UT.insert) mempty parts'
                   (uploadable, tree') = UT.findUploadableChunk tree 4 12
               uploadable === Just (UT.PartData (UT.Interval 0 10) "0123456789A") .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
+
+            it "get uploadable chunks explicit" $ do
+              let parts' = [
+                    (UT.PartData (UT.Interval 1 3) "123"),
+                    (UT.PartData (UT.Interval 5 8) "5678"),
+                    (UT.PartData (UT.Interval 10 10) "A"),
+                    (UT.PartData (UT.Interval 9 9) "9"),
+                    (UT.PartData (UT.Interval 0 0) "0")
+                    ]
+                  tree = foldl' (flip UT.insert) mempty parts'
+                  (uploadable, tree') = trace ("tree=" ++ show tree) (UT.findUploadableChunk tree 5 6)
+              uploadable === Just (UT.PartData (UT.Interval 5 10) "56789A") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
+
 
     context "backend" $ do
         describe "immutable uploads" $ do
