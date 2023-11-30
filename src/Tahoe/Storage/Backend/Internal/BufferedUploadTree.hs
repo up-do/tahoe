@@ -4,7 +4,7 @@ module Tahoe.Storage.Backend.Internal.BufferedUploadTree where
 
 import Debug.Trace (trace)
 import qualified Data.ByteString as B
-import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (><))
+import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (><), (<|), (|>))
 import qualified Data.FingerTree as FT
 import Data.Maybe (fromMaybe)
 
@@ -72,24 +72,47 @@ data Part
 --     mempty = No
 
 data UploadTreeMeasure = UploadTreeMeasure
-    { bufferedInterval :: Interval
+    { coveringInterval :: Interval
+    , uploadableBytes :: Int
     , fullyUploaded :: Bool
     }
     deriving (Eq, Show)
 
 instance Semigroup UploadTreeMeasure where
-    (UploadTreeMeasure aInt aUp) <> (UploadTreeMeasure bInt bUp) = UploadTreeMeasure (aInt <> bInt) (aUp && bUp)
+    (UploadTreeMeasure aInt aContig aUp) <> (UploadTreeMeasure bInt bContig bUp) = UploadTreeMeasure (aInt <> bInt) (max aContig bContig) (aUp && bUp)
 
 instance Monoid UploadTreeMeasure where
-    mempty = UploadTreeMeasure mempty True
+    mempty = UploadTreeMeasure mempty 0 True
 
 instance FT.Measured UploadTreeMeasure Part where
-    measure PartData{getInterval} = UploadTreeMeasure getInterval False
-    measure PartUploading{getInterval} = UploadTreeMeasure getInterval False
-    measure PartUploaded{getInterval} = UploadTreeMeasure getInterval True
+    measure PartData{getInterval} = UploadTreeMeasure getInterval ((high getInterval) - (low getInterval) + 1) False
+    measure PartUploading{getInterval} = UploadTreeMeasure getInterval 0 False
+    measure PartUploaded{getInterval} = UploadTreeMeasure getInterval 0 True
 
 type UploadTree = FT.FingerTree UploadTreeMeasure Part
 type PartNumber = Int
+
+
+findUploadableChunk :: UploadTree -> Int -> Int -> (Maybe Part, UploadTree)
+findUploadableChunk tree minSize maxSize =
+    tree'
+  where
+    -- note: docs say "For predictable results, one should ensure that
+    -- there is only one such point, i.e. that the predicate is
+    -- monotonic." but this particular predicate isn't monotoic
+    -- (i.e. there could be two separate contiguous uploadable things)
+    position m = uploadableBytes m > minSize && uploadableBytes m < maxSize
+    (left, right) = FT.split position tree
+
+    tree' = case (FT.viewr left, FT.viewl right) of
+        -- If there's nothing around to merge with then we can't upload anything
+        (FT.EmptyR, FT.EmptyL) -> (Nothing, tree)
+        -- If we traverse the whole tree without the predicate flipping, nothing is uploadable
+        (lefties :> before, FT.EmptyL) -> (Nothing, tree)
+        -- Predicate flipped immediately: whole tree is uploadable?
+        (FT.EmptyR, after :< righties) -> (Just after, (PartUploading (getInterval after)) <| righties)
+        -- And if we can get both, try merging both ways.
+        (lefties :> before, after :< righties) -> (Just after, (lefties |> (PartUploading (getInterval after))) >< righties)
 
 -- XXX Prevent overlaps
 insert :: Part -> UploadTree -> UploadTree
@@ -98,7 +121,7 @@ insert p tree =
   where
     -- Our predicate should flip from "false" -> "true" _on_ the
     -- element we want to insert before
-    position m = low (getInterval p) <= high (bufferedInterval m)
+    position m = low (getInterval p) <= high (coveringInterval m)
 
     (left, right) = FT.split position tree
 
@@ -115,7 +138,7 @@ insert p tree =
 insert p tree =
     tree'
   where
-    (left, right) = FT.split ((> low (getInterval p)) . low . bufferedInterval) tree
+    (left, right) = FT.split ((> low (getInterval p)) . low . coveringInterval) tree
 
     tree' = left >< FT.singleton p >< right
 

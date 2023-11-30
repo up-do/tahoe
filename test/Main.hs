@@ -71,7 +71,7 @@ import Test.Hspec (
     shouldThrow,
     runIO,
  )
-import Test.QuickCheck (Arbitrary (arbitrary), Testable (property), counterexample, forAll, shuffle, (===), NonEmptyList(..))
+import Test.QuickCheck (Arbitrary (arbitrary), Testable (property), counterexample, forAll, shuffle, (===), NonEmptyList(..), (.&&.))
 import Test.QuickCheck.Monadic (run, monadicIO, assert)
 
 main :: IO ()
@@ -128,6 +128,19 @@ spec = do
                     ]
                   tree = foldl' (flip UT.insert) mempty parts'
               B.concat (UT.getShareData <$> toList tree) === "0123456789A"
+
+            it "get uploadable chunks" $ do
+              let parts' = [
+                    (UT.PartData (UT.Interval 1 3) "123"),
+                    (UT.PartData (UT.Interval 5 8) "5678"),
+                    (UT.PartData (UT.Interval 4 4) "4"),
+                    (UT.PartData (UT.Interval 10 10) "A"),
+                    (UT.PartData (UT.Interval 9 9) "9"),
+                    (UT.PartData (UT.Interval 0 0) "0")
+                    ]
+                  tree = foldl' (flip UT.insert) mempty parts'
+                  (uploadable, tree') = UT.findUploadableChunk tree 12 32
+              uploadable === Nothing .&&. tree === tree'
 
     context "backend" $ do
         describe "immutable uploads" $ do
