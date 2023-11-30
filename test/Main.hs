@@ -105,7 +105,18 @@ spec = do
                         let tree = foldl' (flip UT.insert) mempty parts'
                         B.concat (UT.getShareData <$> toList tree) === B.concat chunks
 
-        describe "UploadTree" $ do
+            it "contiguous data is merged" $
+                forAll arbitrary $ \(NonEmpty shares) -> do
+                    let chunks = getShareData <$> shares
+                        sizes = B.length <$> chunks
+                        offsets = scanl' (+) 0 sizes
+                        endpoints = subtract 1 <$> drop 1 offsets
+                        intervals = zipWith UT.Interval offsets endpoints
+                        parts = zipWith UT.PartData intervals chunks
+                    forAll (shuffle parts) $ \parts' -> do
+                        let tree = foldl' (flip UT.insert) mempty parts'
+                        length (toList tree) === 1
+
             it "allows inserts in any order explicit" $ do
               let parts' = [
                     (UT.PartData (UT.Interval 1 3) "123"),
