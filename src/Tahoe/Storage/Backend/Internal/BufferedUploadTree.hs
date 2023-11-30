@@ -2,6 +2,7 @@
 
 module Tahoe.Storage.Backend.Internal.BufferedUploadTree where
 
+import Debug.Trace (trace)
 import qualified Data.ByteString as B
 import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (><))
 import qualified Data.FingerTree as FT
@@ -95,9 +96,9 @@ insert :: Part -> UploadTree -> UploadTree
 insert p tree =
     tree'
   where
-    -- The correct insertion point is before the first existing element with
-    -- an interval that starts after the new element's interval starts.
-    position m = low (bufferedInterval m) >= low (getInterval p)
+    -- Our predicate should flip from "false" -> "true" _on_ the
+    -- element we want to insert before
+    position m = low (getInterval p) <= high (bufferedInterval m)
 
     (left, right) = FT.split position tree
 

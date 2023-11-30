@@ -6,6 +6,7 @@
 
 module Main (main) where
 
+import Debug.Trace (trace)
 import Amazonka (runResourceT)
 import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
@@ -54,6 +55,7 @@ import Tahoe.Storage.Backend.S3 (
  )
 import Tahoe.Storage.Testing.Spec (
     makeStorageSpec,
+    SomeShareData(..),
  )
 import Test.Hspec (
     Spec,
@@ -67,8 +69,10 @@ import Test.Hspec (
     shouldReturn,
     shouldSatisfy,
     shouldThrow,
+    runIO,
  )
-import Test.QuickCheck (Arbitrary (arbitrary), Testable (property), counterexample, forAll, shuffle, (===))
+import Test.QuickCheck (Arbitrary (arbitrary), Testable (property), counterexample, forAll, shuffle, (===), NonEmptyList(..))
+import Test.QuickCheck.Monadic (run, monadicIO, assert)
 
 main :: IO ()
 main = hspec . parallel . describe "S3" $ spec
@@ -90,8 +94,9 @@ spec = do
 
         describe "UploadTree" $ do
             it "allows inserts in any order" $
-                forAll arbitrary $ \chunks -> do
-                    let sizes = B.length <$> chunks
+                forAll arbitrary $ \(NonEmpty shares) -> do
+                    let chunks = getShareData <$> shares
+                        sizes = B.length <$> chunks
                         offsets = scanl' (+) 0 sizes
                         endpoints = subtract 1 <$> drop 1 offsets
                         intervals = zipWith UT.Interval offsets endpoints
@@ -99,6 +104,19 @@ spec = do
                     forAll (shuffle parts) $ \parts' -> do
                         let tree = foldl' (flip UT.insert) mempty parts'
                         B.concat (UT.getShareData <$> toList tree) === B.concat chunks
+
+        describe "UploadTree" $ do
+            it "allows inserts in any order explicit" $ do
+              let parts' = [
+                    (UT.PartData (UT.Interval 1 3) "123"),
+                    (UT.PartData (UT.Interval 5 8) "5678"),
+                    (UT.PartData (UT.Interval 4 4) "4"),
+                    (UT.PartData (UT.Interval 10 10) "A"),
+                    (UT.PartData (UT.Interval 9 9) "9"),
+                    (UT.PartData (UT.Interval 0 0) "0")
+                    ]
+                  tree = foldl' (flip UT.insert) mempty parts'
+              B.concat (UT.getShareData <$> toList tree) === "0123456789A"
 
     context "backend" $ do
         describe "immutable uploads" $ do

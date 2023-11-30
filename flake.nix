@@ -130,9 +130,9 @@
         localPackages = {
           tahoe-great-black-swamp =
             tahoe-great-black-swamp.sourceInfo.outPath;
-          tahoe-great-black-swamp-types = "/home/exarkun/Work/haskell/tahoe-great-black-swamp-types";
+          tahoe-great-black-swamp-types = "/home/mike/work/leastauthority/src/tahoe-great-black-swamp-types";
           # tahoe-great-black-swamp-types.sourceInfo.outPath;
-          tahoe-great-black-swamp-testing = "/home/exarkun/Work/haskell/tahoe-great-black-swamp-testing";
+          tahoe-great-black-swamp-testing = "/home/mike/work/leastauthority/src/tahoe-great-black-swamp-testing";
           # tahoe-great-black-swamp-testing.sourceInfo.outPath;
         };
       };
