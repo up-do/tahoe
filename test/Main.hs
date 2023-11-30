@@ -154,7 +154,7 @@ spec = do
                     (UT.PartData (UT.Interval 0 0) "0")
                     ]
                   tree = foldl' (flip UT.insert) mempty parts'
-                  (uploadable, tree') = trace ("tree=" ++ show tree) (UT.findUploadableChunk tree 5)
+                  (uploadable, tree') = UT.findUploadableChunk tree 5
               uploadable === Just (UT.PartData (UT.Interval 5 10) "56789A") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
 
             it "wrong side tree" $ do
@@ -163,7 +163,7 @@ spec = do
                     (UT.PartData (UT.Interval 5 8) "5678")
                     ]
                   tree = foldl' (flip UT.insert) mempty parts'
-                  (uploadable, tree') = trace ("tree=" ++ show tree) (UT.findUploadableChunk tree 2)
+                  (uploadable, tree') = UT.findUploadableChunk tree 2
               uploadable === Just (UT.PartData (UT.Interval 0 1) "01") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
 
             it "uploadable data with gaps" $
@@ -176,7 +176,7 @@ spec = do
                         parts = zipWith UT.PartData intervals chunks
                     forAll (shuffle parts) $ \parts' -> do
                         let tree = foldl' (flip UT.insert) mempty parts'
-                        length (trace ("tree=" ++ show sizes) (toList tree)) === length chunks
+                        length (toList tree) === length chunks
                           .&&. fst (UT.findUploadableChunk tree (fromIntegral $ head sizes)) === Just (head parts)
 
     context "backend" $ do
