@@ -20,6 +20,7 @@ import Data.Aeson (
 import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
 import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
+import Data.Hashable (Hashable (hashWithSalt))
 import Data.Map.Merge.Strict (merge, preserveMissing, zipWithMatched)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -87,6 +88,9 @@ newtype ShareNumber = ShareNumber Integer
         , FromJSON
         , FromJSONKey
         )
+
+instance Hashable ShareNumber where
+    hashWithSalt i (ShareNumber num) = hashWithSalt i num
 
 {- | A new type for which we can define our own CBOR serialisation rules.  The
  cborg library provides a Serialise instance for Set which is not compatible
@@ -222,6 +226,12 @@ data AllocationResult = AllocationResult
     }
     deriving (Show, Eq, Generic)
 
+instance Semigroup AllocationResult where
+    AllocationResult xa ya <> AllocationResult xb yb = AllocationResult (xa <> xb) (ya <> yb)
+
+instance Monoid AllocationResult where
+    mempty = AllocationResult mempty mempty
+
 {- | One of several kinds of shared secrets for authorizing a client to
  perform various operations.
 -}
@@ -298,6 +308,9 @@ data WriteImmutableError
     | -- | Used to reject an immutable write to a share which has not been
       -- allocated.
       ShareNotAllocated
+    | -- | Used to reject an immutable write that overlaps with data that has
+      -- already been written.
+      ConflictingWrite
     deriving (Ord, Eq, Show)
 
 instance Exception WriteImmutableError
@@ -324,6 +337,7 @@ class Backend b where
     createImmutableStorageIndex :: b -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
 
     -- May throw ImmutableShareAlreadyWritten
+    -- XXX Return should indicate what remains to be written
     writeImmutableShare :: b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> Maybe ByteRanges -> IO ()
     abortImmutableUpload :: b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
     adviseCorruptImmutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
