@@ -1,5 +1,14 @@
 {- | A Tahoe-LAFS Great Black Swamp storage backend which relies on an S3 server
  for data storage.
+
+  Some notes about AWS limitations:
+
+  - The maximum size of an S3 object created using the PutObject API is 5 GB.
+  - The maximum size of an S3 object created using the CreateMultipartUpload / UploadPart is 5 TB.
+  - The minimum size of a single UploadPart is 5 MB.
+  - The maximum number of UploadParts associated with a CreateMultipartUpload is 10,000.
+  - UploadParts must be numbered using part numbers from 1 to 10,000 inclusive.
+  - The part number of an UploadPart determines that part's payload's position in the resulting S3 object.
 -}
 module Tahoe.Storage.Backend.S3 where
 
