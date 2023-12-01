@@ -2,6 +2,7 @@
 
 module Tahoe.Storage.Testing.Spec (
     ShareNumbers (..),
+    SomeShareData (..),
     makeStorageSpec,
     genStorageIndex,
 ) where
