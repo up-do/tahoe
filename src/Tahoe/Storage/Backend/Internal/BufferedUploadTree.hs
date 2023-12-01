@@ -2,19 +2,10 @@
 
 module Tahoe.Storage.Backend.Internal.BufferedUploadTree where
 
-import Debug.Trace (trace)
 import qualified Data.ByteString as B
-import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (><), (<|), (|>))
+import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (<|), (><), (|>))
 import qualified Data.FingerTree as FT
 import Data.Maybe (fromMaybe)
-
--- newtype ShareDataSize = ShareDataSize {getShareDataSize :: Int}
-
--- instance Semigroup ShareDataSize where
---     ShareDataSize a <> ShareDataSize b = ShareDataSize (a + b)
-
--- instance Monoid ShareDataSize where
---     mempty = ShareDataSize 0
 
 data Interval = Interval Int Int deriving (Eq, Ord, Show)
 
@@ -58,19 +49,6 @@ data Part
     | PartUploaded {getInterval :: Interval}
     deriving (Eq, Show)
 
--- isUploaded PartData = No
--- isUploaded PartUploading = No
--- isUploaded PartUploaded = Yes
-
--- data IsUploaded = Yes | No
-
--- instance Semigroup IsUploaded where
---     Yes <> Yes = Yes
---     _ <> _ = No
-
--- instance Monoid IsUploaded where
---     mempty = No
-
 data UploadTreeMeasure = UploadTreeMeasure
     { coveringInterval :: Interval
     , uploadableBytes :: Int
@@ -91,7 +69,6 @@ instance FT.Measured UploadTreeMeasure Part where
 
 type UploadTree = FT.FingerTree UploadTreeMeasure Part
 type PartNumber = Int
-
 
 findUploadableChunk :: UploadTree -> Int -> (Maybe Part, UploadTree)
 findUploadableChunk tree minSize =
@@ -156,41 +133,6 @@ merge2 _ _ = Nothing
 
 merge2' :: Part -> Part -> [Part]
 merge2' a b = maybe [a, b] (: []) $ merge2 a b
-
--- data BufferedData = BufferedData Int Int B.ByteString
-
--- data Interval = Interval Integer Integer
--- data Contiguous
---     = C Integer Integer [Interval] -- start end of all the intervals
---     | NotContiguous [Contiguous]
-
--- i2c :: Interval -> Contiguous
--- i2c i@(Interval low high) = C low high [i]
-
--- c2i :: Contiguous -> Interval
--- c2i (C low high _) = Interval low high
-
--- intervalSize :: Contiguous -> Integer
--- intervalSize (C low high _) = high - low
-
--- mergeMaybe :: Contiguous -> Contiguous -> Contiguous
--- mergeMaybe c1@(C s1 s2 sublist1) c2@(C e1 e2 sublist2) = if s2 + 1 == e1 then (C s1 e2 (sublist1 <> sublist2)) else NotContiguous c1 c2
--- mergeMaybe (NotContiguous cs) (C s1 s2 sublist1) = undefined
-
--- newtype GreatestInterval = GreatestInterval [Interval]
-
--- instance Semigroup GreatestInterval where
---     GreatestInterval a <> GreatestInterval b = GreatestInterval (a <> b)
-
--- instance Monoid GreatestInterval where
---     mempty = GreatestInterval []
-
--- greatestIntervals :: GreatestInterval -> [Contiguous]
--- greatestIntervals (GreatestInterval []) = []
--- greatestIntervals (GreatestInterval (i : is)) = sortOn intervalSize (foldr mergeMaybe (i2c i) (i2c <$> is))
-
--- empty :: FT.FingerTree GreatestInterval BufferedData
--- empty = undefined
 
 -- -- What Monoid / Measured works for our use-case?
 -- --
