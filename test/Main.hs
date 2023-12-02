@@ -6,7 +6,6 @@
 
 module Main (main) where
 
-import Debug.Trace (trace)
 import Amazonka (runResourceT)
 import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
@@ -23,10 +22,13 @@ import Control.Monad (
  )
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import qualified Data.ByteString as B
+import qualified Data.FingerTree as FT
 import Data.Foldable (Foldable (toList), foldl')
 import Data.List (scanl')
 import Data.Maybe (catMaybes, isJust)
 import qualified Data.Text as T
+import Data.Word (Word8)
+import Debug.Trace (trace)
 import Delay (FakeDelay (..), timePasses)
 import Network.HTTP.Types (ByteRange (ByteRangeFromTo))
 import qualified Network.HTTP.Types as HTTP
@@ -42,7 +44,6 @@ import Tahoe.Storage.Backend (
     WriteImmutableError (ImmutableShareAlreadyWritten, ShareNotAllocated),
     WriteVector (WriteVector),
  )
-import qualified Data.FingerTree as FT
 import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.Internal.Delay (
     HasDelay (..),
@@ -55,8 +56,8 @@ import Tahoe.Storage.Backend.S3 (
     newS3Backend,
  )
 import Tahoe.Storage.Testing.Spec (
+    SomeShareData (..),
     makeStorageSpec,
-    SomeShareData(..),
  )
 import Test.Hspec (
     Spec,
@@ -66,16 +67,15 @@ import Test.Hspec (
     hspec,
     it,
     parallel,
+    runIO,
     shouldBe,
     shouldReturn,
     shouldSatisfy,
     shouldThrow,
-    runIO,
  )
-import Test.QuickCheck (Arbitrary (arbitrary), Testable (property), counterexample, forAll, shuffle, (===), NonEmptyList(..), (.&&.))
-import Test.QuickCheck.Monadic (run, monadicIO, assert)
-import Data.Word (Word8)
-import Test.QuickCheck.Modifiers (Positive(getPositive))
+import Test.QuickCheck (Arbitrary (arbitrary), NonEmptyList (..), Testable (property), counterexample, forAll, shuffle, (.&&.), (===))
+import Test.QuickCheck.Modifiers (Positive (getPositive))
+import Test.QuickCheck.Monadic (assert, monadicIO, run)
 
 main :: IO ()
 main = hspec . parallel . describe "S3" $ spec
@@ -121,51 +121,49 @@ spec = do
                         length (toList tree) === 1
 
             it "allows inserts in any order explicit" $ do
-              let parts' = [
-                    (UT.PartData (UT.Interval 1 3) "123"),
-                    (UT.PartData (UT.Interval 5 8) "5678"),
-                    (UT.PartData (UT.Interval 4 4) "4"),
-                    (UT.PartData (UT.Interval 10 10) "A"),
-                    (UT.PartData (UT.Interval 9 9) "9"),
-                    (UT.PartData (UT.Interval 0 0) "0")
-                    ]
-                  tree = foldl' (flip UT.insert) mempty parts'
-              B.concat (UT.getShareData <$> toList tree) === "0123456789A"
+                let parts' =
+                        [ (UT.PartData (UT.Interval 1 3) "123")
+                        , (UT.PartData (UT.Interval 5 8) "5678")
+                        , (UT.PartData (UT.Interval 4 4) "4")
+                        , (UT.PartData (UT.Interval 10 10) "A")
+                        , (UT.PartData (UT.Interval 9 9) "9")
+                        , (UT.PartData (UT.Interval 0 0) "0")
+                        ]
+                    tree = foldl' (flip UT.insert) mempty parts'
+                B.concat (UT.getShareData <$> toList tree) === "0123456789A"
 
             it "get uploadable chunks explicit" $ do
-              let parts' = [
-                    (UT.PartData (UT.Interval 1 3) "123"),
-                    (UT.PartData (UT.Interval 5 8) "5678"),
-                    (UT.PartData (UT.Interval 4 4) "4"),
-                    (UT.PartData (UT.Interval 10 10) "A"),
-                    (UT.PartData (UT.Interval 9 9) "9"),
-                    (UT.PartData (UT.Interval 0 0) "0")
-                    ]
-                  tree = foldl' (flip UT.insert) mempty parts'
-                  (uploadable, tree') = UT.findUploadableChunk tree 4
-              uploadable === Just (UT.PartData (UT.Interval 0 10) "0123456789A") .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
+                let parts' =
+                        [ (UT.PartData (UT.Interval 1 3) "123")
+                        , (UT.PartData (UT.Interval 5 8) "5678")
+                        , (UT.PartData (UT.Interval 4 4) "4")
+                        , (UT.PartData (UT.Interval 10 10) "A")
+                        , (UT.PartData (UT.Interval 9 9) "9")
+                        , (UT.PartData (UT.Interval 0 0) "0")
+                        ]
+                    tree = foldl' (flip UT.insert) mempty parts'
+                    (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 4
+                uploadable === Just (UT.PartData (UT.Interval 0 10) "0123456789A") .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
 
             it "get uploadable chunks explicit" $ do
-              let parts' = [
-                    (UT.PartData (UT.Interval 1 3) "123"),
-                    (UT.PartData (UT.Interval 5 8) "5678"),
-                    (UT.PartData (UT.Interval 10 10) "A"),
-                    (UT.PartData (UT.Interval 9 9) "9"),
-                    (UT.PartData (UT.Interval 0 0) "0")
-                    ]
-                  tree = foldl' (flip UT.insert) mempty parts'
-                  (uploadable, tree') = UT.findUploadableChunk tree 5
-              uploadable === Just (UT.PartData (UT.Interval 5 10) "56789A") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
-
+                let parts' =
+                        [ (UT.PartData (UT.Interval 1 3) "123")
+                        , (UT.PartData (UT.Interval 5 8) "5678")
+                        , (UT.PartData (UT.Interval 10 10) "A")
+                        , (UT.PartData (UT.Interval 9 9) "9")
+                        , (UT.PartData (UT.Interval 0 0) "0")
+                        ]
+                    tree = foldl' (flip UT.insert) mempty parts'
+                    (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 5
+                uploadable === Just (UT.PartData (UT.Interval 5 10) "56789A") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
             it "wrong side tree" $ do
-              let parts' = [
-                    (UT.PartData (UT.Interval 0 1) "01"),
-                    (UT.PartData (UT.Interval 5 8) "5678")
-                    ]
-                  tree = foldl' (flip UT.insert) mempty parts'
-                  (uploadable, tree') = UT.findUploadableChunk tree 2
-              uploadable === Just (UT.PartData (UT.Interval 0 1) "01") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
-
+                let parts' =
+                        [ (UT.PartData (UT.Interval 0 1) "01")
+                        , (UT.PartData (UT.Interval 5 8) "5678")
+                        ]
+                    tree = foldl' (flip UT.insert) mempty parts'
+                    (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 2
+                uploadable === Just (UT.PartData (UT.Interval 0 1) "01") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
             it "uploadable data with gaps" $
                 forAll arbitrary $ \sizeIncrements -> do
                     let sizes = scanr (+) (1 :: Word8) (getPositive <$> sizeIncrements)
@@ -176,8 +174,10 @@ spec = do
                         parts = zipWith UT.PartData intervals chunks
                     forAll (shuffle parts) $ \parts' -> do
                         let tree = foldl' (flip UT.insert) mempty parts'
-                        length (toList tree) === length chunks
-                          .&&. fst (UT.findUploadableChunk tree (fromIntegral $ head sizes)) === Just (head parts)
+                        length (toList tree)
+                            === length chunks
+                            .&&. fst (UT.findUploadableChunk trivialAssigner tree (fromIntegral $ head sizes))
+                            === Just (head parts)
 
     context "backend" $ do
         describe "immutable uploads" $ do
@@ -333,3 +333,9 @@ s3Backend = runResourceT $ do
                 pure letter
       where
         prefix = letter <> "/"
+
+{- | Assign a part number to the part at a given interval.  This assigner is
+ extremely naive and uses the low bound of the interval plus one (to avoid
+ illegally assigning 0).
+-}
+trivialAssigner = succ . UT.low

@@ -71,15 +71,12 @@ import Tahoe.Storage.Backend (
     WriteMutableError (..),
     WriteVector (..),
  )
+import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.Internal.Delay (HasDelay (..), TimeoutOperation (Cancelled, Delayed))
 import TahoeLAFS.Storage.Backend (
     withUploadSecret,
  )
 import Text.Read (readMaybe)
-
-newtype PartNumber = PartNumber Int
-    deriving newtype (Eq)
-    deriving (Show)
 
 -- Where's my Cow? -- Terry Pratchett
 
@@ -87,24 +84,12 @@ newtype PartNumber = PartNumber Int
 data UploadState delay where
     UploadState ::
         { uploadStateSize :: Integer
-        , uploadParts :: IMap.IntervalMap Offset UploadChunkState
+        , uploadParts :: UT.UploadTree
         , uploadResponse :: Maybe S3.CreateMultipartUploadResponse
         , uploadSecret :: UploadSecret
         , uploadProgressTimeout :: delay
         } ->
         UploadState delay
-
-data UploadChunkState
-    = Buffered ShareData
-    | UploadStarted
-        { uploadPartNumber :: PartNumber
-        }
-    | UploadFinished
-        { uploadPartNumber :: PartNumber
-        , uploadPartSize :: Integer
-        , uploadPartResponse :: S3.UploadPartResponse
-        }
-    deriving (Eq, Show)
 
 instance Show (UploadState delay) where
     show UploadState{..} = "<UploadState size=" <> show uploadStateSize <> ">"
@@ -145,7 +130,7 @@ internalAllocate storageIndex secret allocatedSize shareNumber timeout curState 
     newShareState =
         UploadState
             { uploadStateSize = allocatedSize
-            , uploadParts = IMap.empty
+            , uploadParts = mempty
             , uploadResponse = Nothing
             , uploadSecret = secret
             , uploadProgressTimeout = timeout
@@ -205,7 +190,7 @@ internalFinishUpload ::
     AllocatedShares delay ->
     STM (Maybe (Bool, [S3.CompletedPart]))
 internalFinishUpload partNum' shareData storageIndex shareNum response =
-    adjust' (finishPartUpload (PartNumber partNum') (fromIntegral $ B.length shareData) response) stateKey
+    adjust' (finishPartUpload (UT.PartNumber partNum') (fromIntegral $ B.length shareData) response) stateKey
   where
     stateKey = (storageIndex, shareNum)
 
@@ -249,7 +234,7 @@ data PartUpload
       -- contributed.
       Buffering
     | -- | Some data should get uploaded now as a single part.
-      StartUpload PartNumber T.Text ShareData
+      StartUpload UT.PartNumber T.Text ShareData
 
 {- | Add some more share data to the given state.  If there is enough
  contiguous data, also add another part upload and return the part number
@@ -258,112 +243,32 @@ data PartUpload
 startPartUpload :: Offset -> ShareData -> UploadState delay -> (UploadState delay, PartUpload)
 startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, uploadResponse} =
     case view S3.createMultipartUploadResponse_uploadId <$> uploadResponse of
+        -- If we don't have the upload response yet, we don't know the upload id
+        -- so we can't actually handle this work.
         Nothing -> (u, NotReady)
-        Just uploadId -> (state, result')
+        -- If we do, though, we can try to merge the new data into our idea
+        -- about the state for this share.  That will produce a new state to
+        -- return as well as, possibly, an action for the caller to take based
+        -- on that new state.
+        Just uploadId -> (state, action)
           where
-            state = u{uploadParts = uploadParts'}
+            state = u{uploadParts = partsActioned}
 
-            (result', uploadParts') = case intersections of
-                [] -> (action, updatedMap)
-                  where
-                    -- There is no overlap.  We can go ahead.
-
-                    -- Start by looking for adjacent mergeable values.  We
-                    -- know that our single insertion could create at most a
-                    -- group of three mergeable intervals: one immediately
-                    -- before, the one we inserted, and one immediately after.
-                    before = IMap.search (offset - 1) uploadParts
-                    after = IMap.search (offset + size) uploadParts
-
-                    (action, updatedMap) = case (before, after) of
-                        ([], [])
-                            -- Nothing before or after; do a "simple" insert.
-                            -- The data might exceed the upload threshold all
-                            -- by itself so check for that.
-                            | size < partUploadThreshold uploadStateSize ->
-                                ( Buffering
-                                , IMap.insert interval (Buffered shareData) uploadParts
-                                )
-                            | otherwise ->
-                                ( StartUpload partNum uploadId shareData
-                                , IMap.insert interval (UploadStarted partNum) uploadParts
-                                )
-                        ([], []) -> undefined
-
-                -- -- adjacent intervals so we can stop after we find one.
-                -- (action, updatedMap) = case filter canBeMerged . adjacents $ insertedMap of
-                --     [] -> (Buffered, insertedMap) -- Nope, there are none.
-                --     (ks : _) ->
-                --         -- Found one!  Merge them and use the result as a
-                --         -- replacement for the originals.
-                --         let
-                --             k = fold ks
-                --             shareData' = fold . fmap snd . IMap.intersections k $ insertedMap
-                --             state = UploadStarted partNum
-                --             start = StartUpload partNum uploadId shareData'
-                --             (before, _) = IMap.splitAfter (IMap.low k - 1) insertedMap
-                --             (_, after) = IMap.splitAfter (IMap.high k) insertedMap
-                --          in
-                --             if IMap.high k - IMap.low k >= partUploadThreshold uploadStateSize
-                --                 then (start, before `IMap.union` IMap.singleton k start `IMap.union` after)
-                --                 else (Buffered, insertedMap)
-                ixs ->
-                    -- There is some overlap.  Let's not try to deal with
-                    -- it.  Leave state unmodified and report the
-                    -- collision.
-                    (trace (show ixs) Collision, uploadParts)
-
-            intersections = IMap.intersections interval uploadParts
-            interval = IMap.Interval offset (offset + size - 1)
             size = fromIntegral $ B.length shareData
-  where
-    partNum = PartNumber $ 1 + length uploadParts
+            interval = UT.Interval (fromIntegral offset) (fromIntegral $ offset + size - 1)
+            part = UT.PartData interval shareData
 
-{- | Merge at most one consecutive, adjacent, mergeable set of no more than 3
- intervals.  Return the IntervalMap *without* those intervals and, separately,
- the monoidally merged intervals and their monoidally merged values.
--}
-mergeSingleAdjacent :: (Enum k, Ord k) => IMap.IntervalMap k UploadChunkState -> (IMap.IntervalMap k UploadChunkState, Maybe (IMap.Interval k, UploadChunkState))
-mergeSingleAdjacent m =
-    case IMap.leastView m of
-        -- Zero elements is already as merged as possible
-        Nothing -> (m, Nothing)
-        -- We've got one mergeable value...
-        Just ((ak@(IMap.Interval lowA highA), av@(Buffered aData)), n) ->
-            -- Try for a second
-            case IMap.leastView n of
-                -- There is no second so there's nothing we can possibly merge.
-                Nothing -> (m, Nothing)
-                _ -> undefined
+            partsInserted = UT.insert part uploadParts
+            (uploadable, partsActioned) = UT.findUploadableChunk (const (UT.PartNumber 1)) partsInserted 500
 
--- -- Already uploading/uploaded pieces cannot be merged
--- Just ((IMap.Interval _ _, UploadStarted{}), _) -> (m, Nothing)
--- Just ((IMap.Interval _ _, UploadFinished{}), _) -> (m, Nothing)
--- -- Some buffered data may be mergeable though.
--- Just ((a@(IMap.Interval lowA highA), aData@(Buffered shareDataA)), withoutA) ->
---     case IMap.leastView withoutA of
---         -- Singleton element is also already as merged as possible
---         Nothing -> (m, Nothing)
---         -- Two buffered pieces might be mergeable.
---         Just ((IMap.Interval lowB highB, Buffered shareDataB), withoutEither)
---             -- They're adjacent so replace them with their merge and
---             -- then try to merge the whole resulting interval map.
---             | succ highA == lowB -> mergeAdjacent (IMap.insert (IMap.Interval lowA highB) (Buffered $ shareDataA <> shareDataB) withoutEither)
---             -- They're not adjacent but B might be adjacent to
---             -- something later so try to merge the B-having interval
---             -- map and then re-insert A.
---             | otherwise -> IMap.singleton a aData `IMap.union` mergeAdjacent withoutA
---         -- Already uploading/uploaded pieces cannot be merged.  Try to
---         -- merge the rest but leave a and b alone.
---         Just ((b@(IMap.Interval _ _), bData), withoutEither) ->
---             IMap.singleton a aData
---                 `IMap.union` IMap.singleton b bData
---                 `IMap.union` mergeAdjacent withoutEither
+            action = case uploadable of
+                Nothing -> Buffering
+                Just (UT.UploadInfo partNum partData) -> StartUpload partNum uploadId partData
 
 {- | Mark a part upload as finished and compute the new overall state of the
  multipart upload.
 -}
-finishPartUpload :: PartNumber -> Integer -> S3.UploadPartResponse -> UploadState delay -> (Maybe (UploadState delay), (Bool, [S3.CompletedPart]))
+finishPartUpload :: UT.PartNumber -> Integer -> S3.UploadPartResponse -> UploadState delay -> (Maybe (UploadState delay), (Bool, [S3.CompletedPart]))
 finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadStateSize, uploadParts} =
     ( if multipartFinished then Nothing else Just u{uploadParts = newUploadParts}
     ,
@@ -372,21 +277,21 @@ finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadS
         )
     )
   where
-    multipartFinished = newUploadedSize == uploadStateSize
+    multipartFinished = fromIntegral newUploadedSize == uploadStateSize
     newUploadParts = finishPart <$> uploadParts
-    newUploadedSize = sum $ partSize <$> newUploadParts
+    newUploadedSize = sum $ uploadedSize <$> newUploadParts
 
-    finishPart c@(UploadStarted candidatePartNum)
-        | finishedPartNum == candidatePartNum = UploadFinished finishedPartNum finishedPartSize response
+    finishPart c@(UT.PartUploading{getInterval, getPartNumber})
+        | finishedPartNum == getPartNumber = UT.PartUploaded finishedPartNum getInterval response
         | otherwise = c
     finishPart f = f
 
-    partSize UploadFinished{uploadPartSize} = uploadPartSize
-    partSize _ = 0
+    uploadedSize UT.PartUploaded{getInterval} = UT.intervalSize getInterval
+    uploadedSize _ = 0
 
-    toCompleted (UploadFinished (PartNumber partNum) _ partResp) = completed
+    toCompleted (UT.PartUploaded{getPartNumber = (UT.PartNumber getPartNumber), getPartResponse}) = completed
       where
-        completed = S3.newCompletedPart partNum <$> (partResp ^. S3.uploadPartResponse_eTag)
+        completed = S3.newCompletedPart getPartNumber <$> (getPartResponse ^. S3.uploadPartResponse_eTag)
     toCompleted _ = Nothing
 
 {- | Instantiate a new S3 backend which will interact with objects in the
@@ -844,7 +749,7 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
             Just NotReady -> throwIO ShareAllocationIncomplete
             Just Collision -> throwIO ConflictingWrite
             Just Buffering -> updateTimeout
-            Just (StartUpload (PartNumber partNum') uploadId dataToUpload) -> do
+            Just (StartUpload (UT.PartNumber partNum') uploadId dataToUpload) -> do
                 updateTimeout
 
                 let objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum

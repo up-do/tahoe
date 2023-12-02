@@ -2,6 +2,7 @@
 
 module Tahoe.Storage.Backend.Internal.BufferedUploadTree where
 
+import qualified Amazonka.S3 as S3
 import qualified Data.ByteString as B
 import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (<|), (><), (|>))
 import qualified Data.FingerTree as FT
@@ -45,9 +46,15 @@ instance Monoid Interval where
 
 data Part
     = PartData {getInterval :: Interval, getShareData :: B.ByteString}
-    | PartUploading {getInterval :: Interval}
-    | PartUploaded {getInterval :: Interval}
+    | PartUploading {getPartNumber :: PartNumber, getInterval :: Interval}
+    | PartUploaded {getPartNumber :: PartNumber, getInterval :: Interval, getPartResponse :: S3.UploadPartResponse}
     deriving (Eq, Show)
+
+newtype PartNumber = PartNumber Int
+    deriving newtype (Eq)
+    deriving (Show)
+
+data UploadInfo = UploadInfo PartNumber B.ByteString
 
 data UploadTreeMeasure = UploadTreeMeasure
     { coveringInterval :: Interval
@@ -68,24 +75,49 @@ instance FT.Measured UploadTreeMeasure Part where
     measure PartUploaded{getInterval} = UploadTreeMeasure getInterval 0 True
 
 type UploadTree = FT.FingerTree UploadTreeMeasure Part
-type PartNumber = Int
 
-findUploadableChunk :: UploadTree -> Int -> (Maybe Part, UploadTree)
-findUploadableChunk tree minSize =
-    tree'
+findUploadableChunk :: (Interval -> PartNumber) -> UploadTree -> Int -> (Maybe UploadInfo, UploadTree)
+findUploadableChunk assignNumber tree minSize =
+    (upload, tree')
   where
     position m = uploadableBytes m >= minSize
     (left, right) = FT.split position tree
 
-    tree' = case (FT.viewr left, FT.viewl right) of
-        -- If there's nothing around to merge with then we can't upload anything
-        (FT.EmptyR, FT.EmptyL) -> (Nothing, tree)
-        -- If we traverse the whole tree without the predicate flipping, nothing is uploadable
-        (lefties :> before, FT.EmptyL) -> (Nothing, tree)
-        -- Predicate flipped immediately: whole tree is uploadable?
-        (FT.EmptyR, after :< righties) -> (Just after, (PartUploading (getInterval after)) <| righties)
-        -- And if we can get both, try merging both ways.
-        (lefties :> before, after :< righties) -> (Just after, (lefties |> (PartUploading (getInterval after))) >< righties)
+    (upload, tree') = case (FT.viewr left, FT.viewl right) of
+        --
+        -- If we traverse the whole tree (even if only because the tree was
+        -- empty) without the predicate flipping, nothing is uploadable
+        (_, FT.EmptyL) -> (Nothing, tree)
+        --
+        -- Predicate flipped immediately: whole tree is uploadable
+        (FT.EmptyR, (PartData interval bytes) :< righties) ->
+            ( Just (UploadInfo partNum bytes)
+            , PartUploading partNum interval <| righties
+            )
+          where
+            partNum = assignNumber interval
+
+        --
+        -- It shouldn't be possible to get anything except a PartData here due
+        -- to the way our measurement is defined.
+        (FT.EmptyR, otherPart :< _) ->
+            error $ "EmptyR case of findUploadableChunk expected PartData, got: " <> show otherPart
+        --
+        -- Predicate flipped after a while: extra the matching element and
+        -- merge the remaining left and right trees.
+        -- XXX Do something with `before`
+        (lefties :> before, (PartData interval bytes) :< righties) ->
+            ( Just (UploadInfo partNum bytes)
+            , (lefties |> PartUploading partNum interval) >< righties
+            )
+          where
+            partNum = assignNumber interval
+
+        --
+        -- It shouldn't be possible to get anything except a PartData
+        -- here due to the way our measurement is defined.
+        (_ :> _, otherPart :< _) ->
+            error $ "non-empty case of findUploadableChunk expected PartData, got: " <> show otherPart
 
 -- XXX Prevent overlaps
 insert :: Part -> UploadTree -> UploadTree
