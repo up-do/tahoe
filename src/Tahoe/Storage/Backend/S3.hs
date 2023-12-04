@@ -30,6 +30,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Base64 as Base64
 import qualified Data.ByteString.Char8 as C8
 import Data.Either (rights)
+import qualified Data.FingerTree as FT
 import Data.Foldable (Foldable (toList), fold, foldl', traverse_)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable (hashWithSalt))
@@ -84,7 +85,7 @@ import Text.Read (readMaybe)
 data UploadState delay where
     UploadState ::
         { uploadStateSize :: Integer
-        , uploadParts :: UT.UploadTree
+        , uploadParts :: UT.UploadTree S3.UploadPartResponse
         , uploadResponse :: Maybe S3.CreateMultipartUploadResponse
         , uploadSecret :: UploadSecret
         , uploadProgressTimeout :: delay
@@ -130,7 +131,7 @@ internalAllocate storageIndex secret allocatedSize shareNumber timeout curState 
     newShareState =
         UploadState
             { uploadStateSize = allocatedSize
-            , uploadParts = mempty
+            , uploadParts = UT.UploadTree 5_000_000 mempty
             , uploadResponse = Nothing
             , uploadSecret = secret
             , uploadProgressTimeout = timeout
@@ -269,26 +270,30 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
  multipart upload.
 -}
 finishPartUpload :: UT.PartNumber -> Integer -> S3.UploadPartResponse -> UploadState delay -> (Maybe (UploadState delay), (Bool, [S3.CompletedPart]))
-finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadStateSize, uploadParts} =
+finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadParts, uploadStateSize} =
     ( if multipartFinished then Nothing else Just u{uploadParts = newUploadParts}
     ,
         ( multipartFinished
-        , mapMaybe toCompleted . toList $ newUploadParts
+        , mapMaybe toCompleted . toList . UT.uploadTree $ newUploadParts
         )
     )
   where
-    multipartFinished = fromIntegral newUploadedSize == uploadStateSize
-    newUploadParts = finishPart <$> uploadParts
-    newUploadedSize = sum $ uploadedSize <$> newUploadParts
+    -- The multipart upload is finished every individual part has been
+    -- uploaded and the interval covers all of the data.
+    multipartFinished = UT.fullyUploaded m && UT.coveringInterval m == UT.Interval 0 (fromIntegral $ uploadStateSize - 1)
+      where
+        m = FT.measure (UT.uploadTree newUploadParts)
 
-    finishPart c@(UT.PartUploading{getInterval, getPartNumber})
-        | finishedPartNum == getPartNumber = UT.PartUploaded finishedPartNum getInterval response
-        | otherwise = c
-    finishPart f = f
+    -- The part which we just finished uploading changes from a
+    -- `PartUploading` to a `PartUploaded`.
+    --
+    -- XXX Pattern match could fail...
+    newUploadParts :: UT.UploadTree S3.UploadPartResponse
+    Just newUploadParts = UT.replace finishedPartNum finishedPart uploadParts
 
-    uploadedSize UT.PartUploaded{getInterval} = UT.intervalSize getInterval
-    uploadedSize _ = 0
+    finishedPart = UT.PartUploaded finishedPartNum response
 
+    toCompleted :: UT.Part S3.UploadPartResponse -> Maybe S3.CompletedPart
     toCompleted (UT.PartUploaded{getPartNumber = (UT.PartNumber getPartNumber), getPartResponse}) = completed
       where
         completed = S3.newCompletedPart getPartNumber <$> (getPartResponse ^. S3.uploadPartResponse_eTag)
