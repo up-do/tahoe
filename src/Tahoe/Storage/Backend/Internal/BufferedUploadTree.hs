@@ -1,9 +1,11 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module Tahoe.Storage.Backend.Internal.BufferedUploadTree (
+    HasPartSizes (..),
     Interval (..),
     intervalSize,
     Part (..),
+    PartSize (..),
     PartNumber (..),
     UploadInfo (..),
     UploadTreeMeasure (..),
@@ -36,9 +38,9 @@ low, high :: Interval -> Int
 (low, high) = (intervalLow, intervalHigh)
 
 intervalSize :: Interval -> Int
-intervalSize (Interval l h) = h - l
+intervalSize (Interval l h) = h - l + 1
 
-data Part uploadResponse
+data Part backend uploadResponse
     = PartData {getInterval :: Interval, getShareData :: B.ByteString}
     | PartUploading {getPartNumber :: PartNumber, getInterval :: Interval}
     | PartUploaded {getPartNumber :: PartNumber, getPartResponse :: uploadResponse}
@@ -51,35 +53,75 @@ newtype PartNumber = PartNumber Int
 data UploadInfo = UploadInfo PartNumber B.ByteString
     deriving (Eq, Show)
 
-data UploadTreeMeasure = UploadTreeMeasure
-    { coveringInterval :: Interval
-    , uploadableBytes :: Int
-    , fullyUploaded :: Bool
+data UploadTreeMeasure backend = UploadTreeMeasure
+    { -- | A "bounding box" interval that covers the intervals of all of the
+      -- nodes measured.  No node will have an interval outside this value but
+      -- not all positions inside this interval necessarily have bytes.
+      coveringInterval :: Interval
+    , -- | The largest number of contiguous bytes of any node measured.
+      contiguousBytes :: Int
+    , -- | The largest number of fixed-interval pieces covered by a node
+      -- measured.
+      uploadableParts :: Int
+    , -- | Is every node measured uploaded already.
+      fullyUploaded :: Bool
     }
     deriving (Eq, Show)
 
-instance Semigroup UploadTreeMeasure where
-    (UploadTreeMeasure aInt aContig aUp) <> (UploadTreeMeasure bInt bContig bUp) = UploadTreeMeasure (aInt <> bInt) (max aContig bContig) (aUp && bUp)
+instance Semigroup (UploadTreeMeasure backend) where
+    (UploadTreeMeasure aInt aContig aParts aUp) <> (UploadTreeMeasure bInt bContig bParts bUp) =
+        UploadTreeMeasure (aInt <> bInt) (max aContig bContig) (max aParts bParts) (aUp && bUp)
 
-instance Monoid UploadTreeMeasure where
-    mempty = UploadTreeMeasure mempty 0 True
+-- measure "abc" == 3
+-- measure "wxyz" == 4
+-- measure ("abc" <> "wxyz") == 7
+-- measure "abc" <> measure "wxyz" == 7
 
-instance FT.Measured UploadTreeMeasure (Part a) where
-    measure PartData{getInterval} = UploadTreeMeasure getInterval ((high getInterval) - (low getInterval) + 1) False
-    measure PartUploading{getInterval} = UploadTreeMeasure getInterval 0 False
-    measure PartUploaded{getPartNumber} = UploadTreeMeasure (partNumberToInterval getPartNumber) 0 True
+-- measure (x <> y) == (measure x) <> (measure y)
+--
 
-data UploadTree a = UploadTree
-    { uploadTreePartSize :: Int
-    , uploadTree :: FT.FingerTree UploadTreeMeasure (Part a)
+instance Monoid (UploadTreeMeasure backend) where
+    mempty = UploadTreeMeasure mempty 0 0 True
+
+newtype PartSize a = PartSize Int
+
+class HasPartSizes backend where
+    partSize :: PartSize backend
+
+instance HasPartSizes backend => FT.Measured (UploadTreeMeasure backend) (Part backend a) where
+    measure PartData{getInterval} =
+        UploadTreeMeasure
+            { coveringInterval = getInterval
+            , contiguousBytes = intervalSize getInterval
+            , uploadableParts = uploadableParts
+            , fullyUploaded = False
+            }
+      where
+        PartSize size = partSize :: PartSize backend
+        uploadableParts =
+            case intervalLow getInterval `mod` size of
+                0 -> intervalSize getInterval `div` size
+                -- Since the interval is not aligned, some prefix of it will
+                -- not be uploadable.  Account for those bytes (by ignoring
+                -- them) when computing the size of the interval to divide by
+                -- part size.
+                n -> (intervalHigh getInterval - (intervalLow getInterval + (size - n)) + 1) `div` size
+    measure PartUploading{getInterval} = UploadTreeMeasure getInterval 0 0 False
+    measure PartUploaded{getPartNumber} = UploadTreeMeasure (partNumberToInterval getPartNumber) 0 0 True
+
+newtype UploadTree backend a = UploadTree
+    { uploadTree :: FT.FingerTree (UploadTreeMeasure backend) (Part backend a)
     }
+    deriving newtype (Semigroup, Monoid)
     deriving (Eq, Show)
 
-findUploadableChunk :: Show a => (Interval -> PartNumber) -> UploadTree a -> Int -> (Maybe UploadInfo, UploadTree a)
-findUploadableChunk assignNumber t@UploadTree{uploadTree} minSize =
+findUploadableChunk :: (HasPartSizes backend, Show a) => (Interval -> PartNumber) -> UploadTree backend a -> Int -> (Maybe UploadInfo, UploadTree backend a)
+findUploadableChunk assignNumber t@UploadTree{uploadTree} minParts =
     (upload, t{uploadTree = tree'})
   where
-    position m = uploadableBytes m >= minSize
+    position :: UploadTreeMeasure backend -> Bool
+    position m = uploadableParts m >= minParts
+
     (left, right) = FT.split position uploadTree
 
     (upload, tree') = case (FT.viewr left, FT.viewl right) of
@@ -118,7 +160,11 @@ findUploadableChunk assignNumber t@UploadTree{uploadTree} minSize =
         (_ :> _, otherPart :< _) ->
             error $ "non-empty case of findUploadableChunk expected PartData, got: " <> show otherPart
 
-highestPartNumber :: UploadTreeMeasure -> PartNumber
+-- ......111122222222......
+-- 44444411UUUUUUUU22333333
+-- 123456781234567812345678
+
+highestPartNumber :: UploadTreeMeasure backend -> PartNumber
 highestPartNumber = offsetToPartNumber . high . coveringInterval
 
 offsetToPartNumber :: Int -> PartNumber
@@ -127,7 +173,7 @@ offsetToPartNumber n = PartNumber $ 1 + n `div` 5_000_000
 partNumberToInterval :: PartNumber -> Interval
 partNumberToInterval (PartNumber n) = Interval ((n - 1) * 5_000_000) (n * 5_000_000 - 1)
 
-replace :: PartNumber -> Part a -> UploadTree a -> Maybe (UploadTree a)
+replace :: HasPartSizes backend => PartNumber -> Part backend a -> UploadTree backend a -> Maybe (UploadTree backend a)
 replace partNum newPart t@UploadTree{uploadTree} =
     case (left, right') of
         (lefties, target :< righties) ->
@@ -149,7 +195,7 @@ replace partNum newPart t@UploadTree{uploadTree} =
     right' = FT.viewl right
 
 -- XXX Prevent overlaps
-insert :: Part a -> UploadTree a -> UploadTree a
+insert :: HasPartSizes backend => Part backend a -> UploadTree backend a -> UploadTree backend a
 insert p t@UploadTree{uploadTree} =
     t{uploadTree = tree'}
   where
@@ -170,7 +216,7 @@ insert p t@UploadTree{uploadTree} =
         -- And if we can get both, try merging both ways.
         (lefties :> before, after :< righties) -> lefties >< FT.fromList (merge3 before p after) >< righties
 
-merge3 :: Part a -> Part a -> Part a -> [Part a]
+merge3 :: Part backend a -> Part backend a -> Part backend a -> [Part backend a]
 merge3 a b c =
     case merge2 a b of
         Nothing -> case merge2 b c of
@@ -180,13 +226,13 @@ merge3 a b c =
             Nothing -> [ab, c]
             Just abc -> [abc]
 
-merge2 :: Part a -> Part a -> Maybe (Part a)
+merge2 :: Part backend a -> Part backend a -> Maybe (Part backend a)
 merge2 (PartData aInt aData) (PartData bInt bData)
     | succ (high aInt) == low bInt = Just (PartData (aInt <> bInt) (aData <> bData))
     | otherwise = Nothing
 merge2 _ _ = Nothing
 
-merge2' :: Part a -> Part a -> [Part a]
+merge2' :: Part backend a -> Part backend a -> [Part backend a]
 merge2' a b = maybe [a, b] (: []) $ merge2 a b
 
 -- -- What Monoid / Measured works for our use-case?

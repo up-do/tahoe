@@ -49,6 +49,7 @@ import Tahoe.Storage.Backend.Internal.Delay (
     HasDelay (..),
  )
 import Tahoe.Storage.Backend.S3 (
+    AWS (..),
     S3Backend (..),
     UploadState (uploadProgressTimeout),
     applyWriteVectors,
@@ -132,6 +133,58 @@ spec = do
                     tree = foldl' (flip UT.insert) emptyTree parts'
                 B.concat (UT.getShareData <$> toList (UT.uploadTree tree)) === "0123456789A"
 
+            it "measures full interval" $ do
+                -- let p = (UT.PartData :: UT.Interval -> B.ByteString -> UT.Part AWS b) (UT.Interval 0 10) "0123456789A"
+                let p = UT.PartData @FakeBackend (UT.Interval 0 10) "0123456789A"
+                FT.measure p === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
+
+            it "measures non-aligned interval, no chunks" $ do
+                -- let p = (UT.PartData :: UT.Interval -> B.ByteString -> UT.Part AWS b) (UT.Interval 0 10) "0123456789A"
+                let p = UT.PartData @FakeBackend (UT.Interval 1 12) "123456789ABC"
+                FT.measure p === UT.UploadTreeMeasure (UT.Interval 1 12) 12 0 False
+
+            it "measures non-aligned interval, have data" $ do
+                -- let p = (UT.PartData :: UT.Interval -> B.ByteString -> UT.Part AWS b) (UT.Interval 0 10) "0123456789A"
+                let p = UT.PartData @FakeBackend (UT.Interval 1 21) "123456789A0123456789A"
+                FT.measure p === UT.UploadTreeMeasure (UT.Interval 1 21) 21 1 False
+
+            it "merged tree equals already-merged tree" $ do
+                let parts1 =
+                        [ (UT.PartData (UT.Interval 6 10) "6789A")
+                        , (UT.PartData (UT.Interval 0 5) "012345")
+                        ]
+                    tree1 = foldl' (flip UT.insert) emptyTree parts1
+                    tree2 = foldl' (flip UT.insert) emptyTree (toList (UT.uploadTree tree1))
+                tree1 === tree2
+
+            it "has correct tree measure (simple, backwards)" $ do
+                let parts' =
+                        [ (UT.PartData (UT.Interval 6 10) "6789A")
+                        , (UT.PartData (UT.Interval 0 5) "012345")
+                        ]
+                    tree = foldl' (flip UT.insert) emptyTree parts'
+                FT.measure (trace ("tree m: " <> show (FT.measure $ UT.uploadTree tree)) (UT.uploadTree tree)) === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
+
+            it "has correct tree measure (simple)" $ do
+                let parts' =
+                        [ (UT.PartData (UT.Interval 0 5) "012345")
+                        , (UT.PartData (UT.Interval 6 10) "6789A")
+                        ]
+                    tree = foldl' (flip UT.insert) emptyTree parts'
+                FT.measure (UT.uploadTree tree) === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
+
+            it "has correct tree measure" $ do
+                let parts' =
+                        [ (UT.PartData (UT.Interval 1 3) "123")
+                        , (UT.PartData (UT.Interval 5 8) "5678")
+                        , (UT.PartData (UT.Interval 4 4) "4")
+                        , (UT.PartData (UT.Interval 10 10) "A")
+                        , (UT.PartData (UT.Interval 9 9) "9")
+                        , (UT.PartData (UT.Interval 0 0) "0")
+                        ]
+                    tree = foldl' (flip UT.insert) emptyTree parts'
+                FT.measure (UT.uploadTree tree) === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
+
             it "get uploadable chunks explicit" $ do
                 let parts' =
                         [ (UT.PartData (UT.Interval 1 3) "123")
@@ -142,13 +195,13 @@ spec = do
                         , (UT.PartData (UT.Interval 0 0) "0")
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
-                    (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 4
+                    (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 1
                 uploadable
                     === Just (UT.UploadInfo (UT.PartNumber 1) "0123456789A")
                     .&&. tree'
-                    === (UT.UploadTree 100 $ FT.fromList [UT.PartUploading (UT.PartNumber 1) (UT.Interval 0 10)])
+                    === (UT.UploadTree $ FT.fromList [UT.PartUploading (UT.PartNumber 1) (UT.Interval 0 10)])
 
-            it "get uploadable chunks explicit" $ do
+            it "get uploadable chunks explicit2" $ do
                 let parts' =
                         [ (UT.PartData (UT.Interval 1 3) "123")
                         , (UT.PartData (UT.Interval 5 8) "5678")
@@ -265,14 +318,14 @@ spec = do
 
 -- Consume one of the "delay tokens" or expire the delay if none are
 -- remaining.
-s3TimePasses :: Int -> (StorageIndex, ShareNumber) -> S3Backend FakeDelay -> STM ()
+s3TimePasses :: Int -> (StorageIndex, ShareNumber) -> S3Backend backend FakeDelay -> STM ()
 s3TimePasses amount key S3Backend{..} = do
     maybeDelay <- fmap uploadProgressTimeout <$> SMap.lookup key s3BackendState
     case maybeDelay of
         Nothing -> error "no such thing to expire"
         Just tv -> timePasses amount tv
 
-lookupDelay :: (StorageIndex, ShareNumber) -> S3Backend b -> STM (Maybe b)
+lookupDelay :: (StorageIndex, ShareNumber) -> S3Backend backend delay -> STM (Maybe delay)
 lookupDelay key backend = do
     state <- SMap.lookup key (s3BackendState backend)
     pure $ uploadProgressTimeout <$> state
@@ -280,7 +333,7 @@ lookupDelay key backend = do
 -- Delete all objects with a prefix matching this backend.  Leave the
 -- bucket alone in case there are other objects unrelated to this bucket
 -- in it.
-cleanupS3 :: S3Backend delay -> IO ()
+cleanupS3 :: S3Backend backend delay -> IO ()
 cleanupS3 (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) = runResourceT $ do
     resp <- AWS.send s3BackendEnv (S3.listObjects_prefix ?~ s3BackendPrefix $ S3.newListObjects s3BackendBucket)
     let objectKeys = catMaybes . traverse (S3.newObjectIdentifier . (^. object_key) <$>) $ resp ^. listObjectsResponse_contents
@@ -288,7 +341,7 @@ cleanupS3 (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) = runResou
     unless (null objectKeys) . void $
         AWS.send s3BackendEnv (S3.newDeleteObjects s3BackendBucket (delete_objects .~ objectKeys $ S3.newDelete))
 
-s3Backend :: IO (S3Backend FakeDelay)
+s3Backend :: IO (S3Backend AWS FakeDelay)
 s3Backend = runResourceT $ do
     let setLocalEndpoint = AWS.setEndpoint False "127.0.0.1" 9000
         setAddressingStyle s = s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}
@@ -343,8 +396,13 @@ s3Backend = runResourceT $ do
 -}
 trivialAssigner = UT.PartNumber . succ . UT.intervalLow
 
-toUploadInfo :: UT.Part a -> UT.UploadInfo
+toUploadInfo :: UT.Part backend resp -> UT.UploadInfo
 toUploadInfo UT.PartData{getInterval, getShareData} = UT.UploadInfo (UT.offsetToPartNumber . UT.intervalHigh $ getInterval) getShareData
 
-emptyTree :: UT.UploadTree ()
-emptyTree = UT.UploadTree 100 mempty
+data FakeBackend
+
+instance UT.HasPartSizes FakeBackend where
+    partSize = UT.PartSize 11
+
+emptyTree :: UT.UploadTree AWS ()
+emptyTree = mempty

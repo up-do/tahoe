@@ -6,7 +6,9 @@
   - The maximum size of an S3 object created using the PutObject API is 5 GB.
   - The maximum size of an S3 object created using the CreateMultipartUpload / UploadPart is 5 TB.
   - The minimum size of a single UploadPart is 5 MB.
+  - The maximum size of a single UploadPart is ???.
   - The maximum number of UploadParts associated with a CreateMultipartUpload is 10,000.
+    - If you upload a 5 TB object using 10,000 parts each part is 500 MB.
   - UploadParts must be numbered using part numbers from 1 to 10,000 inclusive.
   - The part number of an UploadPart determines that part's payload's position in the resulting S3 object.
 -}
@@ -72,6 +74,7 @@ import Tahoe.Storage.Backend (
     WriteMutableError (..),
     WriteVector (..),
  )
+import Tahoe.Storage.Backend.Internal.BufferedUploadTree (HasPartSizes)
 import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.Internal.Delay (HasDelay (..), TimeoutOperation (Cancelled, Delayed))
 import TahoeLAFS.Storage.Backend (
@@ -81,18 +84,23 @@ import Text.Read (readMaybe)
 
 -- Where's my Cow? -- Terry Pratchett
 
+data AWS
+
+instance UT.HasPartSizes AWS where
+    partSize = UT.PartSize 5_000_000
+
 -- | This saves in-progress uploads so we can finish or abort
-data UploadState delay where
+data UploadState backend delay where
     UploadState ::
         { uploadStateSize :: Integer
-        , uploadParts :: UT.UploadTree S3.UploadPartResponse
+        , uploadParts :: UT.UploadTree backend S3.UploadPartResponse
         , uploadResponse :: Maybe S3.CreateMultipartUploadResponse
         , uploadSecret :: UploadSecret
         , uploadProgressTimeout :: delay
         } ->
-        UploadState delay
+        UploadState backend delay
 
-instance Show (UploadState delay) where
+instance Show (UploadState backend delay) where
     show UploadState{..} = "<UploadState size=" <> show uploadStateSize <> ">"
 
 {- | where's mah parts? Here they are!
@@ -100,10 +108,10 @@ instance Show (UploadState delay) where
  TODO This might leak space because normal deletes on SMap.Map don't reduce
  memory usage.  It might be nice to deal with this eventually.
 -}
-type AllocatedShares delay = SMap.Map (StorageIndex, ShareNumber) (UploadState delay)
+type AllocatedShares backend delay = SMap.Map (StorageIndex, ShareNumber) (UploadState backend delay)
 
 -- | The top-level type of the S3 backend implementation.
-data S3Backend delay where
+data S3Backend backend delay where
     S3Backend ::
         { -- | Details about how to talk to the S3 server (for example, to
           -- establish connections and authorizer requests).
@@ -116,11 +124,11 @@ data S3Backend delay where
           s3BackendPrefix :: T.Text
         , -- | Internal state relating to immutable uploads that are in
           -- progress.
-          s3BackendState :: AllocatedShares delay
+          s3BackendState :: AllocatedShares backend delay
         } ->
-        S3Backend delay
+        S3Backend backend delay
 
-internalAllocate :: StorageIndex -> UploadSecret -> Integer -> ShareNumber -> delay -> AllocatedShares delay -> STM Bool
+internalAllocate :: UT.HasPartSizes backend => StorageIndex -> UploadSecret -> Integer -> ShareNumber -> delay -> AllocatedShares backend delay -> STM Bool
 internalAllocate storageIndex secret allocatedSize shareNumber timeout curState = do
     SMap.member (storageIndex, shareNumber) curState >>= \case
         True -> pure False
@@ -131,16 +139,16 @@ internalAllocate storageIndex secret allocatedSize shareNumber timeout curState 
     newShareState =
         UploadState
             { uploadStateSize = allocatedSize
-            , uploadParts = UT.UploadTree 5_000_000 mempty
+            , uploadParts = UT.UploadTree mempty
             , uploadResponse = Nothing
             , uploadSecret = secret
             , uploadProgressTimeout = timeout
             }
 
-undoInternalAllocate :: StorageIndex -> ShareNumber -> AllocatedShares delay -> STM ()
+undoInternalAllocate :: StorageIndex -> ShareNumber -> AllocatedShares backend delay -> STM ()
 undoInternalAllocate storageIndex shareNum = SMap.delete (storageIndex, shareNum)
 
-internalAllocateComplete :: StorageIndex -> ShareNumber -> S3.CreateMultipartUploadResponse -> AllocatedShares delay -> STM ()
+internalAllocateComplete :: StorageIndex -> ShareNumber -> S3.CreateMultipartUploadResponse -> AllocatedShares backend delay -> STM ()
 internalAllocateComplete storageIndex shareNum response curState = do
     SMap.lookup stateKey curState >>= \case
         Just state ->
@@ -155,6 +163,7 @@ internalAllocateComplete storageIndex shareNum response curState = do
  that share and that part upload's state.  Otherwise, throw an error.
 -}
 internalStartUpload ::
+    UT.HasPartSizes backend =>
     -- | Secrets provided to authorize this upload.
     Maybe [LeaseSecret] ->
     -- | The storage index of the share the upload will be part of.
@@ -166,7 +175,7 @@ internalStartUpload ::
     -- | The new bytes themselves.
     ShareData ->
     -- | The current total share state.
-    AllocatedShares delay ->
+    AllocatedShares backend delay ->
     -- | The updated total share state and the state necessary to complete the
     -- upload to the S3 server.
     STM (Maybe PartUpload)
@@ -183,12 +192,13 @@ internalStartUpload secrets storageIndex shareNum offset shareData curState = do
     stateKey = (storageIndex, shareNum)
 
 internalFinishUpload ::
+    UT.HasPartSizes backend =>
     Int ->
     C8.ByteString ->
     StorageIndex ->
     ShareNumber ->
     S3.UploadPartResponse ->
-    AllocatedShares delay ->
+    AllocatedShares backend delay ->
     STM (Maybe (Bool, [S3.CompletedPart]))
 internalFinishUpload partNum' shareData storageIndex shareNum response =
     adjust' (finishPartUpload (UT.PartNumber partNum') (fromIntegral $ B.length shareData) response) stateKey
@@ -198,7 +208,7 @@ internalFinishUpload partNum' shareData storageIndex shareNum response =
 infiniteRetry :: MonadCatch m => m b -> m b
 infiniteRetry a = a `onException` infiniteRetry a
 
-externalAllocate :: S3Backend delay -> StorageIndex -> ShareNumber -> ResourceT IO S3.CreateMultipartUploadResponse
+externalAllocate :: S3Backend backend delay -> StorageIndex -> ShareNumber -> ResourceT IO S3.CreateMultipartUploadResponse
 externalAllocate S3Backend{..} storageIndex shareNum =
     -- XXX HOW TO HANDLE FAILURE? this AWS.send should really be AWS.sendEither !
     -- and then we handle errors that we can
@@ -241,7 +251,7 @@ data PartUpload
  contiguous data, also add another part upload and return the part number
  and upload id to use with it.
 -}
-startPartUpload :: Offset -> ShareData -> UploadState delay -> (UploadState delay, PartUpload)
+startPartUpload :: UT.HasPartSizes backend => Offset -> ShareData -> UploadState backend delay -> (UploadState backend delay, PartUpload)
 startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, uploadResponse} =
     case view S3.createMultipartUploadResponse_uploadId <$> uploadResponse of
         -- If we don't have the upload response yet, we don't know the upload id
@@ -269,7 +279,7 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
 {- | Mark a part upload as finished and compute the new overall state of the
  multipart upload.
 -}
-finishPartUpload :: UT.PartNumber -> Integer -> S3.UploadPartResponse -> UploadState delay -> (Maybe (UploadState delay), (Bool, [S3.CompletedPart]))
+finishPartUpload :: forall backend delay. UT.HasPartSizes backend => UT.PartNumber -> Integer -> S3.UploadPartResponse -> UploadState backend delay -> (Maybe (UploadState backend delay), (Bool, [S3.CompletedPart]))
 finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadParts, uploadStateSize} =
     ( if multipartFinished then Nothing else Just u{uploadParts = newUploadParts}
     ,
@@ -288,12 +298,12 @@ finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadP
     -- `PartUploading` to a `PartUploaded`.
     --
     -- XXX Pattern match could fail...
-    newUploadParts :: UT.UploadTree S3.UploadPartResponse
+    newUploadParts :: UT.UploadTree backend S3.UploadPartResponse
     Just newUploadParts = UT.replace finishedPartNum finishedPart uploadParts
 
     finishedPart = UT.PartUploaded finishedPartNum response
 
-    toCompleted :: UT.Part S3.UploadPartResponse -> Maybe S3.CompletedPart
+    toCompleted :: UT.Part backend S3.UploadPartResponse -> Maybe S3.CompletedPart
     toCompleted (UT.PartUploaded{getPartNumber = (UT.PartNumber getPartNumber), getPartResponse}) = completed
       where
         completed = S3.newCompletedPart getPartNumber <$> (getPartResponse ^. S3.uploadPartResponse_eTag)
@@ -302,7 +312,7 @@ finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadP
 {- | Instantiate a new S3 backend which will interact with objects in the
  given bucket using the given AWS Env.
 -}
-newS3Backend :: forall delay. AWS.Env -> S3.BucketName -> T.Text -> IO (S3Backend delay)
+newS3Backend :: forall backend delay. AWS.Env -> S3.BucketName -> T.Text -> IO (S3Backend backend delay)
 newS3Backend s3BackendEnv s3BackendBucket s3BackendPrefix = do
     -- XXX Load existing s3BackendState from S3 itself.  List the
     -- MultipartUploads and figure out what is in progress.  Also need to
@@ -356,7 +366,7 @@ instance Exception BackendError
 
   Objects are given S3 keys like `<storage index>/<share number>`.
 -}
-instance forall delay. HasDelay delay => Backend (S3Backend delay) where
+instance forall backend delay. (UT.HasPartSizes backend, HasDelay delay) => Backend (S3Backend backend delay) where
     version _ = pure $ Version params appVer
       where
         params =
@@ -387,7 +397,7 @@ instance forall delay. HasDelay delay => Backend (S3Backend delay) where
     -- Creation may also fail because of an error from the S3 server.  In this
     -- case, the affected share's state is not changed but if there were other
     -- shares mentioned in the request their state may be changed.
-    createImmutableStorageIndex :: S3Backend delay -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
+    createImmutableStorageIndex :: S3Backend backend delay -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
     createImmutableStorageIndex s3@S3Backend{..} storageIndex secrets AllocateBuckets{..}
         | allocatedSize > maxShareSize = throwIO $ MaximumShareSizeExceeded maxShareSize allocatedSize
         | otherwise =
@@ -438,7 +448,7 @@ instance forall delay. HasDelay delay => Backend (S3Backend delay) where
 
             runResourceT $ traverse_ f xs
 
-    writeImmutableShare :: S3Backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> QueryRange -> IO ()
+    writeImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> QueryRange -> IO ()
     writeImmutableShare _ _ _ Nothing _ _ = throwIO MissingUploadSecret
     writeImmutableShare s3 storageIndex shareNum secrets shareData Nothing = do
         -- If no range is given, this is the whole thing.
@@ -446,7 +456,7 @@ instance forall delay. HasDelay delay => Backend (S3Backend delay) where
     writeImmutableShare s3Backend storageIndex shareNum secrets shareData (Just byteRanges) =
         traverse_ (uncurry (writeAnImmutableChunk s3Backend storageIndex shareNum secrets)) (divideByRanges byteRanges shareData)
 
-    abortImmutableUpload :: S3Backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
+    abortImmutableUpload :: S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
     abortImmutableUpload _ _ _ Nothing = throwIO MissingUploadSecret
     abortImmutableUpload (S3Backend{..}) storageIndex shareNum secrets = do
         -- Try to find the matching upload state and discard it if the secret matches.
@@ -489,7 +499,7 @@ instance forall delay. HasDelay delay => Backend (S3Backend delay) where
                   where
                     parsed = T.split (== '/') (view (S3.object_key . S3._ObjectKey) obj)
 
-    readImmutableShare :: S3Backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     readImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum qrange =
         runResourceT $ do
             huh <- readEach qrange
@@ -507,7 +517,7 @@ instance forall delay. HasDelay delay => Backend (S3Backend delay) where
             resp <- AWS.send s3BackendEnv getObj
             B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
 
-    readvAndTestvAndWritev :: HasCallStack => S3Backend delay -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadTestWriteResult
+    readvAndTestvAndWritev :: HasCallStack => S3Backend backend delay -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev s3@S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex secret (ReadTestWriteVectors{readVector, testWriteVectors}) =
         -- XXX
         --
@@ -581,7 +591,7 @@ instance forall delay. HasDelay delay => Backend (S3Backend delay) where
 
     getMutableShareNumbers = getImmutableShareNumbers
 
-    readMutableShare :: S3Backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readMutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
     readMutableShare = readImmutableShare
 
 {- | Given the complete bytes of a share, apply a single write vector and
@@ -640,7 +650,7 @@ data Metadata = Metadata
     { metadataWriteEnabler :: Maybe WriteEnablerSecret
     }
 
-readShare :: S3Backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO (Metadata, ShareData)
+readShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO (Metadata, ShareData)
 readShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum qrange =
     runResourceT $ second B.concat <$> readEach qrange
   where
@@ -682,7 +692,8 @@ on404 _ e = throwIO e
  the given size at the given location.
 -}
 createOneImmutableShare ::
-    S3Backend delay ->
+    UT.HasPartSizes backend =>
+    S3Backend backend delay ->
     StorageIndex ->
     Integer ->
     UploadSecret ->
@@ -716,7 +727,7 @@ instance Exception CleanupError
  Return information about their associated external partial-upload state for
  separate cleanup.
 -}
-cleanupInternalImmutable :: S3Backend delay -> StorageIndex -> ShareNumber -> STM (Maybe S3.CreateMultipartUploadResponse)
+cleanupInternalImmutable :: S3Backend backend delay -> StorageIndex -> ShareNumber -> STM (Maybe S3.CreateMultipartUploadResponse)
 cleanupInternalImmutable S3Backend{..} storageIndex shareNum =
     SMap.lookup (storageIndex, shareNum) s3BackendState >>= \case
         Nothing -> throwSTM InternalImmutableStateMissing
@@ -728,7 +739,7 @@ cleanupInternalImmutable S3Backend{..} storageIndex shareNum =
 {- | Discard external partial-upload state related to the given multipart
  upload responses.
 -}
-cleanupExternalImmutable :: S3Backend delay -> StorageIndex -> ShareNumber -> S3.CreateMultipartUploadResponse -> ResourceT IO ()
+cleanupExternalImmutable :: S3Backend backend delay -> StorageIndex -> ShareNumber -> S3.CreateMultipartUploadResponse -> ResourceT IO ()
 cleanupExternalImmutable S3Backend{..} storageIndex shareNum createResponse =
     void $ AWS.send s3BackendEnv abortRequest
   where
@@ -736,7 +747,7 @@ cleanupExternalImmutable S3Backend{..} storageIndex shareNum createResponse =
     objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
     uploadId = createResponse ^. S3.createMultipartUploadResponse_uploadId
 
-writeAnImmutableChunk :: HasDelay delay => S3Backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> Offset -> ShareData -> IO ()
+writeAnImmutableChunk :: (UT.HasPartSizes backend, HasDelay delay) => S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> Offset -> ShareData -> IO ()
 writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum secrets offset shareData =
     do
         -- call list objects on the backend, if this share already exists, reject the new write with ImmutableShareAlreadyWritten
