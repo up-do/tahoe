@@ -169,8 +169,8 @@ spec = do
                 uploadable === Just (UT.UploadInfo (UT.PartNumber 1) "01") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
             it "uploadable data with gaps" $
                 forAll arbitrary $ \sizeIncrements -> do
-                    let sizes = scanr (+) (1 :: Word8) (getPositive <$> sizeIncrements)
-                        chunks = (\n -> B.pack (replicate (fromIntegral n) n)) <$> sizes
+                    let sizes = scanr (+) 1 (fromIntegral @Word8 @Int . getPositive <$> sizeIncrements)
+                        chunks = zipWith B.replicate sizes (cycle [97 .. 97 + 26])
                         -- offsets, but with a 1-byte gap in each
                         offsets = scanl' (\a b -> a + b + 1) 0 (fromIntegral <$> sizes)
                         intervals = zipWith (\o chunk -> UT.Interval o (o + (B.length chunk) - 1)) offsets chunks
