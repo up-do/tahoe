@@ -85,15 +85,15 @@ spec :: Spec
 spec = do
     context "utilities" $ do
         describe "applyWriteVectors" $ do
-            it "replaces existing bytes with new bytes" $ do
+            it "replaces existing bytes with new bytes" $
                 applyWriteVectors "abc" [WriteVector 0 "x", WriteVector 1 "y", WriteVector 2 "z"] `shouldBe` "xyz"
-            it "can extend the length of the result" $ do
+            it "can extend the length of the result" $
                 applyWriteVectors "abc" [WriteVector 3 "xyz"] `shouldBe` "abcxyz"
-            it "fills gaps with NULs" $ do
+            it "fills gaps with NULs" $
                 applyWriteVectors "abc" [WriteVector 5 "xyz"] `shouldBe` "abc\0\0xyz"
-            it "applies writes left-to-right" $ do
+            it "applies writes left-to-right" $
                 applyWriteVectors "abc" [WriteVector 0 "x", WriteVector 0 "y"] `shouldBe` "ybc"
-            it "accepts partial overlaps" $ do
+            it "accepts partial overlaps" $
                 applyWriteVectors "abc" [WriteVector 0 "xy", WriteVector 1 "zw"] `shouldBe` "xzw"
 
         describe "UploadTree" $ do
@@ -123,12 +123,12 @@ spec = do
 
             it "allows inserts in any order explicit" $ do
                 let parts' =
-                        [ (UT.PartData (UT.Interval 1 3) "123")
-                        , (UT.PartData (UT.Interval 5 8) "5678")
-                        , (UT.PartData (UT.Interval 4 4) "4")
-                        , (UT.PartData (UT.Interval 10 10) "A")
-                        , (UT.PartData (UT.Interval 9 9) "9")
-                        , (UT.PartData (UT.Interval 0 0) "0")
+                        [ UT.PartData (UT.Interval 1 3) "123"
+                        , UT.PartData (UT.Interval 5 8) "5678"
+                        , UT.PartData (UT.Interval 4 4) "4"
+                        , UT.PartData (UT.Interval 10 10) "A"
+                        , UT.PartData (UT.Interval 9 9) "9"
+                        , UT.PartData (UT.Interval 0 0) "0"
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
                 B.concat (UT.getShareData <$> toList (UT.uploadTree tree)) === "0123456789A"
@@ -150,8 +150,8 @@ spec = do
 
             it "merged tree equals already-merged tree" $ do
                 let parts1 =
-                        [ (UT.PartData (UT.Interval 6 10) "6789A")
-                        , (UT.PartData (UT.Interval 0 5) "012345")
+                        [ UT.PartData (UT.Interval 6 10) "6789A"
+                        , UT.PartData (UT.Interval 0 5) "012345"
                         ]
                     tree1 = foldl' (flip UT.insert) emptyTree parts1
                     tree2 = foldl' (flip UT.insert) emptyTree (toList (UT.uploadTree tree1))
@@ -159,63 +159,63 @@ spec = do
 
             it "has correct tree measure (simple, backwards)" $ do
                 let parts' =
-                        [ (UT.PartData (UT.Interval 6 10) "6789A")
-                        , (UT.PartData (UT.Interval 0 5) "012345")
+                        [ UT.PartData (UT.Interval 6 10) "6789A"
+                        , UT.PartData (UT.Interval 0 5) "012345"
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
                 FT.measure (trace ("tree m: " <> show (FT.measure $ UT.uploadTree tree)) (UT.uploadTree tree)) === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
 
             it "has correct tree measure (simple)" $ do
                 let parts' =
-                        [ (UT.PartData (UT.Interval 0 5) "012345")
-                        , (UT.PartData (UT.Interval 6 10) "6789A")
+                        [ UT.PartData (UT.Interval 0 5) "012345"
+                        , UT.PartData (UT.Interval 6 10) "6789A"
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
                 FT.measure (UT.uploadTree tree) === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
 
             it "has correct tree measure" $ do
                 let parts' =
-                        [ (UT.PartData (UT.Interval 1 3) "123")
-                        , (UT.PartData (UT.Interval 5 8) "5678")
-                        , (UT.PartData (UT.Interval 4 4) "4")
-                        , (UT.PartData (UT.Interval 10 10) "A")
-                        , (UT.PartData (UT.Interval 9 9) "9")
-                        , (UT.PartData (UT.Interval 0 0) "0")
+                        [ UT.PartData (UT.Interval 1 3) "123"
+                        , UT.PartData (UT.Interval 5 8) "5678"
+                        , UT.PartData (UT.Interval 4 4) "4"
+                        , UT.PartData (UT.Interval 10 10) "A"
+                        , UT.PartData (UT.Interval 9 9) "9"
+                        , UT.PartData (UT.Interval 0 0) "0"
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
                 FT.measure (UT.uploadTree tree) === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
 
             it "get uploadable chunks explicit" $ do
                 let parts' =
-                        [ (UT.PartData (UT.Interval 1 3) "123")
-                        , (UT.PartData (UT.Interval 5 8) "5678")
-                        , (UT.PartData (UT.Interval 4 4) "4")
-                        , (UT.PartData (UT.Interval 10 10) "A")
-                        , (UT.PartData (UT.Interval 9 9) "9")
-                        , (UT.PartData (UT.Interval 0 0) "0")
+                        [ UT.PartData (UT.Interval 1 3) "123"
+                        , UT.PartData (UT.Interval 5 8) "5678"
+                        , UT.PartData (UT.Interval 4 4) "4"
+                        , UT.PartData (UT.Interval 10 10) "A"
+                        , UT.PartData (UT.Interval 9 9) "9"
+                        , UT.PartData (UT.Interval 0 0) "0"
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
                     (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 1
                 uploadable
                     === Just (UT.UploadInfo (UT.PartNumber 1) "0123456789A")
                     .&&. tree'
-                    === (UT.UploadTree $ FT.fromList [UT.PartUploading (UT.PartNumber 1) (UT.Interval 0 10)])
+                    === UT.UploadTree (FT.fromList [UT.PartUploading (UT.PartNumber 1) (UT.Interval 0 10)])
 
             it "get uploadable chunks explicit2" $ do
                 let parts' =
-                        [ (UT.PartData (UT.Interval 1 3) "123")
-                        , (UT.PartData (UT.Interval 5 8) "5678")
-                        , (UT.PartData (UT.Interval 10 10) "A")
-                        , (UT.PartData (UT.Interval 9 9) "9")
-                        , (UT.PartData (UT.Interval 0 0) "0")
+                        [ UT.PartData (UT.Interval 1 3) "123"
+                        , UT.PartData (UT.Interval 5 8) "5678"
+                        , UT.PartData (UT.Interval 10 10) "A"
+                        , UT.PartData (UT.Interval 9 9) "9"
+                        , UT.PartData (UT.Interval 0 0) "0"
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
                     (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 5
                 uploadable === Just (UT.UploadInfo (UT.PartNumber 6) "56789A") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
             it "wrong side tree" $ do
                 let parts' =
-                        [ (UT.PartData (UT.Interval 0 1) "01")
-                        , (UT.PartData (UT.Interval 5 8) "5678")
+                        [ UT.PartData (UT.Interval 0 1) "01"
+                        , UT.PartData (UT.Interval 5 8) "5678"
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
                     (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 2
@@ -226,7 +226,7 @@ spec = do
                         chunks = zipWith B.replicate sizes (cycle [97 .. 97 + 26])
                         -- offsets, but with a 1-byte gap in each
                         offsets = scanl' (\a b -> a + b + 1) 0 (fromIntegral <$> sizes)
-                        intervals = zipWith (\o chunk -> UT.Interval o (o + (B.length chunk) - 1)) offsets chunks
+                        intervals = zipWith (\o chunk -> UT.Interval o (o + B.length chunk - 1)) offsets chunks
                         parts = zipWith UT.PartData intervals chunks
                     forAll (shuffle parts) $ \parts' -> do
                         let tree = foldl' (flip UT.insert) emptyTree parts'
