@@ -1,7 +1,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module Tahoe.Storage.Backend.Internal.BufferedUploadTree (
-    HasPartSizes (..),
+    IsBackend (..),
     Interval (..),
     intervalSize,
     Part (..),
@@ -21,12 +21,16 @@ module Tahoe.Storage.Backend.Internal.BufferedUploadTree (
 import qualified Data.ByteString as B
 import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (<|), (><), (|>))
 import qualified Data.FingerTree as FT
+import Tahoe.Storage.Backend (Size)
 
 data Interval = Interval
-    { intervalLow :: Int
-    , intervalHigh :: Int
+    { intervalLow :: Size
+    , intervalHigh :: Size
     }
-    deriving (Eq, Show)
+    deriving (Eq)
+
+instance Show Interval where
+    show (Interval l h) = "[" <> show l <> ".." <> show h <> "]"
 
 instance Semigroup Interval where
     Interval lowA highA <> Interval lowB highB = Interval (min lowA lowB) (max highA highB)
@@ -34,23 +38,30 @@ instance Semigroup Interval where
 instance Monoid Interval where
     mempty = Interval 0 0
 
-low, high :: Interval -> Int
+low, high :: Interval -> Size
 (low, high) = (intervalLow, intervalHigh)
 
-intervalSize :: Interval -> Int
+intervalSize :: Interval -> Size
 intervalSize (Interval l h) = h - l + 1
 
 data Part backend uploadResponse
-    = PartData {getInterval :: Interval, getShareData :: B.ByteString}
+    = PartData
+        { getInterval :: Interval
+        , getShareData :: B.ByteString
+        , totalShareSize :: Size
+        }
     | PartUploading {getPartNumber :: PartNumber, getInterval :: Interval}
     | PartUploaded {getPartNumber :: PartNumber, getPartResponse :: uploadResponse}
     deriving (Eq, Show)
 
-newtype PartNumber = PartNumber Int
+newtype PartNumber = PartNumber Integer
     deriving newtype (Ord, Eq)
     deriving (Show)
 
-data UploadInfo = UploadInfo PartNumber B.ByteString
+data UploadInfo = UploadInfo
+    { uploadInfoPartNumber :: PartNumber
+    , uploadInfoBytes :: B.ByteString
+    }
     deriving (Eq, Show)
 
 data UploadTreeMeasure backend = UploadTreeMeasure
@@ -59,10 +70,10 @@ data UploadTreeMeasure backend = UploadTreeMeasure
       -- not all positions inside this interval necessarily have bytes.
       coveringInterval :: Interval
     , -- | The largest number of contiguous bytes of any node measured.
-      contiguousBytes :: Int
+      contiguousBytes :: Size
     , -- | The largest number of fixed-interval pieces covered by a node
       -- measured.
-      uploadableParts :: Int
+      uploadableParts :: Size
     , -- | Is every node measured uploaded already.
       fullyUploaded :: Bool
     }
@@ -83,13 +94,15 @@ instance Semigroup (UploadTreeMeasure backend) where
 instance Monoid (UploadTreeMeasure backend) where
     mempty = UploadTreeMeasure mempty 0 0 True
 
-newtype PartSize a = PartSize Int
+newtype PartSize a = PartSize Size
+    deriving newtype (Eq, Ord, Enum, Num, Real, Integral)
 
-class HasPartSizes backend where
-    partSize :: PartSize backend
+class IsBackend backend where
+    minPartSize :: PartSize backend
+    computePartSize :: Size -> PartSize backend
 
-instance HasPartSizes backend => FT.Measured (UploadTreeMeasure backend) (Part backend a) where
-    measure PartData{getInterval} =
+instance IsBackend backend => FT.Measured (UploadTreeMeasure backend) (Part backend a) where
+    measure PartData{totalShareSize, getInterval} =
         UploadTreeMeasure
             { coveringInterval = getInterval
             , contiguousBytes = intervalSize getInterval
@@ -97,7 +110,7 @@ instance HasPartSizes backend => FT.Measured (UploadTreeMeasure backend) (Part b
             , fullyUploaded = False
             }
       where
-        PartSize size = partSize :: PartSize backend
+        PartSize size = computePartSize totalShareSize :: PartSize backend
         uploadableParts =
             case intervalLow getInterval `mod` size of
                 0 -> intervalSize getInterval `div` size
@@ -115,7 +128,7 @@ newtype UploadTree backend a = UploadTree
     deriving newtype (Semigroup, Monoid)
     deriving (Eq, Show)
 
-findUploadableChunk :: (HasPartSizes backend, Show a) => (Interval -> PartNumber) -> UploadTree backend a -> Int -> (Maybe UploadInfo, UploadTree backend a)
+findUploadableChunk :: forall backend a. (IsBackend backend, Show a) => (Interval -> PartNumber) -> UploadTree backend a -> Integer -> (Maybe UploadInfo, UploadTree backend a)
 findUploadableChunk assignNumber t@UploadTree{uploadTree} minParts =
     (upload, t{uploadTree = tree'})
   where
@@ -131,13 +144,32 @@ findUploadableChunk assignNumber t@UploadTree{uploadTree} minParts =
         (_, FT.EmptyL) -> (Nothing, uploadTree)
         --
         -- Predicate flipped immediately: whole tree is uploadable
-        (FT.EmptyR, (PartData interval bytes) :< righties) ->
-            ( Just (UploadInfo partNum bytes)
-            , PartUploading partNum interval <| righties
+        (FT.EmptyR, (PartData{getInterval, getShareData, totalShareSize}) :< righties) ->
+            ( Just (UploadInfo partNum uploadable)
+            , pr >< PartUploading partNum (Interval intstart intend) <| suf >< righties
             )
           where
-            partNum = assignNumber interval
-
+            partNum = assignNumber getInterval
+            partSize = fromIntegral $ computePartSize @backend totalShareSize
+            prefix = intervalLow getInterval `mod` partSize
+            suffix = (intervalHigh getInterval + 1) `mod` partSize
+            droppable
+                | suffix == 0 = fromIntegral $ intervalSize getInterval
+                | otherwise = fromIntegral (intervalSize getInterval - suffix)
+            takable
+                | prefix == 0 = 0
+                | otherwise = fromIntegral (intervalSize lowint)
+            lowint = Interval (intervalLow getInterval) (intervalLow getInterval + (partSize - prefix))
+            highint = Interval (intervalHigh getInterval - suffix) (intervalHigh getInterval)
+            pr
+                | prefix == 0 = mempty
+                | otherwise = PartData lowint (B.take takable getShareData) totalShareSize <| mempty
+            suf
+                | suffix == 0 = mempty
+                | otherwise = mempty |> PartData highint (B.drop droppable getShareData) totalShareSize
+            uploadable = B.drop takable . B.take droppable $ getShareData
+            intstart = intervalLow getInterval + toInteger takable
+            intend = intstart + fromIntegral (B.length uploadable) - 1
         --
         -- It shouldn't be possible to get anything except a PartData here due
         -- to the way our measurement is defined.
@@ -147,12 +179,12 @@ findUploadableChunk assignNumber t@UploadTree{uploadTree} minParts =
         -- Predicate flipped after a while: extra the matching element and
         -- merge the remaining left and right trees.
         -- XXX Do something with `before`
-        (lefties :> before, (PartData interval bytes) :< righties) ->
-            ( Just (UploadInfo partNum bytes)
-            , (lefties |> PartUploading partNum interval) >< righties
+        (lefties :> before, PartData{getInterval, getShareData} :< righties) ->
+            ( Just (UploadInfo partNum getShareData)
+            , (lefties |> PartUploading partNum getInterval) >< righties
             )
           where
-            partNum = assignNumber interval
+            partNum = assignNumber getInterval
 
         --
         -- It shouldn't be possible to get anything except a PartData
@@ -165,15 +197,17 @@ findUploadableChunk assignNumber t@UploadTree{uploadTree} minParts =
 -- 123456781234567812345678
 
 highestPartNumber :: UploadTreeMeasure backend -> PartNumber
-highestPartNumber = offsetToPartNumber . high . coveringInterval
+highestPartNumber = undefined -- offsetToPartNumber . high . coveringInterval
 
-offsetToPartNumber :: Int -> PartNumber
-offsetToPartNumber n = PartNumber $ 1 + n `div` 5_000_000
+offsetToPartNumber :: Size -> Size -> Size -> PartNumber
+offsetToPartNumber minSize totalSize n = PartNumber $ 1 + n `div` max minSize partSizeForTotalSize
+  where
+    partSizeForTotalSize = totalSize `div` 10_000
 
 partNumberToInterval :: PartNumber -> Interval
 partNumberToInterval (PartNumber n) = Interval ((n - 1) * 5_000_000) (n * 5_000_000 - 1)
 
-replace :: HasPartSizes backend => PartNumber -> Part backend a -> UploadTree backend a -> Maybe (UploadTree backend a)
+replace :: IsBackend backend => PartNumber -> Part backend a -> UploadTree backend a -> Maybe (UploadTree backend a)
 replace partNum newPart t@UploadTree{uploadTree} =
     case (left, right') of
         (lefties, target :< righties) ->
@@ -195,7 +229,7 @@ replace partNum newPart t@UploadTree{uploadTree} =
     right' = FT.viewl right
 
 -- XXX Prevent overlaps
-insert :: HasPartSizes backend => Part backend a -> UploadTree backend a -> UploadTree backend a
+insert :: IsBackend backend => Part backend a -> UploadTree backend a -> UploadTree backend a
 insert p t@UploadTree{uploadTree} =
     t{uploadTree = tree'}
   where
@@ -227,8 +261,9 @@ merge3 a b c =
             Just abc -> [abc]
 
 merge2 :: Part backend a -> Part backend a -> Maybe (Part backend a)
-merge2 (PartData aInt aData) (PartData bInt bData)
-    | succ (high aInt) == low bInt = Just (PartData (aInt <> bInt) (aData <> bData))
+merge2 (PartData aInt aData aSize) (PartData bInt bData bSize)
+    | aSize /= bSize = error $ "Cannot merge PartData with different sizes: " <> show aSize <> " " <> show bSize
+    | succ (high aInt) == low bInt = Just (PartData (aInt <> bInt) (aData <> bData) aSize)
     | otherwise = Nothing
 merge2 _ _ = Nothing
 
