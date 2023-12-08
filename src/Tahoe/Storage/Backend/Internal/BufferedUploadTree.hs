@@ -138,36 +138,22 @@ findUploadableChunk assignNumber t@UploadTree{uploadTree} minParts =
 
     (left, right) = FT.split position uploadTree
 
-    (upload, tree') = case (FT.viewr left, FT.viewl right) of
+    (upload, tree') = case FT.viewl right of
         --
         -- If we traverse the whole tree (even if only because the tree was
         -- empty) without the predicate flipping, nothing is uploadable
-        (_, FT.EmptyL) -> (Nothing, uploadTree)
+        FT.EmptyL -> (Nothing, uploadTree)
         --
-        -- Predicate flipped immediately: whole tree is uploadable
-        (FT.EmptyR, (PartData{getInterval, getShareData, totalShareSize}) :< righties) ->
-            (Just uploadInfo, newTree >< righties)
+        -- Predicate flipped: the matching element is uploadable.  Extract it.
+        PartData{getInterval, getShareData, totalShareSize} :< righties ->
+            (Just uploadInfo, left >< newTree >< righties)
           where
             (uploadInfo, newTree) = computeNewTree assignNumber getInterval getShareData totalShareSize
         --
-        -- It shouldn't be possible to get anything except a PartData here due
-        -- to the way our measurement is defined.
-        (FT.EmptyR, otherPart :< _) ->
+        -- It shouldn't be possible to get anything except a PartData in the
+        -- first position due to the way our measurement is defined.
+        otherPart :< _ ->
             error $ "EmptyR case of findUploadableChunk expected PartData, got: " <> show otherPart
-        --
-        -- Predicate flipped after a while: extra the matching element and
-        -- merge the remaining left and right trees.
-        -- XXX Do something with `before`
-        (lefties :> before, PartData{getInterval, getShareData, totalShareSize} :< righties) ->
-            (Just uploadInfo, lefties >< before <| newTree >< righties)
-          where
-            (uploadInfo, newTree) = computeNewTree assignNumber getInterval getShareData totalShareSize
-
-        --
-        -- It shouldn't be possible to get anything except a PartData
-        -- here due to the way our measurement is defined.
-        (_ :> _, otherPart :< _) ->
-            error $ "non-empty case of findUploadableChunk expected PartData, got: " <> show otherPart
 
 computeNewTree :: forall backend response. IsBackend backend => (Interval -> PartNumber) -> Interval -> B.ByteString -> Size -> (UploadInfo, FT.FingerTree (UploadTreeMeasure backend) (Part backend response))
 computeNewTree assignNumber getInterval getShareData totalShareSize = (uploadInfo, newTree)
