@@ -215,7 +215,7 @@ spec = do
                         , UT.PartData (UT.Interval 0 0) "0" 11
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
-                    (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 1
+                    (uploadable, tree') = UT.findUploadableChunk tree 1
                 uploadable
                     === Just (UT.UploadInfo (UT.PartNumber 1) "0123456789A")
                     .&&. tree'
@@ -232,7 +232,7 @@ spec = do
                         , UT.PartData (UT.Interval 0 0) "0" 22
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
-                    (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 1
+                    (uploadable, tree') = UT.findUploadableChunk tree 1
                 UT.uploadTree tree'
                     === FT.fromList
                         [ UT.PartData (UT.Interval 0 3) "0123" 22
@@ -240,7 +240,7 @@ spec = do
                         , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 21)
                         ]
                     .&&. (UT.uploadInfoBytes <$> uploadable)
-                    === Just "BCDEFGHIJK"
+                    === Just "BCDEFGHIJKL"
 
             it "wrong side tree" $ do
                 let parts' =
@@ -248,7 +248,7 @@ spec = do
                         , UT.PartData (UT.Interval 5 8) "5678" 9
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
-                    (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 2
+                    (uploadable, tree') = UT.findUploadableChunk tree 2
                 uploadable === Just (UT.UploadInfo (UT.PartNumber 1) "01") -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
             it "uploadable data with gaps" $
                 forAll arbitrary $ \sizeIncrements -> do
@@ -263,7 +263,7 @@ spec = do
                         let tree = foldl' (flip UT.insert) emptyTree parts'
                         length (toList (UT.uploadTree tree))
                             === length chunks
-                            .&&. fst (UT.findUploadableChunk trivialAssigner tree (fromIntegral $ head sizes))
+                            .&&. fst (UT.findUploadableChunk tree (fromIntegral $ head sizes))
                             === Just (toUploadInfo $ head parts)
 
     context "backend" $ do
@@ -420,12 +420,6 @@ s3Backend = runResourceT $ do
                 pure letter
       where
         prefix = letter <> "/"
-
-{- | Assign a part number to the part at a given interval.  This assigner is
- extremely naive and uses the low bound of the interval plus one (to avoid
- illegally assigning 0).
--}
-trivialAssigner = UT.PartNumber . succ . UT.intervalLow
 
 toUploadInfo :: forall backend resp. UT.IsBackend backend => UT.Part backend resp -> UT.UploadInfo
 toUploadInfo UT.PartData{getInterval, getShareData} = UT.UploadInfo (UT.PartNumber partNum) getShareData

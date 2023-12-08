@@ -273,7 +273,7 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
             part = UT.PartData interval shareData uploadStateSize
 
             partsInserted = UT.insert part uploadParts
-            (uploadable, partsActioned) = UT.findUploadableChunk (const (UT.PartNumber 1)) partsInserted 500
+            (uploadable, partsActioned) = UT.findUploadableChunk partsInserted 500
 
             action = case uploadable of
                 Nothing -> Buffering

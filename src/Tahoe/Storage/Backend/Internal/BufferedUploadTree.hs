@@ -129,8 +129,8 @@ newtype UploadTree backend a = UploadTree
     deriving newtype (Semigroup, Monoid)
     deriving (Eq, Show)
 
-findUploadableChunk :: forall backend a. (IsBackend backend, Show a) => (Interval -> PartNumber) -> UploadTree backend a -> Integer -> (Maybe UploadInfo, UploadTree backend a)
-findUploadableChunk assignNumber t@UploadTree{uploadTree} minParts =
+findUploadableChunk :: forall backend a. (IsBackend backend, Show a) => UploadTree backend a -> Integer -> (Maybe UploadInfo, UploadTree backend a)
+findUploadableChunk t@UploadTree{uploadTree} minParts =
     (upload, t{uploadTree = tree'})
   where
     position :: UploadTreeMeasure backend -> Bool
@@ -148,22 +148,24 @@ findUploadableChunk assignNumber t@UploadTree{uploadTree} minParts =
         PartData{getInterval, getShareData, totalShareSize} :< righties ->
             (Just uploadInfo, left >< newTree >< righties)
           where
-            (uploadInfo, newTree) = computeNewTree assignNumber getInterval getShareData totalShareSize
+            (uploadInfo, newTree) = computeNewTree getInterval getShareData totalShareSize
         --
         -- It shouldn't be possible to get anything except a PartData in the
         -- first position due to the way our measurement is defined.
         otherPart :< _ ->
             error $ "EmptyR case of findUploadableChunk expected PartData, got: " <> show otherPart
 
+assignPartNumber :: Interval -> Size -> PartNumber
+assignPartNumber Interval{intervalLow} partSize = PartNumber $ 1 + intervalLow `div` partSize
+
 computeNewTree ::
     forall backend response.
     IsBackend backend =>
-    (Interval -> PartNumber) ->
     Interval ->
     B.ByteString ->
     Size ->
     (UploadInfo, FT.FingerTree (UploadTreeMeasure backend) (Part backend response))
-computeNewTree assignNumber getInterval getShareData totalShareSize = (uploadInfo, newTree)
+computeNewTree getInterval getShareData totalShareSize = (uploadInfo, newTree)
   where
     -- A description of the uploadable chunk that was found.
     uploadInfo = UploadInfo partNum chunkBytes
@@ -176,7 +178,7 @@ computeNewTree assignNumber getInterval getShareData totalShareSize = (uploadInf
 
     -- The part number assigned to the part the uploadable chunk will be used
     -- to create.
-    partNum = assignNumber getInterval
+    partNum = assignPartNumber uploadableInterval partSize
 
     -- The prefix of the tree formed after the removal of the uploadable chunk.
     pr
