@@ -227,13 +227,21 @@ spec = do
                         , UT.PartData (UT.Interval 5 8) "5678" 22
                         , -- The last byte of the first part and 11 more bytes
                           -- to make a complete second part.
-                          UT.PartData (UT.Interval 10 21) "ABCDEFGHIJK" 22
+                          UT.PartData (UT.Interval 10 21) "ABCDEFGHIJKL" 22
                         , UT.PartData (UT.Interval 9 9) "9" 22
                         , UT.PartData (UT.Interval 0 0) "0" 22
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
                     (uploadable, tree') = UT.findUploadableChunk trivialAssigner tree 1
-                (UT.uploadInfoBytes <$> uploadable) === Just "ABCDEFGHIJK" -- .&&. tree' === FT.fromList [UT.PartUploading (UT.Interval 0 10)]
+                UT.uploadTree tree'
+                    === FT.fromList
+                        [ UT.PartData (UT.Interval 0 3) "0123" 22
+                        , UT.PartData (UT.Interval 5 10) "56789A" 22
+                        , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 21)
+                        ]
+                    .&&. (UT.uploadInfoBytes <$> uploadable)
+                    === Just "BCDEFGHIJK"
+
             it "wrong side tree" $ do
                 let parts' =
                         [ UT.PartData (UT.Interval 0 1) "01" 9

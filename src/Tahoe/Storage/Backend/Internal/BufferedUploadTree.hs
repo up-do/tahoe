@@ -155,36 +155,68 @@ findUploadableChunk assignNumber t@UploadTree{uploadTree} minParts =
         otherPart :< _ ->
             error $ "EmptyR case of findUploadableChunk expected PartData, got: " <> show otherPart
 
-computeNewTree :: forall backend response. IsBackend backend => (Interval -> PartNumber) -> Interval -> B.ByteString -> Size -> (UploadInfo, FT.FingerTree (UploadTreeMeasure backend) (Part backend response))
+computeNewTree ::
+    forall backend response.
+    IsBackend backend =>
+    (Interval -> PartNumber) ->
+    Interval ->
+    B.ByteString ->
+    Size ->
+    (UploadInfo, FT.FingerTree (UploadTreeMeasure backend) (Part backend response))
 computeNewTree assignNumber getInterval getShareData totalShareSize = (uploadInfo, newTree)
   where
-    uploadInfo = UploadInfo partNum uploadable
-    newTree = pr >< PartUploading partNum (Interval intstart intend) <| suf
-    partNum = assignNumber getInterval
-    partSize = fromIntegral $ computePartSize @backend totalShareSize
-    prefix = intervalLow getInterval `mod` partSize
-    suffix = (intervalHigh getInterval + 1) `mod` partSize
-    droppable
-        | suffix == 0 = fromIntegral $ intervalSize getInterval
-        | otherwise = fromIntegral (intervalSize getInterval - suffix)
-    takable
-        | prefix == 0 = 0
-        | otherwise = fromIntegral (intervalSize lowint)
-    lowint = Interval (intervalLow getInterval) (intervalLow getInterval + (partSize - prefix))
-    highint = Interval (intervalHigh getInterval - suffix) (intervalHigh getInterval)
-    pr
-        | prefix == 0 = mempty
-        | otherwise = PartData lowint (B.take takable getShareData) totalShareSize <| mempty
-    suf
-        | suffix == 0 = mempty
-        | otherwise = mempty |> PartData highint (B.drop droppable getShareData) totalShareSize
-    uploadable = B.drop takable . B.take droppable $ getShareData
-    intstart = intervalLow getInterval + toInteger takable
-    intend = intstart + fromIntegral (B.length uploadable) - 1
+    -- A description of the uploadable chunk that was found.
+    uploadInfo = UploadInfo partNum chunkBytes
 
--- ......111122222222......
--- 44444411UUUUUUUU22333333
--- 123456781234567812345678
+    -- A new tree made out of pieces of data that were contiguous with the
+    -- uploadable chunk but which were not themselves uploadable, and a
+    -- replacement for the uploadable chunk describing the fact that it is
+    -- being uploaded.
+    newTree = pr >< PartUploading partNum uploadableInterval <| suf
+
+    -- The part number assigned to the part the uploadable chunk will be used
+    -- to create.
+    partNum = assignNumber getInterval
+
+    -- The prefix of the tree formed after the removal of the uploadable chunk.
+    pr
+        | prefixLength == 0 = mempty
+        | otherwise = PartData prefixInterval prefixBytes totalShareSize <| mempty
+
+    -- The suffix of the tree formed after the removal of the uploadable chunk.
+    suf
+        | suffixLength == 0 = mempty
+        | otherwise = mempty |> PartData suffixInterval suffixBytes totalShareSize
+
+    -- How many bytes are attached to the left of the chunk which cannot be
+    -- used because they do not begin on a part boundary?
+    prefixLength = case intervalLow getInterval `mod` partSize of
+        0 -> 0
+        n -> partSize - n
+
+    -- How many bytes are attached to the right of the chunk which cannot be
+    -- used because they do not end on a part boundary?
+    suffixLength = (intervalHigh getInterval + 1) `mod` partSize
+
+    -- How many bytes from the chunk are usable for upload?
+    chunkLength = intervalSize getInterval - prefixLength - suffixLength
+
+    (prefixBytes, chunkAndSuffix) = B.splitAt (fromIntegral prefixLength) getShareData
+    (chunkBytes, suffixBytes) = B.splitAt (fromIntegral chunkLength) chunkAndSuffix
+
+    -- How many bytes are in each "part" for this tree?
+    partSize = fromIntegral $ computePartSize @backend totalShareSize
+
+    -- An interval describing the unusable bytes attached to the left of the
+    -- chunk.
+    prefixInterval = Interval (intervalLow getInterval) (intervalLow getInterval + prefixLength - 1)
+
+    -- An interval describing the unusable bytes attached to the right of the
+    -- chunk.
+    suffixInterval = Interval (intervalHigh getInterval - suffixLength) (intervalHigh getInterval)
+
+    -- An interval describing the usable bytes from the chunk.
+    uploadableInterval = Interval (intervalHigh prefixInterval + 1) (intervalLow suffixInterval)
 
 highestPartNumber :: UploadTreeMeasure backend -> PartNumber
 highestPartNumber = undefined -- offsetToPartNumber . high . coveringInterval
