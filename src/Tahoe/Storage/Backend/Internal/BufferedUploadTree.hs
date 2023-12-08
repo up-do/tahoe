@@ -21,6 +21,7 @@ module Tahoe.Storage.Backend.Internal.BufferedUploadTree (
 import qualified Data.ByteString as B
 import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (<|), (><), (|>))
 import qualified Data.FingerTree as FT
+import Debug.Trace (trace)
 import Tahoe.Storage.Backend (Size)
 
 data Interval = Interval
@@ -145,31 +146,9 @@ findUploadableChunk assignNumber t@UploadTree{uploadTree} minParts =
         --
         -- Predicate flipped immediately: whole tree is uploadable
         (FT.EmptyR, (PartData{getInterval, getShareData, totalShareSize}) :< righties) ->
-            ( Just (UploadInfo partNum uploadable)
-            , pr >< PartUploading partNum (Interval intstart intend) <| suf >< righties
-            )
+            (Just uploadInfo, newTree >< righties)
           where
-            partNum = assignNumber getInterval
-            partSize = fromIntegral $ computePartSize @backend totalShareSize
-            prefix = intervalLow getInterval `mod` partSize
-            suffix = (intervalHigh getInterval + 1) `mod` partSize
-            droppable
-                | suffix == 0 = fromIntegral $ intervalSize getInterval
-                | otherwise = fromIntegral (intervalSize getInterval - suffix)
-            takable
-                | prefix == 0 = 0
-                | otherwise = fromIntegral (intervalSize lowint)
-            lowint = Interval (intervalLow getInterval) (intervalLow getInterval + (partSize - prefix))
-            highint = Interval (intervalHigh getInterval - suffix) (intervalHigh getInterval)
-            pr
-                | prefix == 0 = mempty
-                | otherwise = PartData lowint (B.take takable getShareData) totalShareSize <| mempty
-            suf
-                | suffix == 0 = mempty
-                | otherwise = mempty |> PartData highint (B.drop droppable getShareData) totalShareSize
-            uploadable = B.drop takable . B.take droppable $ getShareData
-            intstart = intervalLow getInterval + toInteger takable
-            intend = intstart + fromIntegral (B.length uploadable) - 1
+            (uploadInfo, newTree) = computeNewTree assignNumber getInterval getShareData totalShareSize
         --
         -- It shouldn't be possible to get anything except a PartData here due
         -- to the way our measurement is defined.
@@ -179,18 +158,43 @@ findUploadableChunk assignNumber t@UploadTree{uploadTree} minParts =
         -- Predicate flipped after a while: extra the matching element and
         -- merge the remaining left and right trees.
         -- XXX Do something with `before`
-        (lefties :> before, PartData{getInterval, getShareData} :< righties) ->
-            ( Just (UploadInfo partNum getShareData)
-            , (lefties |> PartUploading partNum getInterval) >< righties
-            )
+        (lefties :> before, PartData{getInterval, getShareData, totalShareSize} :< righties) ->
+            (Just uploadInfo, lefties >< before <| newTree >< righties)
           where
-            partNum = assignNumber getInterval
+            (uploadInfo, newTree) = computeNewTree assignNumber getInterval getShareData totalShareSize
 
         --
         -- It shouldn't be possible to get anything except a PartData
         -- here due to the way our measurement is defined.
         (_ :> _, otherPart :< _) ->
             error $ "non-empty case of findUploadableChunk expected PartData, got: " <> show otherPart
+
+computeNewTree :: forall backend response. IsBackend backend => (Interval -> PartNumber) -> Interval -> B.ByteString -> Size -> (UploadInfo, FT.FingerTree (UploadTreeMeasure backend) (Part backend response))
+computeNewTree assignNumber getInterval getShareData totalShareSize = (uploadInfo, newTree)
+  where
+    uploadInfo = UploadInfo partNum uploadable
+    newTree = pr >< PartUploading partNum (Interval intstart intend) <| suf
+    partNum = assignNumber getInterval
+    partSize = fromIntegral $ computePartSize @backend totalShareSize
+    prefix = intervalLow getInterval `mod` partSize
+    suffix = (intervalHigh getInterval + 1) `mod` partSize
+    droppable
+        | suffix == 0 = fromIntegral $ intervalSize getInterval
+        | otherwise = fromIntegral (intervalSize getInterval - suffix)
+    takable
+        | prefix == 0 = 0
+        | otherwise = fromIntegral (intervalSize lowint)
+    lowint = Interval (intervalLow getInterval) (intervalLow getInterval + (partSize - prefix))
+    highint = Interval (intervalHigh getInterval - suffix) (intervalHigh getInterval)
+    pr
+        | prefix == 0 = mempty
+        | otherwise = PartData lowint (B.take takable getShareData) totalShareSize <| mempty
+    suf
+        | suffix == 0 = mempty
+        | otherwise = mempty |> PartData highint (B.drop droppable getShareData) totalShareSize
+    uploadable = B.drop takable . B.take droppable $ getShareData
+    intstart = intervalLow getInterval + toInteger takable
+    intend = intstart + fromIntegral (B.length uploadable) - 1
 
 -- ......111122222222......
 -- 44444411UUUUUUUU22333333
