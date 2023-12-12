@@ -417,7 +417,6 @@ cleanupS3 (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) = runResou
 
     unless (null objectKeys) . void $
         AWS.send s3BackendEnv (S3.newDeleteObjects s3BackendBucket (delete_objects .~ objectKeys $ S3.newDelete))
-    liftIO $ print ("Cleaned up backend", objectKeys)
 
 s3Backend :: IO (S3Backend b FakeDelay)
 s3Backend = runResourceT $ do

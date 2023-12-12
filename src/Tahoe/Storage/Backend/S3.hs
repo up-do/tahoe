@@ -25,7 +25,7 @@ import Control.Concurrent.STM.Lifted (STM, atomically)
 import qualified Control.Concurrent.STM.Map as SMap
 import Control.Exception (Exception, SomeException, catch, throw, throwIO, try)
 import Control.Lens (set, view, (.~), (?~), (^.))
-import Control.Monad (void, when)
+import Control.Monad (forM_, void, when)
 import Control.Monad.Catch (MonadCatch, onException)
 import Data.Bifunctor (Bifunctor (first, second))
 import qualified Data.ByteString as B
@@ -43,7 +43,6 @@ import Data.Maybe (isJust, mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Debug.Trace (trace)
 import GHC.Conc (throwSTM)
 import GHC.Stack (HasCallStack)
 import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo), Status (Status, statusCode))
@@ -248,6 +247,12 @@ internalStartUpload secrets storageIndex shareNum offset shareData curState = do
   where
     stateKey = (storageIndex, shareNum)
 
+-- | Remove the internal state associated with one share upload.
+internalFinishSingleUpload :: StorageIndex -> ShareNumber -> AllocatedShares backend delay -> STM ()
+internalFinishSingleUpload = SMap.delete .: (,)
+
+(f .: g) x = f . g x
+
 internalFinishUpload ::
     UT.IsBackend backend =>
     Integer ->
@@ -303,6 +308,9 @@ data PartUpload
       Buffering
     | -- | Some data should get uploaded now as a single part.
       StartUpload UT.PartNumber T.Text ShareData
+    | -- | The whole object can now be uploaded with a single request to the
+      -- backend.
+      StartSingleUpload ShareData
     deriving (Show)
 
 {- | Add some more share data to the given state.  If there is enough
@@ -326,21 +334,41 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
             -- about the state for this share.  That will produce a new state to
             -- return as well as, possibly, an action for the caller to take based
             -- on that new state.
-            Just uploadId -> (state, action)
+            Just uploadId -> (u{uploadParts = partsActioned}, action')
               where
-                state = u{uploadParts = partsActioned}
-
-                size = fromIntegral $ B.length shareData
-                interval = UT.Interval (fromIntegral offset) (fromIntegral $ offset + size - 1)
-                part = UT.PartData interval shareData uploadStateSize
-
-                partsInserted = UT.insert part uploadParts
                 (uploadable, partsActioned) = UT.findUploadableChunk partsInserted 1
 
-                action = case uploadable of
+                action' = case uploadable of
                     Nothing -> Buffering
                     Just (UT.UploadInfo partNum partData) -> StartUpload partNum uploadId partData
-    | otherwise = error "implement single part upload"
+    | otherwise = (u{uploadParts = newParts}, action)
+  where
+    size = fromIntegral $ B.length shareData
+    interval = UT.Interval (fromIntegral offset) (fromIntegral $ offset + size - 1)
+    part = UT.PartData interval shareData uploadStateSize
+
+    -- An interval covering all data required to complete the share in
+    -- question.
+    fullInterval = UT.Interval 0 (uploadStateSize - 1)
+
+    -- If we put the new part into the tree, we'll be able to look at the new
+    -- tree and make a decision about what action it makes sense to take now,
+    -- if any.
+    partsInserted = UT.insert part uploadParts
+
+    (newParts, action)
+        -- All of the data has been received, we can convert the whole tree
+        -- state and instruct the caller to do an upload.
+        | allDataReceived partsInserted = (UT.UploadTree (FT.singleton (UT.PartUploading (UT.PartNumber 1) fullInterval)), StartSingleUpload "")
+        -- Or if not, just take the new data and let the caller know we're
+        -- still buffering it.
+        | otherwise = (partsInserted, Buffering)
+
+    -- Have we now received all of the data for the share in question?  This
+    -- is the case if the contiguous bytes measure at the top of the tree
+    -- equals the entire share size.
+    allDataReceived :: UT.UploadTree backend b -> Bool
+    allDataReceived = (uploadStateSize ==) . UT.contiguousBytes . FT.measure . UT.uploadTree
 
 {- | Mark a part upload as finished and compute the new overall state of the
  multipart upload.
@@ -357,10 +385,10 @@ finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadP
     -- The multipart upload is finished every individual part has been
     -- uploaded and the interval covers all of the data.
     requiredCoverage = UT.Interval 0 (fromIntegral $ uploadStateSize - 1)
-    multipartFinished = UT.fullyUploaded m && UT.coveringInterval (trace ("actual measure: " <> show m) m) == trace ("required cov: " <> show requiredCoverage) requiredCoverage
+    multipartFinished = UT.fullyUploaded m && UT.coveringInterval m == requiredCoverage
       where
         t = UT.uploadTree newUploadParts
-        m = FT.measure (trace ("tree is: " <> show t) t)
+        m = FT.measure t
 
     -- The part which we just finished uploading changes from a
     -- `PartUploading` to a `PartUploaded`.
@@ -491,7 +519,6 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
                 -- wait on the delay and then clean up the resources allocated
                 -- for these uploads
                 void $ forkIO $ cleanupAfterProgressTimeout immutableUploadProgressTimeout delayed (cleanup result)
-                print ("Allocating", storageIndex, result)
                 pure result
       where
         cleanupAfterProgressTimeout n delayed cleanup' = do
@@ -533,12 +560,17 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
     abortImmutableUpload (S3Backend{..}) storageIndex shareNum secrets = do
         -- Try to find the matching upload state and discard it if the secret matches.
         toCancel <- atomically $ adjust' internalCancel stateKey s3BackendState
-        -- If we found it, also cancel the state in the S3 server.
+
         case toCancel of
-            Nothing -> throwIO IncorrectUploadSecret
-            Just (progressTimeout, uploadId) -> do
-                cancelMultipartUpload uploadId
+            -- If we didn't find anything then there's nothing more to do.
+            Nothing -> pure ()
+            Just (progressTimeout, backendState) -> do
+                -- The associated timeout is no longer needed since we will clean up
+                -- all associated state now.
                 cancel progressTimeout
+
+                -- If there was also state on the S3 server, clean it up too.
+                forM_ backendState cancelMultipartUpload
       where
         stateKey = (storageIndex, shareNum)
 
@@ -547,14 +579,26 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
             _resp <- AWS.send s3BackendEnv $ S3.newAbortMultipartUpload s3BackendBucket (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum) uploadId
             pure ()
 
-        internalCancel UploadState{uploadResponse, uploadSecret, uploadProgressTimeout}
-            | validUploadSecret uploadSecret secrets =
-                maybe (throw ShareAllocationIncomplete) ((Nothing,) . (uploadProgressTimeout,) . (^. S3.createMultipartUploadResponse_uploadId)) uploadResponse
-            | otherwise = throw IncorrectUploadSecret
+        internalCancel :: UploadState backend delay -> (Maybe v, (delay, Maybe T.Text))
+        internalCancel UploadState{uploadResponse, uploadSecret, uploadProgressTimeout, uploadStateSize}
+            -- Any cancel requires a correct secret or no action may be taken.
+            | not (validUploadSecret uploadSecret secrets) = throw IncorrectUploadSecret
+            -- Given a valid secret, for a single part upload, there is only
+            -- internal state to clean up.  Returning Nothing will cause that
+            -- to happen.
+            | not (useMultipartUpload (Proxy @backend) uploadStateSize) = (Nothing, (uploadProgressTimeout, Nothing))
+            -- Given a valid secret, for a multipart upload, there is also
+            -- MultipartUpload state on the S3 backend to clean up.  We can
+            -- only do this if we know the MultipartUpload state's unique
+            -- identifier though.  If we don't yet, we make this an error.
+            | otherwise = (Nothing, (uploadProgressTimeout, Just uploadId))
+          where
+            uploadId = case (^. S3.createMultipartUploadResponse_uploadId) <$> uploadResponse of
+                Nothing -> throw ShareAllocationIncomplete
+                Just uid -> uid
 
     getImmutableShareNumbers (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = runResourceT $ do
         resp <- AWS.send s3BackendEnv (set S3.listObjects_prefix (Just . storageIndexPrefix s3BackendPrefix $ storageIndex) $ S3.newListObjects s3BackendBucket)
-        liftIO $ print ("minio says", resp)
         case view S3.listObjectsResponse_contents resp of
             Nothing -> pure $ CBORSet mempty
             Just objects -> pure $ CBORSet shareNumbers
@@ -818,7 +862,6 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
     do
         -- call list objects on the backend, if this share already exists, reject the new write with ImmutableShareAlreadyWritten
         CBORSet shareNumbers <- getImmutableShareNumbers s3backend storageIndex
-        print ("checking existing shares", storageIndex, shareNum, shareNumbers, offset, shareData)
         when (shareNum `elem` shareNumbers) $ throwIO ImmutableShareAlreadyWritten
 
         -- If possible, update internal state to reflect this new piece of
@@ -826,22 +869,20 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
         -- combines with some already-written data to exceed the threshold,
         -- being a new part upload and record its details.
         uploadInfo <- atomically (internalStartUpload secrets storageIndex shareNum offset shareData s3BackendState)
-        print ("started upload, internally", storageIndex, shareNum, uploadInfo)
 
         case uploadInfo of
-            Nothing -> throwIO (trace "oook!" ImmutableShareAlreadyWritten)
+            Nothing -> throwIO ImmutableShareAlreadyWritten
             Just NotReady -> throwIO ShareAllocationIncomplete
             Just Collision -> throwIO ConflictingWrite
             Just Buffering -> updateTimeout
             Just (StartUpload (UT.PartNumber partNum') uploadId dataToUpload) -> do
                 updateTimeout
 
-                let objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
-                    uploadPart = S3.newUploadPart s3BackendBucket objKey (fromIntegral partNum') uploadId (AWS.toBody dataToUpload)
+                let uploadPart = S3.newUploadPart s3BackendBucket objKey (fromIntegral partNum') uploadId (AWS.toBody dataToUpload)
+
                 -- XXX This could, of course, fail...  Then we have some state to roll back.
                 response <- runResourceT $ AWS.send s3BackendEnv uploadPart
                 newState <- atomically $ internalFinishUpload partNum' shareData storageIndex shareNum response s3BackendState
-                print ("internalFinishUpload says", newState)
                 case newState of
                     Nothing ->
                         error "It went missing?"
@@ -854,10 +895,16 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
                                     (S3.newCompleteMultipartUpload s3BackendBucket objKey uploadId)
 
                         -- XXX Oops, this could fail too.
-                        print ("COMPLETING MULTIPART UPLOAD", storageIndex, shareNum)
                         void $ runResourceT $ AWS.send s3BackendEnv completeMultipartUpload
                     Just (False, _) -> pure ()
+            Just (StartSingleUpload dataToUpload) -> do
+                updateTimeout
+                -- XXX check response
+                response <- runResourceT $ AWS.send s3BackendEnv (S3.newPutObject s3BackendBucket objKey (AWS.toBody dataToUpload))
+                atomically $ internalFinishSingleUpload storageIndex shareNum s3BackendState
   where
+    objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
+
     updateTimeout = do
         s <- atomically $ SMap.lookup (storageIndex, shareNum) s3BackendState
         case s of

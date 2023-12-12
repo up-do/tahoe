@@ -20,7 +20,6 @@ module Tahoe.Storage.Backend.Internal.BufferedUploadTree (
 import qualified Data.ByteString as B
 import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (<|), (><), (|>))
 import qualified Data.FingerTree as FT
-import Debug.Trace (trace)
 import Tahoe.Storage.Backend (Size)
 
 data Interval = Interval
@@ -149,7 +148,7 @@ findUploadableChunk t@UploadTree{uploadTree} minParts =
         p@PartData{getInterval, getShareData, totalShareSize} :< righties ->
             (Just uploadInfo, left >< newTree >< righties)
           where
-            (uploadInfo, newTree) = computeNewTree getInterval getShareData (trace ("found chunk, measure p: " <> show (FT.measure p)) totalShareSize)
+            (uploadInfo, newTree) = computeNewTree getInterval getShareData totalShareSize
         --
         -- It shouldn't be possible to get anything except a PartData in the
         -- first position due to the way our measurement is defined.
