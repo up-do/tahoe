@@ -3,18 +3,17 @@
 module Tahoe.Storage.Backend.Internal.BufferedUploadTree (
     IsBackend (..),
     Interval (..),
+    splitInterval,
     intervalSize,
+    replace,
     Part (..),
     PartSize (..),
     PartNumber (..),
     UploadInfo (..),
     UploadTreeMeasure (..),
     UploadTree (..),
-    highestPartNumber,
-    offsetToPartNumber,
     partNumberToInterval,
     findUploadableChunk,
-    replace,
     insert,
 ) where
 
@@ -52,7 +51,7 @@ data Part backend uploadResponse
         , totalShareSize :: Size
         }
     | PartUploading {getPartNumber :: PartNumber, getInterval :: Interval}
-    | PartUploaded {getPartNumber :: PartNumber, getPartResponse :: uploadResponse}
+    | PartUploaded {getPartNumber :: PartNumber, getPartResponse :: uploadResponse, totalShareSize :: Size}
     deriving (Eq, Show)
 
 newtype PartNumber = PartNumber Integer
@@ -121,7 +120,9 @@ instance IsBackend backend => FT.Measured (UploadTreeMeasure backend) (Part back
                 -- part size.
                 n -> (intervalHigh getInterval - (intervalLow getInterval + (size - n)) + 1) `div` size
     measure PartUploading{getInterval} = UploadTreeMeasure getInterval 0 0 False
-    measure PartUploaded{getPartNumber} = UploadTreeMeasure (partNumberToInterval getPartNumber) 0 0 True
+    measure PartUploaded{totalShareSize, getPartNumber} = UploadTreeMeasure (partNumberToInterval partSize getPartNumber) 0 0 True
+      where
+        partSize = computePartSize @backend totalShareSize
 
 newtype UploadTree backend a = UploadTree
     { uploadTree :: FT.FingerTree (UploadTreeMeasure backend) (Part backend a)
@@ -145,10 +146,10 @@ findUploadableChunk t@UploadTree{uploadTree} minParts =
         FT.EmptyL -> (Nothing, uploadTree)
         --
         -- Predicate flipped: the matching element is uploadable.  Extract it.
-        PartData{getInterval, getShareData, totalShareSize} :< righties ->
+        p@PartData{getInterval, getShareData, totalShareSize} :< righties ->
             (Just uploadInfo, left >< newTree >< righties)
           where
-            (uploadInfo, newTree) = computeNewTree getInterval getShareData totalShareSize
+            (uploadInfo, newTree) = computeNewTree getInterval getShareData (trace ("found chunk, measure p: " <> show (FT.measure p)) totalShareSize)
         --
         -- It shouldn't be possible to get anything except a PartData in the
         -- first position due to the way our measurement is defined.
@@ -220,21 +221,13 @@ computeNewTree getInterval getShareData totalShareSize = (uploadInfo, newTree)
     -- An interval describing the usable bytes from the chunk.
     uploadableInterval = Interval (intervalHigh prefixInterval + 1) (intervalLow suffixInterval)
 
-highestPartNumber :: UploadTreeMeasure backend -> PartNumber
-highestPartNumber = undefined -- offsetToPartNumber . high . coveringInterval
+partNumberToInterval :: PartSize backend -> PartNumber -> Interval
+partNumberToInterval (PartSize partSize) (PartNumber n) = Interval ((n - 1) * partSize) (n * partSize - 1)
 
-offsetToPartNumber :: Size -> Size -> Size -> PartNumber
-offsetToPartNumber minSize totalSize n = PartNumber $ 1 + n `div` max minSize partSizeForTotalSize
-  where
-    partSizeForTotalSize = totalSize `div` 10_000
-
-partNumberToInterval :: PartNumber -> Interval
-partNumberToInterval (PartNumber n) = Interval ((n - 1) * 5_000_000) (n * 5_000_000 - 1)
-
-replace :: IsBackend backend => PartNumber -> Part backend a -> UploadTree backend a -> Maybe (UploadTree backend a)
-replace partNum newPart t@UploadTree{uploadTree} =
+replace :: IsBackend backend => Interval -> Part backend a -> UploadTree backend a -> Maybe (UploadTree backend a)
+replace interval newPart t@UploadTree{uploadTree} =
     case (left, right') of
-        (lefties, target :< righties) ->
+        (lefties, _target :< righties) ->
             -- The new part might completely or only partially overlap with the
             -- part being replaced.  If it partially overlaps, leave behind
             -- whatever parts of target aren't covered by the new part.
@@ -249,19 +242,31 @@ replace partNum newPart t@UploadTree{uploadTree} =
             -- attempt.  Ideally this case is impossible ...
             Nothing
   where
-    (left, right) = FT.split (\p -> highestPartNumber p <= partNum) uploadTree
+    (left, right) = splitInterval interval uploadTree
     right' = FT.viewl right
 
--- XXX Prevent overlaps
-insert :: IsBackend backend => Part backend a -> UploadTree backend a -> UploadTree backend a
+splitInterval ::
+    IsBackend backend =>
+    Interval ->
+    FT.FingerTree (UploadTreeMeasure backend) (Part backend a) ->
+    ( FT.FingerTree (UploadTreeMeasure backend) (Part backend a)
+    , FT.FingerTree (UploadTreeMeasure backend) (Part backend a)
+    )
+splitInterval interval = FT.split predicate
+  where
+    -- Our predicate should flip from "false" -> "true" _on_ the element we
+    -- want to insert before
+    predicate measure = intervalLow interval <= intervalHigh (coveringInterval measure)
+
+insert ::
+    IsBackend backend =>
+    Part backend a ->
+    UploadTree backend a ->
+    UploadTree backend a
 insert p t@UploadTree{uploadTree} =
     t{uploadTree = tree'}
   where
-    -- Our predicate should flip from "false" -> "true" _on_ the
-    -- element we want to insert before
-    position m = low (getInterval p) <= high (coveringInterval m)
-
-    (left, right) = FT.split position uploadTree
+    (left, right) = splitInterval (getInterval p) uploadTree
 
     tree' = case (FT.viewr left, FT.viewl right) of
         -- If there's nothing around to merge with then the inserted value is

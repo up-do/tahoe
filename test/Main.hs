@@ -43,10 +43,10 @@ import Tahoe.Storage.Backend (
     WriteImmutableError (ShareNotAllocated),
     WriteVector (WriteVector),
  )
-import Tahoe.Storage.Backend.Internal.BufferedUploadTree (findUploadableChunk)
 import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.S3 (
     AWS,
+    Minio,
     S3Backend (..),
     UploadState (uploadProgressTimeout),
     applyWriteVectors,
@@ -326,8 +326,7 @@ spec = do
                     shareNums = ShareNumber <$> [1, 2, 3]
                     allocate = AllocateBuckets shareNums 123
 
-                backend <- s3Backend
-
+                backend <- s3Backend @Minio
                 -- Allocate some stuff
                 createImmutableStorageIndex backend storageIndex secrets allocate
                     `shouldReturn` AllocationResult [] shareNums
@@ -348,7 +347,7 @@ spec = do
                     secrets = Just [Upload (UploadSecret "hello")]
                     shareNums = ShareNumber <$> [1, 2, 3]
                     allocate = AllocateBuckets shareNums 123
-                backend <- s3Backend
+                backend <- s3Backend @Minio
 
                 -- Allocate some stuff
                 createImmutableStorageIndex backend storageIndex secrets allocate
@@ -371,7 +370,7 @@ spec = do
                     secrets = Just [Upload (UploadSecret "hello")]
                     shareNums = ShareNumber <$> [1, 2, 3]
                     allocate = AllocateBuckets shareNums 123
-                backend <- s3Backend
+                backend <- s3Backend @Minio
 
                 -- Allocate some stuff
                 createImmutableStorageIndex backend storageIndex secrets allocate
@@ -392,7 +391,7 @@ spec = do
                 -- being made.
                 writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Goodbye world" (Just [ByteRangeFromTo 11 23])
 
-        describe "S3Backend" $ makeStorageSpec s3Backend cleanupS3
+        describe "S3Backend" $ makeStorageSpec (s3Backend @Minio) cleanupS3
 
 -- Consume one of the "delay tokens" or expire the delay if none are
 -- remaining.
@@ -418,8 +417,9 @@ cleanupS3 (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) = runResou
 
     unless (null objectKeys) . void $
         AWS.send s3BackendEnv (S3.newDeleteObjects s3BackendBucket (delete_objects .~ objectKeys $ S3.newDelete))
+    liftIO $ print ("Cleaned up backend", objectKeys)
 
-s3Backend :: IO (S3Backend AWS FakeDelay)
+s3Backend :: IO (S3Backend b FakeDelay)
 s3Backend = runResourceT $ do
     let setLocalEndpoint = AWS.setEndpoint False "127.0.0.1" 9000
         setAddressingStyle s = s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}

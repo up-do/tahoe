@@ -3,10 +3,10 @@
 
   Some notes about AWS limitations:
 
-  - The maximum size of an S3 object created using the PutObject API is 5 GB.
+  - The maximum size of an S3 object created using the PutObject API is 5 GB (XXX might be GiB, unclear).
   - The maximum size of an S3 object created using the CreateMultipartUpload / UploadPart is 5 TB.
   - The minimum size of a single UploadPart is 5 MB.
-  - The maximum size of a single UploadPart is ???.
+  - The maximum size of a single UploadPart is 5 GB.
   - The maximum number of UploadParts associated with a CreateMultipartUpload is 10,000.
     - If you upload a 5 TB object using 10,000 parts each part is 500 MB.
   - UploadParts must be numbered using part numbers from 1 to 10,000 inclusive.
@@ -18,7 +18,7 @@ import Amazonka (runResourceT)
 import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
-import Conduit (ResourceT, sinkList)
+import Conduit (MonadIO (liftIO), ResourceT, sinkList)
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Async (concurrently, mapConcurrently, mapConcurrently_, race)
 import Control.Concurrent.STM.Lifted (STM, atomically)
@@ -35,8 +35,7 @@ import Data.Either (rights)
 import qualified Data.FingerTree as FT
 import Data.Foldable (Foldable (toList), fold, foldl', traverse_)
 import qualified Data.HashMap.Strict as HashMap
-import Data.Hashable (Hashable (hashWithSalt))
-import qualified Data.IntervalMap.FingerTree as IMap
+import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, mapMaybe)
@@ -74,7 +73,6 @@ import Tahoe.Storage.Backend (
     WriteMutableError (..),
     WriteVector (..),
  )
-import Tahoe.Storage.Backend.Internal.BufferedUploadTree (IsBackend)
 import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.Internal.Delay (HasDelay (..), TimeoutOperation (Cancelled, Delayed))
 import TahoeLAFS.Storage.Backend (
@@ -87,6 +85,13 @@ import Text.Read (readMaybe)
 data AWS
 
 instance UT.IsBackend AWS where
+    minPartSize = UT.PartSize 5_000_000
+    computePartSize totalSize = max UT.minPartSize (UT.PartSize $ totalSize `div` 10_000)
+
+data Minio
+
+-- See https://min.io/docs/minio/container/operations/checklists/thresholds.html
+instance UT.IsBackend Minio where
     minPartSize = UT.PartSize 5_000_000
     computePartSize totalSize = max UT.minPartSize (UT.PartSize $ totalSize `div` 10_000)
 
@@ -249,6 +254,7 @@ data PartUpload
       Buffering
     | -- | Some data should get uploaded now as a single part.
       StartUpload UT.PartNumber T.Text ShareData
+    deriving (Show)
 
 {- | Add some more share data to the given state.  If there is enough
  contiguous data, also add another part upload and return the part number
@@ -273,7 +279,7 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
             part = UT.PartData interval shareData uploadStateSize
 
             partsInserted = UT.insert part uploadParts
-            (uploadable, partsActioned) = UT.findUploadableChunk partsInserted 500
+            (uploadable, partsActioned) = UT.findUploadableChunk partsInserted 1
 
             action = case uploadable of
                 Nothing -> Buffering
@@ -293,18 +299,22 @@ finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadP
   where
     -- The multipart upload is finished every individual part has been
     -- uploaded and the interval covers all of the data.
-    multipartFinished = UT.fullyUploaded m && UT.coveringInterval m == UT.Interval 0 (fromIntegral $ uploadStateSize - 1)
+    requiredCoverage = UT.Interval 0 (fromIntegral $ uploadStateSize - 1)
+    multipartFinished = UT.fullyUploaded m && UT.coveringInterval (trace ("actual measure: " <> show m) m) == trace ("required cov: " <> show requiredCoverage) requiredCoverage
       where
-        m = FT.measure (UT.uploadTree newUploadParts)
+        t = UT.uploadTree newUploadParts
+        m = FT.measure (trace ("tree is: " <> show t) t)
 
     -- The part which we just finished uploading changes from a
     -- `PartUploading` to a `PartUploaded`.
-    --
-    -- XXX Pattern match could fail...
-    newUploadParts :: UT.UploadTree backend S3.UploadPartResponse
-    Just newUploadParts = UT.replace finishedPartNum finishedPart uploadParts
+    targetInterval = UT.partNumberToInterval (UT.computePartSize @backend uploadStateSize) finishedPartNum
 
-    finishedPart = UT.PartUploaded finishedPartNum response
+    newUploadParts :: UT.UploadTree backend S3.UploadPartResponse
+    newUploadParts = case UT.replace targetInterval finishedPart uploadParts of
+        Nothing -> error "could not find part to replace"
+        Just t -> t
+
+    finishedPart = UT.PartUploaded finishedPartNum response uploadStateSize
 
     toCompleted :: UT.Part backend S3.UploadPartResponse -> Maybe S3.CompletedPart
     toCompleted (UT.PartUploaded{getPartNumber = (UT.PartNumber getPartNumber), getPartResponse}) = completed
@@ -424,7 +434,7 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
                 -- wait on the delay and then clean up the resources allocated
                 -- for these uploads
                 void $ forkIO $ cleanupAfterProgressTimeout immutableUploadProgressTimeout delayed (cleanup result)
-
+                print ("Allocating", storageIndex, result)
                 pure result
       where
         cleanupAfterProgressTimeout n delayed cleanup' = do
@@ -487,6 +497,7 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
 
     getImmutableShareNumbers (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = runResourceT $ do
         resp <- AWS.send s3BackendEnv (set S3.listObjects_prefix (Just . storageIndexPrefix s3BackendPrefix $ storageIndex) $ S3.newListObjects s3BackendBucket)
+        liftIO $ print ("minio says", resp)
         case view S3.listObjectsResponse_contents resp of
             Nothing -> pure $ CBORSet mempty
             Just objects -> pure $ CBORSet shareNumbers
@@ -757,16 +768,18 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
     do
         -- call list objects on the backend, if this share already exists, reject the new write with ImmutableShareAlreadyWritten
         CBORSet shareNumbers <- getImmutableShareNumbers s3backend storageIndex
+        print ("checking existing shares", storageIndex, shareNum, shareNumbers, offset, shareData)
         when (shareNum `elem` shareNumbers) $ throwIO ImmutableShareAlreadyWritten
 
         -- If possible, update internal state to reflect this new piece of
         -- share data.  If this new data is large enough on its own, or
         -- combines with some already-written data to exceed the threshold,
         -- being a new part upload and record its details.
-        uploadInfo <- atomically (internalStartUpload secrets storageIndex shareNum (trace ("offset: " <> show offset <> " size: " <> show (B.length shareData)) offset) shareData s3BackendState)
+        uploadInfo <- atomically (internalStartUpload secrets storageIndex shareNum offset shareData s3BackendState)
+        print ("started upload, internally", storageIndex, shareNum, uploadInfo)
 
         case uploadInfo of
-            Nothing -> throwIO ImmutableShareAlreadyWritten
+            Nothing -> throwIO (trace "oook!" ImmutableShareAlreadyWritten)
             Just NotReady -> throwIO ShareAllocationIncomplete
             Just Collision -> throwIO ConflictingWrite
             Just Buffering -> updateTimeout
@@ -778,6 +791,7 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
                 -- XXX This could, of course, fail...  Then we have some state to roll back.
                 response <- runResourceT $ AWS.send s3BackendEnv uploadPart
                 newState <- atomically $ internalFinishUpload partNum' shareData storageIndex shareNum response s3BackendState
+                print ("internalFinishUpload says", newState)
                 case newState of
                     Nothing ->
                         error "It went missing?"
@@ -790,6 +804,7 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
                                     (S3.newCompleteMultipartUpload s3BackendBucket objKey uploadId)
 
                         -- XXX Oops, this could fail too.
+                        print ("COMPLETING MULTIPART UPLOAD", storageIndex, shareNum)
                         void $ runResourceT $ AWS.send s3BackendEnv completeMultipartUpload
                     Just (False, _) -> pure ()
   where
