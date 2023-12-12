@@ -31,6 +31,7 @@ import Data.Bifunctor (Bifunctor (first, second))
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base64 as Base64
 import qualified Data.ByteString.Char8 as C8
+import Data.Data (Proxy (Proxy))
 import Data.Either (rights)
 import qualified Data.FingerTree as FT
 import Data.Foldable (Foldable (toList), fold, foldl', traverse_)
@@ -95,16 +96,31 @@ instance UT.IsBackend Minio where
     minPartSize = UT.PartSize 5_000_000
     computePartSize totalSize = max UT.minPartSize (UT.PartSize $ totalSize `div` 10_000)
 
+useMultipartUpload :: forall backend. UT.IsBackend backend => Proxy backend -> Size -> Bool
+useMultipartUpload _ size = size >= partSize
+  where
+    UT.PartSize partSize = UT.minPartSize @backend
+
 -- | This saves in-progress uploads so we can finish or abort
 data UploadState backend delay where
     UploadState ::
         { -- | The total size of the data for this particular upload (ie, the
           -- share size).
           uploadStateSize :: Integer
-        , uploadParts :: UT.UploadTree backend S3.UploadPartResponse
-        , uploadResponse :: Maybe S3.CreateMultipartUploadResponse
-        , uploadSecret :: UploadSecret
-        , uploadProgressTimeout :: delay
+        , -- | A tree tracking separate pieces of the data for this particular
+          -- upload.  Pieces can be added in any order as long as they are
+          -- eventually all added.
+          uploadParts :: UT.UploadTree backend S3.UploadPartResponse
+        , -- | If the data is large enough to use the multipart upload API and a
+          -- response has been received to the request creating the new
+          -- multipart upload tracking value, it is here.
+          uploadResponse :: Maybe S3.CreateMultipartUploadResponse
+        , -- | The Tahoe client-facing upload secret protecting writes to this
+          -- state.
+          uploadSecret :: UploadSecret
+        , -- | The delay which will eventually timeout this upload and clean up
+          -- this state if progress is not made quickly enough.
+          uploadProgressTimeout :: delay
         } ->
         UploadState backend delay
 
@@ -136,13 +152,46 @@ data S3Backend backend delay where
         } ->
         S3Backend backend delay
 
-internalAllocate :: UT.IsBackend backend => StorageIndex -> UploadSecret -> Integer -> ShareNumber -> delay -> AllocatedShares backend delay -> STM Bool
-internalAllocate storageIndex secret allocatedSize shareNumber timeout curState = do
+data InternalAllocationResult backend delay response
+    = AlreadyAllocated
+    | AllocationComplete
+    | ExternalAllocationWork
+        { externalAllocationWork :: S3Backend backend delay -> ResourceT IO response
+        , externalAllocationUndo :: AllocatedShares backend delay -> STM ()
+        , externalAllocationComplete :: response -> AllocatedShares backend delay -> STM ()
+        }
+
+internalAllocate ::
+    forall backend delay.
+    UT.IsBackend backend =>
+    StorageIndex ->
+    UploadSecret ->
+    Integer ->
+    ShareNumber ->
+    delay ->
+    AllocatedShares backend delay ->
+    STM (InternalAllocationResult backend delay S3.CreateMultipartUploadResponse)
+internalAllocate storageIndex secret allocatedSize shareNumber timeout curState =
     SMap.member (storageIndex, shareNumber) curState >>= \case
-        True -> pure False
-        False -> do
-            SMap.insert (storageIndex, shareNumber) newShareState curState
-            pure True
+        True -> pure AlreadyAllocated
+        False
+            | useMultipartUpload (Proxy @backend) allocatedSize ->
+                do
+                    SMap.insert (storageIndex, shareNumber) newShareState curState
+                    pure $
+                        ExternalAllocationWork
+                            -- Create corresponding state in the S3 server.
+                            (\s3 -> externalAllocate s3 storageIndex shareNumber)
+                            -- If the external request fails, revert internal state changes.
+                            (undoInternalAllocate storageIndex shareNumber)
+                            -- Update the local state with the details of the allocations
+                            -- on the S3 server.  We need the multipart upload identifier
+                            -- to associate future part uploads with the right thing.
+                            (internalAllocateComplete storageIndex shareNumber)
+            | otherwise ->
+                do
+                    SMap.insert (storageIndex, shareNumber) newShareState curState
+                    pure AllocationComplete
   where
     newShareState =
         UploadState
@@ -260,30 +309,38 @@ data PartUpload
  contiguous data, also add another part upload and return the part number
  and upload id to use with it.
 -}
-startPartUpload :: UT.IsBackend backend => Offset -> ShareData -> UploadState backend delay -> (UploadState backend delay, PartUpload)
-startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, uploadResponse} =
-    case view S3.createMultipartUploadResponse_uploadId <$> uploadResponse of
-        -- If we don't have the upload response yet, we don't know the upload id
-        -- so we can't actually handle this work.
-        Nothing -> (u, NotReady)
-        -- If we do, though, we can try to merge the new data into our idea
-        -- about the state for this share.  That will produce a new state to
-        -- return as well as, possibly, an action for the caller to take based
-        -- on that new state.
-        Just uploadId -> (state, action)
-          where
-            state = u{uploadParts = partsActioned}
+startPartUpload ::
+    forall backend delay.
+    UT.IsBackend backend =>
+    Offset ->
+    ShareData ->
+    UploadState backend delay ->
+    (UploadState backend delay, PartUpload)
+startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, uploadResponse}
+    | useMultipartUpload (Proxy @backend) uploadStateSize =
+        case view S3.createMultipartUploadResponse_uploadId <$> uploadResponse of
+            -- If we don't have the upload response yet, we don't know the upload id
+            -- so we can't actually handle this work.
+            Nothing -> (u, NotReady)
+            -- If we do, though, we can try to merge the new data into our idea
+            -- about the state for this share.  That will produce a new state to
+            -- return as well as, possibly, an action for the caller to take based
+            -- on that new state.
+            Just uploadId -> (state, action)
+              where
+                state = u{uploadParts = partsActioned}
 
-            size = fromIntegral $ B.length shareData
-            interval = UT.Interval (fromIntegral offset) (fromIntegral $ offset + size - 1)
-            part = UT.PartData interval shareData uploadStateSize
+                size = fromIntegral $ B.length shareData
+                interval = UT.Interval (fromIntegral offset) (fromIntegral $ offset + size - 1)
+                part = UT.PartData interval shareData uploadStateSize
 
-            partsInserted = UT.insert part uploadParts
-            (uploadable, partsActioned) = UT.findUploadableChunk partsInserted 1
+                partsInserted = UT.insert part uploadParts
+                (uploadable, partsActioned) = UT.findUploadableChunk partsInserted 1
 
-            action = case uploadable of
-                Nothing -> Buffering
-                Just (UT.UploadInfo partNum partData) -> StartUpload partNum uploadId partData
+                action = case uploadable of
+                    Nothing -> Buffering
+                    Just (UT.UploadInfo partNum partData) -> StartUpload partNum uploadId partData
+    | otherwise = error "implement single part upload"
 
 {- | Mark a part upload as finished and compute the new overall state of the
  multipart upload.
@@ -718,22 +775,15 @@ createOneImmutableShare ::
     IO AllocationResult
 createOneImmutableShare s3@S3Backend{..} storageIndex allocatedSize uploadSecret delay shareNum = do
     -- Initialize local tracking state
-    allocated <- atomically $ internalAllocate storageIndex uploadSecret allocatedSize shareNum delay s3BackendState
+    externalAllocation <- atomically $ internalAllocate storageIndex uploadSecret allocatedSize shareNum delay s3BackendState
 
-    if allocated
-        then do
-            -- Create corresponding state in the S3 server.
-            response <-
-                runResourceT (externalAllocate s3 storageIndex shareNum) `onException` do
-                    atomically (undoInternalAllocate storageIndex shareNum s3BackendState)
-
-            -- Update the local state with the details of the allocations
-            -- on the S3 server.  We need the multipart upload identifier
-            -- to associate future part uploads with the right thing.
-            atomically $ internalAllocateComplete storageIndex shareNum response s3BackendState
-
+    case externalAllocation of
+        AlreadyAllocated -> pure mempty{alreadyHave = [shareNum]}
+        AllocationComplete -> pure mempty{allocated = [shareNum]}
+        ExternalAllocationWork action undo complete -> do
+            response <- runResourceT (action s3) `onException` atomically (undo s3BackendState)
+            atomically (complete response s3BackendState)
             pure mempty{allocated = [shareNum]}
-        else pure mempty{alreadyHave = [shareNum]}
 
 data CleanupError = InternalImmutableStateMissing deriving (Eq, Show)
 
