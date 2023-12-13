@@ -7,9 +7,10 @@ module Tahoe.Storage.Testing.Spec (
     genStorageIndex,
 ) where
 
-import Control.Exception (Exception, throwIO, try)
+import Control.Exception (Exception, finally, throwIO, try)
 import Control.Monad (void, when)
 import qualified Data.Base32String as Base32
+import Data.Bifunctor (Bifunctor (second))
 import Data.Bits (Bits (xor))
 import qualified Data.ByteString as B
 import Data.Composition ((.:))
@@ -72,6 +73,7 @@ import Test.QuickCheck (
     counterexample,
     forAll,
     ioProperty,
+    label,
     listOf1,
     oneof,
     shuffle,
@@ -385,24 +387,30 @@ immutableWriteAndEnumerateShares ::
     NonEmptyList SomeShareData ->
     Property
 immutableWriteAndEnumerateShares runBackend storageIndex (ShareNumbers shareNumbers) (NonEmpty shareSeed) = do
-    let permutedShares = outerProduct permuteShare shareNumbers (getShareData <$> shareSeed)
+    let permutedShares = outerProduct permuteShare shareNumbers shareSeed
         size = sum (fromIntegral . B.length . getShareData <$> shareSeed)
         allocate = AllocateBuckets shareNumbers size
     forAll (traverse jumbleForUpload permutedShares) $ \shareChunks -> monadicIO $ do
         run $
             runBackend $ \backend -> do
                 void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
-                writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) (zip shareNumbers shareChunks)
+                let writes = zip shareNumbers (map (second getShareData) <$> shareChunks)
+                writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) writes
                 readShareNumbers <- getImmutableShareNumbers backend storageIndex
                 when (readShareNumbers /= (CBORSet . Set.fromList $ shareNumbers)) $
                     fail (show readShareNumbers ++ " /= " ++ show shareNumbers)
   where
     uploadSecret = Just [anUploadSecret]
 
-jumbleForUpload :: [B.ByteString] -> Gen [(Maybe ByteRanges, B.ByteString)]
-jumbleForUpload = shuffle . snd . foldr step (0, [])
+jumbleForUpload :: [SomeShareData] -> Gen [(Maybe ByteRanges, SomeShareData)]
+jumbleForUpload =
+    fmap (map (second SomeShareData))
+        . shuffle
+        . snd
+        . foldl' step (0, [])
+        . map getShareData
   where
-    step bs (size, accum) = (size + B.length bs, (Just [ByteRangeFromTo (fromIntegral size) (fromIntegral $ size + B.length bs - 1)], bs) : accum)
+    step (size, accum) bs = (size + B.length bs, (Just [ByteRangeFromTo (fromIntegral size) (fromIntegral $ size + B.length bs - 1)], bs) : accum)
 
 -- Immutable share data written to the shares of a given storage index can be
 -- retrieved verbatim and associated with the same share numbers as were
@@ -415,17 +423,21 @@ immutableWriteAndReadShare ::
     NonEmptyList SomeShareData ->
     Property
 immutableWriteAndReadShare runBackend storageIndex (ShareNumbers shareNumbers) (NonEmpty shareSeed) = do
-    let permutedShares = outerProduct permuteShare shareNumbers (getShareData <$> shareSeed)
+    let permutedShares = outerProduct permuteShare shareNumbers shareSeed
         size = sum (fromIntegral . B.length . getShareData <$> shareSeed)
         allocate = AllocateBuckets shareNumbers size
-    forAll (traverse jumbleForUpload permutedShares) $ \shareChunks -> monadicIO $ do
-        run $
-            runBackend $ \backend -> do
-                void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
-                writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) (zip shareNumbers shareChunks)
-                readShares' <- mapM (\sn -> readImmutableShare backend storageIndex sn Nothing) shareNumbers
-                when (fmap B.concat permutedShares /= readShares') $
-                    fail (show permutedShares ++ " /= " ++ show readShares')
+    label ("Share size: <" <> show (size `div` 1024 + 1) <> " KiB") $
+        forAll (traverse jumbleForUpload permutedShares) $ \shareChunks -> monadicIO $ do
+            run $
+                runBackend $ \backend -> do
+                    createImmutableStorageIndex backend storageIndex uploadSecret allocate
+                        `shouldReturn` AllocationResult{alreadyHave = [], allocated = shareNumbers}
+                    let writes = zip shareNumbers (map (second getShareData) <$> shareChunks)
+                    writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) writes
+                    print $ "Finish share writes (" <> show size <> ") bytes"
+                    readShares' <- mapM (\sn -> readImmutableShare backend storageIndex sn Nothing) shareNumbers
+                    when (fmap B.concat (fmap getShareData <$> permutedShares) /= readShares') $
+                        fail (show permutedShares ++ " /= " ++ show readShares')
   where
     uploadSecret = Just [anUploadSecret]
 
@@ -438,15 +450,15 @@ immutableWriteAndRewriteShare ::
     ShareNumbers ->
     SomeShareData ->
     Property
-immutableWriteAndRewriteShare runBackend storageIndex (ShareNumbers shareNumbers) (SomeShareData shareSeed) = monadicIO $ do
-    let size = fromIntegral (B.length shareSeed)
+immutableWriteAndRewriteShare runBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
+    let size = fromIntegral (B.length (getShareData shareSeed))
         allocate = AllocateBuckets shareNumbers size
         aShareNumber = head shareNumbers
         aShare = permuteShare aShareNumber shareSeed
     run $
         runBackend $ \backend -> do
             void $ createImmutableStorageIndex backend storageIndex uploadSecret allocate
-            let write = writeImmutableShare backend storageIndex aShareNumber uploadSecret aShare Nothing
+            let write = writeImmutableShare backend storageIndex aShareNumber uploadSecret (getShareData aShare) Nothing
             write
             write `shouldThrow` (== ImmutableShareAlreadyWritten)
   where
@@ -461,12 +473,12 @@ mutableWriteAndEnumerateShares ::
     ShareNumbers ->
     SomeShareData ->
     Property
-mutableWriteAndEnumerateShares runBackend storageIndex (ShareNumbers shareNumbers) (SomeShareData shareSeed) = monadicIO $ do
+mutableWriteAndEnumerateShares runBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
     let permutedShares = flip permuteShare shareSeed <$> shareNumbers
     let nullSecret = WriteEnablerSecret ""
     run $
         runBackend $ \backend -> do
-            readvAndTestvAndWritev backend storageIndex nullSecret (mconcat $ zipWith3 writev shareNumbers [0 ..] permutedShares)
+            readvAndTestvAndWritev backend storageIndex nullSecret (mconcat $ zipWith3 writev shareNumbers [0 ..] (getShareData <$> permutedShares))
                 `shouldReturn` ReadTestWriteResult{success = True, readData = mempty}
             (CBORSet readShareNumbers) <- getMutableShareNumbers backend storageIndex
             when (readShareNumbers /= Set.fromList shareNumbers) $
@@ -505,8 +517,8 @@ withBackend b cleanup action = do
 anUploadSecret :: LeaseSecret
 anUploadSecret = Upload $ UploadSecret "anuploadsecret"
 
-permuteShare :: ShareNumber -> ShareData -> ShareData
-permuteShare (ShareNumber number) = B.map xor'
+permuteShare :: ShareNumber -> SomeShareData -> SomeShareData
+permuteShare (ShareNumber number) (SomeShareData xs) = SomeShareData (B.map xor' xs)
   where
     xor' :: Word8 -> Word8
     xor' = xor $ fromInteger number
