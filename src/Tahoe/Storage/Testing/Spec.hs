@@ -458,8 +458,7 @@ mutableWriteAndReadShare runBackend storageIndex secret MutableWriteExample{..} 
 withBackend :: Backend b => IO b -> (b -> IO ()) -> (b -> IO ()) -> IO ()
 withBackend b cleanup action = do
     backend <- b
-    action backend
-    cleanup backend
+    action backend `finally` cleanup backend
 
 anUploadSecret :: LeaseSecret
 anUploadSecret = Upload $ UploadSecret "anuploadsecret"
