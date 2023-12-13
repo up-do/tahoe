@@ -59,7 +59,7 @@ import Tahoe.Storage.Backend (
  )
 import Test.Hspec (Expectation, HasCallStack, Selector, Spec, context, describe, it, shouldBe, shouldReturn, shouldThrow)
 import Test.QuickCheck (
-    Arbitrary (arbitrary),
+    Arbitrary (arbitrary, shrink),
     Gen,
     NonEmptyList (NonEmpty, getNonEmpty),
     NonNegative (NonNegative, getNonNegative),
@@ -99,8 +99,15 @@ instance Arbitrary ShareNumbers where
                 >>= (shuffle . enumFromTo 0) . getNonNegative
                 >>= \(num : rest) -> (num :) <$> sublistOf rest
 
+    shrink (ShareNumbers []) = error "Empty ShareNumbers is not meaningful"
+    shrink (ShareNumbers [_]) = []
+    shrink (ShareNumbers (_ : xs)) = [ShareNumbers xs]
+
 instance Arbitrary ShareNumber where
     arbitrary = ShareNumber <$> arbNonNeg
+
+    shrink (ShareNumber 0) = []
+    shrink (ShareNumber n) = [ShareNumber (n - 1)]
 
 instance Arbitrary ReadTestWriteVectors where
     arbitrary = ReadTestWriteVectors <$> arbitrary <*> arbitrary
