@@ -131,7 +131,10 @@ newtype ArbStorageIndex = ArbStorageIndex StorageIndex deriving newtype (Show)
 instance Arbitrary ArbStorageIndex where
     arbitrary = ArbStorageIndex <$> genStorageIndex
 
-newtype SomeShareData = SomeShareData {getShareData :: B.ByteString} deriving (Show)
+newtype SomeShareData = SomeShareData {getShareData :: B.ByteString}
+
+instance Show SomeShareData where
+    show (SomeShareData bs) = "(SomeShareData length=" <> show (B.length bs) <> ")"
 
 -- | Generate some fairly short and some fairly long byte strings.
 instance Arbitrary SomeShareData where
