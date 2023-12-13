@@ -359,10 +359,13 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
     (newParts, action)
         -- All of the data has been received, we can convert the whole tree
         -- state and instruct the caller to do an upload.
-        | allDataReceived partsInserted = (UT.UploadTree (FT.singleton (UT.PartUploading (UT.PartNumber 1) fullInterval)), StartSingleUpload "")
+        | allDataReceived partsInserted = (newTree, StartSingleUpload wholeShare)
         -- Or if not, just take the new data and let the caller know we're
         -- still buffering it.
         | otherwise = (partsInserted, Buffering)
+      where
+        newTree = UT.UploadTree (FT.singleton (UT.PartUploading (UT.PartNumber 1) fullInterval))
+        wholeShare = B.concat . fmap UT.getShareData . toList . UT.uploadTree $ partsInserted
 
     -- Have we now received all of the data for the share in question?  This
     -- is the case if the contiguous bytes measure at the top of the tree
