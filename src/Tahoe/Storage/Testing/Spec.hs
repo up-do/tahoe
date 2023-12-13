@@ -22,6 +22,7 @@ import Data.Interval (
     upperBound,
  )
 import qualified Data.IntervalSet as IS
+import Data.List (foldl', nubBy)
 import Data.List.HT (outerProduct)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -66,6 +67,7 @@ import Test.QuickCheck (
     Positive (Positive, getPositive),
     Property,
     Testable (property),
+    chooseInt,
     chooseInteger,
     counterexample,
     forAll,
@@ -131,8 +133,38 @@ instance Arbitrary ArbStorageIndex where
 
 newtype SomeShareData = SomeShareData {getShareData :: B.ByteString} deriving (Show)
 
+-- | Generate some fairly short and some fairly long byte strings.
 instance Arbitrary SomeShareData where
-    arbitrary = SomeShareData . B.pack <$> listOf1 (arbitrary :: Gen Word8)
+    arbitrary =
+        SomeShareData . B.pack
+            <$> oneof
+                [ listOf1 arbitrary
+                , exponentialPositiveInt >>= flip vectorOf arbitrary
+                ]
+
+    -- Shrink to shorter non-empty bytestrings with distinct lengths.
+    -- Requiring distinct lengths is an optimization.  I don't think there's
+    -- any reason two random ByteStrings of the same length would behave
+    -- differently.  If I'm wrong, at least this is only the shrinking logic
+    -- so at worst we miss out on a shorter counterexample sometimes.
+    shrink (SomeShareData bs) =
+        fmap SomeShareData . nubBy (\a b -> B.length a == B.length b) . filter (not . B.null) . shrinkBytes $ bs
+
+{- | Shrink B.ByteString more efficiently than QuickCheck-instances can.  This
+ implementation should be O(n) in the number of shrinks generated (not the
+ size of the bytestring being shrunk).
+-}
+shrinkBytes :: B.ByteString -> [B.ByteString]
+shrinkBytes bs = [B.take n bs, B.drop n bs]
+  where
+    n = B.length bs `div` 2
+
+exponentialPositiveInt :: Gen Int
+exponentialPositiveInt = do
+    -- Limit the results to 2 ^ 22 so that allocating a ByteString of this
+    -- length doesn't necessarily consume all available memory...
+    e <- chooseInt (1, 22)
+    chooseInt (2 ^ (e - 1 :: Int), 2 ^ e)
 
 b32table :: B.ByteString
 b32table = "abcdefghijklmnopqrstuvwxyz234567"
