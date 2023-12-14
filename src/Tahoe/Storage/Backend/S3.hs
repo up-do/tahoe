@@ -620,7 +620,11 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
                     parsed = T.split (== '/') (view (S3.object_key . S3._ObjectKey) obj)
 
     readImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
-    readImmutableShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum qrange =
+    readImmutableShare (S3Backend{..}) storageIndex shareNum qrange = do
+        SMap.unsafeToList s3BackendState >>= \case
+            [] -> pure ()
+            [(_, st)] -> print $ uploadParts st
+            _ -> pure ()
         runResourceT $ do
             huh <- readEach qrange
             pure $ B.concat huh

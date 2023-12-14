@@ -99,6 +99,21 @@ spec = do
             it "accepts partial overlaps" $
                 applyWriteVectors "abc" [WriteVector 0 "xy", WriteVector 1 "zw"] `shouldBe` "xzw"
 
+        describe "finalInterval" $ do
+            it "computes full final parts" $ do
+                UT.finalInterval 10 (UT.PartSize 1) `shouldBe` UT.Interval 9 9
+                UT.finalInterval 10 (UT.PartSize 2) `shouldBe` UT.Interval 8 9
+                UT.finalInterval 10 (UT.PartSize 5) `shouldBe` UT.Interval 5 9
+                UT.finalInterval 10 (UT.PartSize 10) `shouldBe` UT.Interval 0 9
+                UT.finalInterval 20 (UT.PartSize 5) `shouldBe` UT.Interval 15 19
+
+            it "computes short final parts" $ do
+                UT.finalInterval 10 (UT.PartSize 3) `shouldBe` UT.Interval 9 9
+                UT.finalInterval 10 (UT.PartSize 4) `shouldBe` UT.Interval 8 9
+                UT.finalInterval 10 (UT.PartSize 6) `shouldBe` UT.Interval 6 9
+                UT.finalInterval 10 (UT.PartSize 9) `shouldBe` UT.Interval 9 9
+                UT.finalInterval 20 (UT.PartSize 9) `shouldBe` UT.Interval 18 19
+
         describe "UploadTree" $ do
             it "allows inserts in any order" $
                 forAll arbitrary $ \(NonEmpty shares) -> do
@@ -260,6 +275,16 @@ spec = do
                         [ UT.PartData (UT.Interval 0 1) "01" 22
                         , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 21)
                         ]
+
+            it "the last uploadable part can be short" $ do
+                let part = UT.PartData (UT.Interval 11 15) "BCDEF" 16
+                    tree = UT.insert part emptyTree
+                    (uploadable, tree') = UT.findUploadableChunk tree 1
+
+                uploadable
+                    === Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
+                    .&&. UT.uploadTree tree'
+                    === FT.fromList [UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 15)]
 
             it "insert finds uploadable data regardless of gaps and insertion order" $
                 forAll arbitrary $ \sizeIncrements -> do

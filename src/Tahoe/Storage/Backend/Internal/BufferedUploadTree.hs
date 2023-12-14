@@ -1,21 +1,6 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module Tahoe.Storage.Backend.Internal.BufferedUploadTree (
-    IsBackend (..),
-    Interval (..),
-    splitInterval,
-    intervalSize,
-    replace,
-    Part (..),
-    PartSize (..),
-    PartNumber (..),
-    UploadInfo (..),
-    UploadTreeMeasure (..),
-    UploadTree (..),
-    partNumberToInterval,
-    findUploadableChunk,
-    insert,
-) where
+module Tahoe.Storage.Backend.Internal.BufferedUploadTree where
 
 import qualified Data.ByteString as B
 import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (<|), (><), (|>))
@@ -42,6 +27,17 @@ low, high :: Interval -> Size
 
 intervalSize :: Interval -> Size
 intervalSize (Interval l h) = h - l + 1
+
+splitInterval' :: Integer -> Interval -> (Interval, Interval)
+splitInterval' at (Interval intervalLow intervalHigh) =
+    ( Interval intervalLow (intervalLow + at)
+    , Interval (intervalLow + at + 1) intervalHigh
+    )
+
+-- | Does the second interval contain the entire first interval?
+containsInterval :: Interval -> Interval -> Bool
+containsInterval a b =
+    intervalLow b >= intervalLow a && intervalHigh b <= intervalHigh a
 
 data Part backend uploadResponse
     = PartData
@@ -129,6 +125,22 @@ newtype UploadTree backend a = UploadTree
     deriving newtype (Semigroup, Monoid)
     deriving (Eq, Show)
 
+{- | Compute the interval covering the last part of a share with the given
+ size and part size.
+-}
+finalInterval :: Size -> PartSize backend -> Interval
+finalInterval totalSize (PartSize partSize) = Interval start (end - 1)
+  where
+    end = totalSize
+
+    start =
+        end - case totalSize `mod` partSize of
+            -- The total size is an exact multiple of part size.  The final interval
+            -- covers a "full" part (not a "short" part).
+            0 -> partSize
+            -- It is not an exact multiple so the final interval is a "short" part.
+            n -> n
+
 findUploadableChunk :: forall backend a. (IsBackend backend, Show a) => UploadTree backend a -> Integer -> (Maybe UploadInfo, UploadTree backend a)
 findUploadableChunk t@UploadTree{uploadTree} minParts =
     (upload, t{uploadTree = tree'})
@@ -142,7 +154,43 @@ findUploadableChunk t@UploadTree{uploadTree} minParts =
         --
         -- If we traverse the whole tree (even if only because the tree was
         -- empty) without the predicate flipping, nothing is uploadable
-        FT.EmptyL -> (Nothing, uploadTree)
+        FT.EmptyL ->
+            case FT.viewr left of
+                -- There is no rightmost element so there can't be anything to
+                -- upload.
+                FT.EmptyR -> (Nothing, uploadTree)
+                -- The rightmost element is PartData which might represent a
+                -- short final part.  If it crosses the last part boundary
+                -- /and/ extends to the end of the share, it does.
+                lefties :> PartData{getInterval, getShareData, totalShareSize} ->
+                    if shortFinalPart && finalPartInterval `containsInterval` getInterval
+                        then (Just uploadInfo, lefties >< newTree)
+                        else (Nothing, uploadTree)
+                  where
+                    shortFinalPart = finalPartSize /= partSize
+                    finalPartSize = PartSize $ intervalSize finalPartInterval
+                    finalPartInterval = finalInterval totalShareSize partSize
+
+                    (uploadInfo, newTree) = splitPart getInterval getShareData finalPartSize
+
+                    splitPart interval bytes (PartSize size) = (ui, tree)
+                      where
+                        partNum = assignPartNumber @backend ri partSize
+                        ui = UploadInfo partNum rb
+                        up = PartUploading partNum ri
+
+                        tree = FT.fromList $
+                            case leftSize of
+                                0 -> [up]
+                                _ -> [PartData li lb totalShareSize, up]
+
+                        leftSize = intervalSize interval - size
+                        (lb, rb) = B.splitAt (fromIntegral leftSize - 1) bytes
+                        (li, ri) = splitInterval' (leftSize - 1) interval
+
+                    partSize = computePartSize @backend totalShareSize
+                -- The rightmost element might already have been uploaded.
+                _ :> _ -> (Nothing, uploadTree)
         --
         -- Predicate flipped: the matching element is uploadable.  Extract it.
         p@PartData{getInterval, getShareData, totalShareSize} :< righties ->
@@ -155,8 +203,8 @@ findUploadableChunk t@UploadTree{uploadTree} minParts =
         otherPart :< _ ->
             error $ "EmptyR case of findUploadableChunk expected PartData, got: " <> show otherPart
 
-assignPartNumber :: Interval -> Size -> PartNumber
-assignPartNumber Interval{intervalLow} partSize = PartNumber $ 1 + intervalLow `div` partSize
+assignPartNumber :: Interval -> PartSize backend -> PartNumber
+assignPartNumber Interval{intervalLow} (PartSize partSize) = PartNumber $ 1 + intervalLow `div` partSize
 
 computeNewTree ::
     forall backend response.
@@ -178,7 +226,7 @@ computeNewTree getInterval getShareData totalShareSize = (uploadInfo, newTree)
 
     -- The part number assigned to the part the uploadable chunk will be used
     -- to create.
-    partNum = assignPartNumber uploadableInterval partSize
+    partNum = assignPartNumber uploadableInterval (PartSize partSize)
 
     -- The prefix of the tree formed after the removal of the uploadable chunk.
     pr
