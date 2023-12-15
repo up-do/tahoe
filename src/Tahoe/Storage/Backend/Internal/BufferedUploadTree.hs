@@ -20,6 +20,7 @@ instance Show Interval where
 instance Semigroup Interval where
     Interval lowA highA <> Interval lowB highB = Interval (min lowA lowB) (max highA highB)
 
+-- XXX Not a very good Monoid instance.
 instance Monoid Interval where
     mempty = Interval 0 0
 
