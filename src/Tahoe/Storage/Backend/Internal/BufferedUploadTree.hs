@@ -81,14 +81,6 @@ instance Semigroup (UploadTreeMeasure backend) where
     (UploadTreeMeasure aInt aContig aParts aUp) <> (UploadTreeMeasure bInt bContig bParts bUp) =
         UploadTreeMeasure (aInt <> bInt) (max aContig bContig) (max aParts bParts) (aUp && bUp)
 
--- measure "abc" == 3
--- measure "wxyz" == 4
--- measure ("abc" <> "wxyz") == 7
--- measure "abc" <> measure "wxyz" == 7
-
--- measure (x <> y) == (measure x) <> (measure y)
---
-
 instance Monoid (UploadTreeMeasure backend) where
     mempty = UploadTreeMeasure mempty 0 0 True
 
@@ -344,9 +336,3 @@ merge2 _ _ = Nothing
 
 merge2' :: Part backend a -> Part backend a -> [Part backend a]
 merge2' a b = maybe [a, b] (: []) $ merge2 a b
-
--- -- What Monoid / Measured works for our use-case?
--- --
--- --  Find contiguous intervals greater than some minimum size
--- --  Look up data associated with an interval
--- --  Maybe merge contiguous intervals
