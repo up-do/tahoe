@@ -34,7 +34,7 @@ import qualified Data.ByteString.Char8 as C8
 import Data.Data (Proxy (Proxy))
 import Data.Either (rights)
 import qualified Data.FingerTree as FT
-import Data.Foldable (Foldable (toList), fold, foldl', sequenceA_, traverse_)
+import Data.Foldable (Foldable (toList), fold, foldl', traverse_)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
 import Data.List (intercalate)
