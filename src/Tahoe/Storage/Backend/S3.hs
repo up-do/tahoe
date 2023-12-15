@@ -316,12 +316,15 @@ data PartUpload
       StartSingleUpload ShareData
     deriving (Show)
 
+niceShowPartUpload (StartUpload uploadId xs) = "<StartUpload " <> intercalate "," (show . UT.uploadInfoPartNumber <$> xs) <> ">"
+niceShowPartUpload s = show s
+
 niceShow :: UT.UploadTree backend delay -> String
 niceShow UT.UploadTree{..} = intercalate "," $ s <$> toList uploadTree
   where
     s UT.PartData{..} = "<PartData length=" <> show (UT.intervalSize getInterval) <> ">"
-    s UT.PartUploading{..} = "<PartUploading #" <> show getPartNumber <> ">"
-    s UT.PartUploaded{..} = "<PartUploaded #" <> show getPartNumber <> ">"
+    s UT.PartUploading{..} = "<PartUploading " <> show getPartNumber <> ">"
+    s UT.PartUploaded{..} = "<PartUploaded " <> show getPartNumber <> ">"
 
 {- | Add some more share data to the given state.  If there is enough
  contiguous data, also add another part upload and return the part number
