@@ -5,6 +5,7 @@ module Tahoe.Storage.Backend.Internal.BufferedUploadTree where
 import qualified Data.ByteString as B
 import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (<|), (><), (|>))
 import qualified Data.FingerTree as FT
+import Data.List (unfoldr)
 import Tahoe.Storage.Backend (Size)
 
 data Interval = Interval
@@ -136,6 +137,40 @@ finalInterval totalSize (PartSize partSize) = Interval start (end - 1)
             -- It is not an exact multiple so the final interval is a "short" part.
             n -> n
 
+{- | Find all chunks of uploadable data and return them, along with a tree
+ updated with respect to each found chunk, in the manner that
+ findUploadableChunk would update it.
+-}
+findUploadableChunks :: forall backend a. (IsBackend backend, Show a) => UploadTree backend a -> ([UploadInfo], UploadTree backend a)
+findUploadableChunks t = if null allTrees then ([], t) else (infos, last allTrees)
+  where
+    (infos, allTrees) = unzip $ unfoldr f t
+    f tree = case findUploadableChunk tree 1 of
+        (Nothing, _) -> Nothing
+        (Just info, updatedTree) -> Just ((info, updatedTree), updatedTree)
+
+--       1     2     3     4     5
+-- 1  |.....|.....|....X|XXXX.|.....|
+-- 2  |.....|YY...|....X|XXXX.|.....|
+-- 2.5|.....|YYYYY|....X|XXXX.|.....|
+-- 3  |.....|yyyyy|....X|XXXX.|ZZZZZ|
+-- 4  |WWWWW|yyyyy|....X|XXXX.|zzzzz|
+-- 5  |wwwww|yyyyy|AAAAX|XXXX.|zzzzz|
+-- 6  |wwwww|yyyyy|aaaax|XXXXB|zzzzz|
+-- 7  |wwwww|yyyyy|aaaax|xxxxb|zzzzz|
+
+--       1     2     3     4     5
+-- 1  |.....|.....|....A|XXXX.|.....|
+-- 2  |.....|.....|....A|XXXX.|.....|
+-- 3  |Y....|.....|....A|XXXX.|.....|
+-- 3  |Y....|Z....|....A|XXXX.|.....|
+-- 3  |Y....|Z....|....A|XXXX.|.....|
+-- 3  |YYYYY|Z....|....A|XXXX.|W....|
+-- 3  |yyyyy|ZZZZZ|AAAAA|XXXX.|W....|
+
+{- | Find one chunk of uploadable data and return it, along with an updated
+ tree which has marked that chunk as being uploaded.
+-}
 findUploadableChunk :: forall backend a. (IsBackend backend, Show a) => UploadTree backend a -> Integer -> (Maybe UploadInfo, UploadTree backend a)
 findUploadableChunk t@UploadTree{uploadTree} minParts =
     (upload, t{uploadTree = tree'})

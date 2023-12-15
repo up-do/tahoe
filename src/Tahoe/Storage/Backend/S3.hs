@@ -18,7 +18,7 @@ import Amazonka (runResourceT)
 import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
-import Conduit (MonadIO (liftIO), ResourceT, sinkList)
+import Conduit (ResourceT, sinkList)
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Async (concurrently, mapConcurrently, mapConcurrently_, race)
 import Control.Concurrent.STM.Lifted (STM, atomically)
@@ -34,7 +34,7 @@ import qualified Data.ByteString.Char8 as C8
 import Data.Data (Proxy (Proxy))
 import Data.Either (rights)
 import qualified Data.FingerTree as FT
-import Data.Foldable (Foldable (toList), fold, foldl', traverse_)
+import Data.Foldable (Foldable (toList), fold, foldl', sequenceA_, traverse_)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
 import Data.List (intercalate)
@@ -47,7 +47,7 @@ import qualified Data.Text.Encoding as T
 import Debug.Trace (trace)
 import GHC.Conc (throwSTM)
 import GHC.Stack (HasCallStack)
-import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo), Status (Status, statusCode))
+import Network.HTTP.Types (ByteRange (ByteRangeFromTo), Status (Status, statusCode))
 import Network.HTTP.Types.Header (renderByteRange)
 import Tahoe.Storage.Backend (
     AllocateBuckets (AllocateBuckets, allocatedSize, shareNumbers),
@@ -309,8 +309,8 @@ data PartUpload
       -- beginning a PartUpload.  We will hang on to it until more data is
       -- contributed.
       Buffering
-    | -- | Some data should get uploaded now as a single part.
-      StartUpload UT.PartNumber T.Text ShareData
+    | -- | Some number of parts should get uploaded now.
+      StartUpload [(UT.PartNumber, ShareData)] T.Text
     | -- | The whole object can now be uploaded with a single request to the
       -- backend.
       StartSingleUpload ShareData
@@ -347,11 +347,11 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
             Just uploadId -> (u{uploadParts = partsActioned}, action')
               where
                 -- XXX Need to call findUploadableChunk until it returns Nothing so we don't leave data behind
-                (uploadable, partsActioned) = UT.findUploadableChunk partsInserted 1
+                (uploadable, partsActioned) = UT.findUploadableChunks partsInserted
 
                 action' = case uploadable of
-                    Nothing -> (trace ("Buffering: " <> niceShow partsInserted) Buffering)
-                    Just (UT.UploadInfo partNum partData) -> trace ("Go: " <> show partNum <> niceShow partsActioned) StartUpload partNum uploadId partData
+                    [] -> (trace ("Buffering: " <> niceShow partsInserted) Buffering)
+                    infos -> StartUpload ((\(UT.UploadInfo partNum shareData) -> (partNum, shareData)) <$> infos) uploadId
     | otherwise = (u{uploadParts = newParts}, action)
   where
     size = fromIntegral $ B.length shareData
@@ -893,28 +893,7 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
             Just NotReady -> throwIO ShareAllocationIncomplete
             Just Collision -> throwIO ConflictingWrite
             Just Buffering -> updateTimeout
-            Just (StartUpload (UT.PartNumber partNum') uploadId dataToUpload) -> do
-                updateTimeout
-
-                let uploadPart = S3.newUploadPart s3BackendBucket objKey (fromIntegral partNum') uploadId (AWS.toBody dataToUpload)
-
-                -- XXX This could, of course, fail...  Then we have some state to roll back.
-                response <- runResourceT $ AWS.send s3BackendEnv uploadPart
-                newState <- atomically $ internalFinishUpload partNum' shareData storageIndex shareNum response s3BackendState
-                case newState of
-                    Nothing ->
-                        error "It went missing?"
-                    Just (True, []) ->
-                        error "No parts upload but we're done, huh?"
-                    Just (True, p : parts) -> do
-                        let completedMultipartUpload = (S3.completedMultipartUpload_parts ?~ (p :| parts)) S3.newCompletedMultipartUpload
-                            completeMultipartUpload =
-                                (S3.completeMultipartUpload_multipartUpload ?~ completedMultipartUpload)
-                                    (S3.newCompleteMultipartUpload s3BackendBucket objKey uploadId)
-
-                        -- XXX Oops, this could fail too.
-                        void $ runResourceT $ AWS.send s3BackendEnv completeMultipartUpload
-                    Just (False, _) -> pure ()
+            Just (StartUpload xs uploadId) -> traverse_ (uploadOnePart uploadId) xs
             Just (StartSingleUpload dataToUpload) -> do
                 updateTimeout
                 -- XXX check response
@@ -928,6 +907,30 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
         case s of
             Nothing -> pure ()
             Just UploadState{..} -> update uploadProgressTimeout immutableUploadProgressTimeout
+
+    uploadOnePart :: T.Text -> (UT.PartNumber, ShareData) -> IO ()
+    uploadOnePart uploadId (UT.PartNumber partNum', dataToUpload) = do
+        updateTimeout
+
+        let uploadPart = S3.newUploadPart s3BackendBucket objKey (fromIntegral partNum') uploadId (AWS.toBody dataToUpload)
+
+        -- XXX This could, of course, fail...  Then we have some state to roll back.
+        response <- runResourceT $ AWS.send s3BackendEnv uploadPart
+        newState <- atomically $ internalFinishUpload partNum' shareData storageIndex shareNum response s3BackendState
+        case newState of
+            Nothing ->
+                error "It went missing?"
+            Just (True, []) ->
+                error "No parts upload but we're done, huh?"
+            Just (True, p : parts) -> do
+                let completedMultipartUpload = (S3.completedMultipartUpload_parts ?~ (p :| parts)) S3.newCompletedMultipartUpload
+                    completeMultipartUpload =
+                        (S3.completeMultipartUpload_multipartUpload ?~ completedMultipartUpload)
+                            (S3.newCompleteMultipartUpload s3BackendBucket objKey uploadId)
+
+                -- XXX Oops, this could fail too.
+                void $ runResourceT $ AWS.send s3BackendEnv completeMultipartUpload
+            Just (False, _) -> pure ()
 
 {- | Divide a single ByteString of data into pieces based on a list of ranges,
  keeping track of the offset of the start of each resulting piece relative
