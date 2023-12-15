@@ -44,7 +44,6 @@ import Data.Maybe (isJust, mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Debug.Trace (trace)
 import GHC.Conc (throwSTM)
 import GHC.Stack (HasCallStack)
 import Network.HTTP.Types (ByteRange (ByteRangeFromTo), Status (Status, statusCode))
@@ -75,7 +74,6 @@ import Tahoe.Storage.Backend (
     WriteMutableError (..),
     WriteVector (..),
  )
-import Tahoe.Storage.Backend.Internal.BufferedUploadTree (UploadTree)
 import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.Internal.Delay (HasDelay (..), TimeoutOperation (Cancelled, Delayed))
 import TahoeLAFS.Storage.Backend (
@@ -254,19 +252,19 @@ internalStartUpload secrets storageIndex shareNum offset shareData curState = do
 internalFinishSingleUpload :: StorageIndex -> ShareNumber -> AllocatedShares backend delay -> STM ()
 internalFinishSingleUpload = SMap.delete .: (,)
 
+(.:) :: (c -> d) -> (a -> b -> c) -> (a -> b -> d)
 (f .: g) x = f . g x
 
 internalFinishUpload ::
     UT.IsBackend backend =>
-    Integer ->
-    C8.ByteString ->
+    UT.PartNumber ->
     StorageIndex ->
     ShareNumber ->
     S3.UploadPartResponse ->
     AllocatedShares backend delay ->
     STM (Maybe (Bool, [S3.CompletedPart]))
-internalFinishUpload partNum' shareData storageIndex shareNum response =
-    adjust' (finishPartUpload (UT.PartNumber partNum') (fromIntegral $ B.length shareData) response) stateKey
+internalFinishUpload partNum' storageIndex shareNum response =
+    adjust' (finishPartUpload partNum' response) stateKey
   where
     stateKey = (storageIndex, shareNum)
 
@@ -316,7 +314,10 @@ data PartUpload
       StartSingleUpload ShareData
     deriving (Show)
 
-niceShowPartUpload (StartUpload uploadId xs) = "<StartUpload " <> intercalate "," (show . UT.uploadInfoPartNumber <$> xs) <> ">"
+-- | Show a PartUpload but, if it is a StartUpload, not the actual share bytes.
+niceShowPartUpload :: PartUpload -> [Char]
+niceShowPartUpload (StartUpload uploadId xs) =
+    "<StartUpload " <> T.unpack uploadId <> " " <> intercalate "," (show . UT.uploadInfoPartNumber <$> xs) <> ">"
 niceShowPartUpload s = show s
 
 niceShow :: UT.UploadTree backend delay -> String
@@ -385,8 +386,8 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
 {- | Mark a part upload as finished and compute the new overall state of the
  multipart upload.
 -}
-finishPartUpload :: forall backend delay. UT.IsBackend backend => UT.PartNumber -> Integer -> S3.UploadPartResponse -> UploadState backend delay -> (Maybe (UploadState backend delay), (Bool, [S3.CompletedPart]))
-finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadParts, uploadStateSize} =
+finishPartUpload :: forall backend delay. UT.IsBackend backend => UT.PartNumber -> S3.UploadPartResponse -> UploadState backend delay -> (Maybe (UploadState backend delay), (Bool, [S3.CompletedPart]))
+finishPartUpload finishedPartNum response u@UploadState{uploadParts, uploadStateSize} =
     ( if multipartFinished then Nothing else Just u{uploadParts = newUploadParts}
     ,
         ( multipartFinished
@@ -509,7 +510,7 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
     -- case, the affected share's state is not changed but if there were other
     -- shares mentioned in the request their state may be changed.
     createImmutableStorageIndex :: S3Backend backend delay -> StorageIndex -> Maybe [LeaseSecret] -> AllocateBuckets -> IO AllocationResult
-    createImmutableStorageIndex s3@S3Backend{..} storageIndex secrets AllocateBuckets{..}
+    createImmutableStorageIndex s3 storageIndex secrets AllocateBuckets{..}
         | allocatedSize > maxShareSize = throwIO $ MaximumShareSizeExceeded maxShareSize allocatedSize
         | otherwise =
             -- Creation may also fail because no upload secret has been given.
@@ -628,14 +629,8 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
                     parsed = T.split (== '/') (view (S3.object_key . S3._ObjectKey) obj)
 
     readImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
-    readImmutableShare (S3Backend{..}) storageIndex shareNum qrange = do
-        SMap.unsafeToList s3BackendState >>= \case
-            [] -> pure ()
-            [(_, st)] -> pure () -- print $ uploadParts st
-            _ -> pure ()
-        runResourceT $ do
-            huh <- readEach qrange
-            pure $ B.concat huh
+    readImmutableShare (S3Backend{..}) storageIndex shareNum qrange =
+        B.concat <$> runResourceT (readEach qrange)
       where
         objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
         readEach :: Maybe [ByteRange] -> ResourceT IO [ShareData]
@@ -778,7 +773,7 @@ validUploadSecret :: UploadSecret -> Maybe [LeaseSecret] -> Bool
 validUploadSecret us1 (Just [Upload us2]) = us1 == us2
 validUploadSecret _ _ = False
 
-data Metadata = Metadata
+newtype Metadata = Metadata
     { metadataWriteEnabler :: Maybe WriteEnablerSecret
     }
 
@@ -795,7 +790,7 @@ readShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageInd
         pure (readMetadata resp, body)
     readEach (Just []) = pure (Metadata Nothing, [])
     readEach (Just ranges) = do
-        (metadata : _, shareData) <- unzip <$> mapM readOne ranges
+        (metadata : _, shareData) <- unzip <$> traverse readOne ranges
         pure (metadata, shareData)
 
     readOne :: ByteRange -> ResourceT IO (Metadata, ShareData)
@@ -893,8 +888,7 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
             Just (StartUpload uploadId xs) -> traverse_ (uploadOnePart uploadId) xs
             Just (StartSingleUpload dataToUpload) -> do
                 updateTimeout
-                -- XXX check response
-                response <- runResourceT $ AWS.send s3BackendEnv (S3.newPutObject s3BackendBucket objKey (AWS.toBody dataToUpload))
+                void $ runResourceT $ AWS.send s3BackendEnv (S3.newPutObject s3BackendBucket objKey (AWS.toBody dataToUpload))
                 atomically $ internalFinishSingleUpload storageIndex shareNum s3BackendState
   where
     objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
@@ -906,14 +900,14 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
             Just UploadState{..} -> update uploadProgressTimeout immutableUploadProgressTimeout
 
     uploadOnePart :: T.Text -> UT.UploadInfo -> IO ()
-    uploadOnePart uploadId (UT.UploadInfo (UT.PartNumber partNum') dataToUpload) = do
+    uploadOnePart uploadId (UT.UploadInfo partNum' dataToUpload) = do
         updateTimeout
 
         let uploadPart = S3.newUploadPart s3BackendBucket objKey (fromIntegral partNum') uploadId (AWS.toBody dataToUpload)
 
         -- XXX This could, of course, fail...  Then we have some state to roll back.
         response <- runResourceT $ AWS.send s3BackendEnv uploadPart
-        newState <- atomically $ internalFinishUpload partNum' shareData storageIndex shareNum response s3BackendState
+        newState <- atomically $ internalFinishUpload partNum' storageIndex shareNum response s3BackendState
         case newState of
             Nothing ->
                 error "It went missing?"

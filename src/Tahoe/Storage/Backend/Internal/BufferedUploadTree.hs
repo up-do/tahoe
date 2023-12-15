@@ -18,7 +18,10 @@ instance Show Interval where
     show (Interval l h) = "[" <> show l <> ".." <> show h <> "]"
 
 instance Semigroup Interval where
-    Interval lowA highA <> Interval lowB highB = Interval (min lowA lowB) (max highA highB)
+    Interval lowA highA <> Interval lowB highB = Interval l h
+      where
+        l = min lowA lowB
+        h = max highA highB
 
 -- XXX Not a very good Monoid instance.
 instance Monoid Interval where
@@ -55,7 +58,7 @@ data Part backend uploadResponse
     deriving (Eq, Show)
 
 newtype PartNumber = PartNumber Integer
-    deriving newtype (Ord, Eq)
+    deriving newtype (Ord, Eq, Enum, Num, Real, Integral)
     deriving (Show)
 
 data UploadInfo = UploadInfo
