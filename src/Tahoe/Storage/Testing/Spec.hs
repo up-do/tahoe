@@ -434,7 +434,6 @@ immutableWriteAndReadShare runBackend storageIndex (ShareNumbers shareNumbers) (
                         `shouldReturn` AllocationResult{alreadyHave = [], allocated = shareNumbers}
                     let writes = zip shareNumbers (map (second getShareData) <$> shareChunks)
                     writeShares (\sn -> writeImmutableShare backend storageIndex sn uploadSecret) writes
-                    print $ "Finish share writes (" <> show size <> ") bytes"
                     readShares' <- mapM (\sn -> readImmutableShare backend storageIndex sn Nothing) shareNumbers
                     when (fmap B.concat (fmap getShareData <$> permutedShares) /= readShares') $
                         fail (show permutedShares ++ " /= " ++ show readShares')
