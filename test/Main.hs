@@ -276,15 +276,100 @@ spec = do
                         , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 21)
                         ]
 
-            it "the last uploadable part can be short" $ do
+            it "the last uploadable part can be short (1 nodes)" $ do
                 let part = UT.PartData (UT.Interval 11 15) "BCDEF" 16
                     tree = UT.insert part emptyTree
                     (uploadable, tree') = UT.findUploadableChunk tree 1
 
+                uploadable `shouldBe` Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
+                UT.uploadTree tree' `shouldBe` FT.fromList [UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 15)]
+
+            it "the last uploadable part can be short (2 nodes)" $ do
+                let parts' =
+                        [ UT.PartData (UT.Interval 5 9) "56789" 16
+                        , UT.PartData (UT.Interval 11 15) "BCDEF" 16
+                        ]
+                    tree = foldl' (flip UT.insert) emptyTree parts'
+                    (uploadable, tree') = UT.findUploadableChunk tree 1
+
+                uploadable `shouldBe` Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
+                UT.uploadTree tree'
+                    `shouldBe` FT.fromList
+                        [ UT.PartData (UT.Interval 5 9) "56789" 16
+                        , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 15)
+                        ]
+
+            it "the last uploadable part can be short (3 nodes)" $ do
+                let parts' =
+                        [ UT.PartData (UT.Interval 0 3) "0123" 16
+                        , UT.PartData (UT.Interval 5 9) "56789" 16
+                        , UT.PartData (UT.Interval 11 15) "BCDEF" 16
+                        ]
+                    tree = foldl' (flip UT.insert) emptyTree parts'
+                    (uploadable, tree') = UT.findUploadableChunk tree 1
+
                 uploadable
-                    === Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
-                    .&&. UT.uploadTree tree'
-                    === FT.fromList [UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 15)]
+                    `shouldBe` Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
+                UT.uploadTree tree'
+                    `shouldBe` FT.fromList
+                        [ UT.PartData (UT.Interval 0 3) "0123" 16
+                        , UT.PartData (UT.Interval 5 9) "56789" 16
+                        , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 15)
+                        ]
+
+            it "the last uploadable part can be short (5 nodes)" $ do
+                let parts' =
+                        [ UT.PartData (UT.Interval 0 0) "0" 16
+                        , UT.PartData (UT.Interval 2 2) "2" 16
+                        , UT.PartData (UT.Interval 4 4) "4" 16
+                        , UT.PartData (UT.Interval 6 6) "6" 16
+                        , UT.PartData (UT.Interval 11 15) "BCDEF" 16
+                        ]
+                    tree = foldl' (flip UT.insert) emptyTree parts'
+                    (uploadable, tree') = UT.findUploadableChunk tree 1
+
+                uploadable
+                    `shouldBe` Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
+                UT.uploadTree tree'
+                    `shouldBe` FT.fromList
+                        [ UT.PartData (UT.Interval 0 0) "0" 16
+                        , UT.PartData (UT.Interval 2 2) "2" 16
+                        , UT.PartData (UT.Interval 4 4) "4" 16
+                        , UT.PartData (UT.Interval 6 6) "6" 16
+                        , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 15)
+                        ]
+
+            it "the last uploadable part can be short (overlaps with previous)" $ do
+                let parts' =
+                        [ UT.PartData (UT.Interval 9 15) "9ABCDEF" 16
+                        ]
+                    tree = foldl' (flip UT.insert) emptyTree parts'
+                    (uploadable, tree') = UT.findUploadableChunk tree 1
+
+                uploadable
+                    `shouldBe` Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
+                UT.uploadTree tree'
+                    `shouldBe` FT.fromList
+                        [ UT.PartData (UT.Interval 9 10) "9A" 16
+                        , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 15)
+                        ]
+
+            it "the last uploadable part can be short (middle piece joins)" $ do
+                let parts' =
+                        [ UT.PartData (UT.Interval 0 5) "012345" 16
+                        , UT.PartData (UT.Interval 9 15) "9ABCDEF" 16
+                        , UT.PartData (UT.Interval 6 8) "678" 16
+                        ]
+                    tree = foldl' (flip UT.insert) emptyTree parts'
+                    (uploadable, tree') = UT.findUploadableChunk tree 1
+
+                uploadable
+                    `shouldBe` Just (UT.UploadInfo (UT.PartNumber 1) "0123456789A")
+                UT.uploadTree tree'
+                    `shouldBe` FT.fromList
+                        [ UT.PartUploading (UT.PartNumber 1) (UT.Interval 0 10)
+                        , UT.PartData (UT.Interval 11 15) "BCDEF" 16
+                        ]
 
             it "insert finds uploadable data regardless of gaps and insertion order" $
                 forAll arbitrary $ \sizeIncrements -> do

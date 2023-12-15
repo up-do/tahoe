@@ -28,13 +28,16 @@ low, high :: Interval -> Size
 intervalSize :: Interval -> Size
 intervalSize (Interval l h) = h - l + 1
 
-splitInterval' :: Integer -> Interval -> (Interval, Interval)
-splitInterval' at (Interval intervalLow intervalHigh) =
-    ( Interval intervalLow (intervalLow + at)
-    , Interval (intervalLow + at + 1) intervalHigh
+{- | Split an interval into two where the first has the first `after` bytes
+ and the second has the rest.
+-}
+splitIntervalAfter :: Integer -> Interval -> (Interval, Interval)
+splitIntervalAfter after (Interval intervalLow intervalHigh) =
+    ( Interval intervalLow (intervalLow + after - 1)
+    , Interval (intervalLow + after) intervalHigh
     )
 
--- | Does the second interval contain the entire first interval?
+-- | Does the first interval contain the entire second interval?
 containsInterval :: Interval -> Interval -> Bool
 containsInterval a b =
     intervalLow b >= intervalLow a && intervalHigh b <= intervalHigh a
@@ -163,7 +166,7 @@ findUploadableChunk t@UploadTree{uploadTree} minParts =
                 -- short final part.  If it crosses the last part boundary
                 -- /and/ extends to the end of the share, it does.
                 lefties :> PartData{getInterval, getShareData, totalShareSize} ->
-                    if shortFinalPart && finalPartInterval `containsInterval` getInterval
+                    if shortFinalPart && getInterval `containsInterval` finalPartInterval
                         then (Just uploadInfo, lefties >< newTree)
                         else (Nothing, uploadTree)
                   where
@@ -185,8 +188,8 @@ findUploadableChunk t@UploadTree{uploadTree} minParts =
                                 _ -> [PartData li lb totalShareSize, up]
 
                         leftSize = intervalSize interval - size
-                        (lb, rb) = B.splitAt (fromIntegral leftSize - 1) bytes
-                        (li, ri) = splitInterval' (leftSize - 1) interval
+                        (lb, rb) = B.splitAt (fromIntegral leftSize) bytes
+                        (li, ri) = splitIntervalAfter leftSize interval
 
                     partSize = computePartSize @backend totalShareSize
                 -- The rightmost element might already have been uploaded.
@@ -257,16 +260,12 @@ computeNewTree getInterval getShareData totalShareSize = (uploadInfo, newTree)
     -- How many bytes are in each "part" for this tree?
     partSize = fromIntegral $ computePartSize @backend totalShareSize
 
-    -- An interval describing the unusable bytes attached to the left of the
-    -- chunk.
-    prefixInterval = Interval (intervalLow getInterval) (intervalLow getInterval + prefixLength - 1)
-
-    -- An interval describing the unusable bytes attached to the right of the
-    -- chunk.
-    suffixInterval = Interval (intervalHigh getInterval - suffixLength) (intervalHigh getInterval)
-
-    -- An interval describing the usable bytes from the chunk.
-    uploadableInterval = Interval (intervalHigh prefixInterval + 1) (intervalLow suffixInterval)
+    -- Three intervals (prefixInterval, uploadableInterval, suffixInterval) describing:
+    -- 1. unusable bytes attached to the left of the chunk.
+    -- 2. usable bytes from the chunk.
+    -- 3. unusable bytes attached to the right of the chunk.
+    (prefixInterval, more) = splitIntervalAfter prefixLength getInterval
+    (uploadableInterval, suffixInterval) = splitIntervalAfter chunkLength more
 
 partNumberToInterval :: PartSize backend -> PartNumber -> Interval
 partNumberToInterval (PartSize partSize) (PartNumber n) = Interval ((n - 1) * partSize) (n * partSize - 1)

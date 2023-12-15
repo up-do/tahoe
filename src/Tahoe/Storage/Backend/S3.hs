@@ -37,12 +37,14 @@ import qualified Data.FingerTree as FT
 import Data.Foldable (Foldable (toList), fold, foldl', traverse_)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Hashable (Hashable)
+import Data.List (intercalate)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, mapMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Debug.Trace (trace)
 import GHC.Conc (throwSTM)
 import GHC.Stack (HasCallStack)
 import Network.HTTP.Types (ByteRange (ByteRangeFrom, ByteRangeFromTo), Status (Status, statusCode))
@@ -73,6 +75,7 @@ import Tahoe.Storage.Backend (
     WriteMutableError (..),
     WriteVector (..),
  )
+import Tahoe.Storage.Backend.Internal.BufferedUploadTree (UploadTree (uploadTree))
 import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.Internal.Delay (HasDelay (..), TimeoutOperation (Cancelled, Delayed))
 import TahoeLAFS.Storage.Backend (
@@ -313,6 +316,13 @@ data PartUpload
       StartSingleUpload ShareData
     deriving (Show)
 
+niceShow :: UT.UploadTree backend delay -> String
+niceShow UT.UploadTree{..} = intercalate "," $ s <$> toList uploadTree
+  where
+    s UT.PartData{..} = "<PartData length=" <> show (UT.intervalSize getInterval) <> ">"
+    s UT.PartUploading{..} = "<PartUploading #" <> show getPartNumber <> ">"
+    s UT.PartUploaded{..} = "<PartUploaded #" <> show getPartNumber <> ">"
+
 {- | Add some more share data to the given state.  If there is enough
  contiguous data, also add another part upload and return the part number
  and upload id to use with it.
@@ -336,11 +346,12 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
             -- on that new state.
             Just uploadId -> (u{uploadParts = partsActioned}, action')
               where
+                -- XXX Need to call findUploadableChunk until it returns Nothing so we don't leave data behind
                 (uploadable, partsActioned) = UT.findUploadableChunk partsInserted 1
 
                 action' = case uploadable of
-                    Nothing -> Buffering
-                    Just (UT.UploadInfo partNum partData) -> StartUpload partNum uploadId partData
+                    Nothing -> (trace ("Buffering: " <> niceShow partsInserted) Buffering)
+                    Just (UT.UploadInfo partNum partData) -> trace ("Go: " <> show partNum <> niceShow partsActioned) StartUpload partNum uploadId partData
     | otherwise = (u{uploadParts = newParts}, action)
   where
     size = fromIntegral $ B.length shareData
@@ -623,7 +634,7 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
     readImmutableShare (S3Backend{..}) storageIndex shareNum qrange = do
         SMap.unsafeToList s3BackendState >>= \case
             [] -> pure ()
-            [(_, st)] -> print $ uploadParts st
+            [(_, st)] -> pure () -- print $ uploadParts st
             _ -> pure ()
         runResourceT $ do
             huh <- readEach qrange
