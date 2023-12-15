@@ -310,7 +310,7 @@ data PartUpload
       -- contributed.
       Buffering
     | -- | Some number of parts should get uploaded now.
-      StartUpload [(UT.PartNumber, ShareData)] T.Text
+      StartUpload T.Text [UT.UploadInfo]
     | -- | The whole object can now be uploaded with a single request to the
       -- backend.
       StartSingleUpload ShareData
@@ -346,12 +346,7 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
             -- on that new state.
             Just uploadId -> (u{uploadParts = partsActioned}, action')
               where
-                -- XXX Need to call findUploadableChunk until it returns Nothing so we don't leave data behind
-                (uploadable, partsActioned) = UT.findUploadableChunks partsInserted
-
-                action' = case uploadable of
-                    [] -> (trace ("Buffering: " <> niceShow partsInserted) Buffering)
-                    infos -> StartUpload ((\(UT.UploadInfo partNum shareData) -> (partNum, shareData)) <$> infos) uploadId
+                (action', partsActioned) = first (StartUpload uploadId) (UT.findUploadableChunks partsInserted)
     | otherwise = (u{uploadParts = newParts}, action)
   where
     size = fromIntegral $ B.length shareData
@@ -893,7 +888,7 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
             Just NotReady -> throwIO ShareAllocationIncomplete
             Just Collision -> throwIO ConflictingWrite
             Just Buffering -> updateTimeout
-            Just (StartUpload xs uploadId) -> traverse_ (uploadOnePart uploadId) xs
+            Just (StartUpload uploadId xs) -> traverse_ (uploadOnePart uploadId) xs
             Just (StartSingleUpload dataToUpload) -> do
                 updateTimeout
                 -- XXX check response
@@ -908,8 +903,8 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
             Nothing -> pure ()
             Just UploadState{..} -> update uploadProgressTimeout immutableUploadProgressTimeout
 
-    uploadOnePart :: T.Text -> (UT.PartNumber, ShareData) -> IO ()
-    uploadOnePart uploadId (UT.PartNumber partNum', dataToUpload) = do
+    uploadOnePart :: T.Text -> UT.UploadInfo -> IO ()
+    uploadOnePart uploadId (UT.UploadInfo (UT.PartNumber partNum') dataToUpload) = do
         updateTimeout
 
         let uploadPart = S3.newUploadPart s3BackendBucket objKey (fromIntegral partNum') uploadId (AWS.toBody dataToUpload)
