@@ -75,7 +75,7 @@ import Tahoe.Storage.Backend (
     WriteMutableError (..),
     WriteVector (..),
  )
-import Tahoe.Storage.Backend.Internal.BufferedUploadTree (UploadTree (uploadTree))
+import Tahoe.Storage.Backend.Internal.BufferedUploadTree (UploadTree)
 import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.Internal.Delay (HasDelay (..), TimeoutOperation (Cancelled, Delayed))
 import TahoeLAFS.Storage.Backend (
@@ -198,7 +198,7 @@ internalAllocate storageIndex secret allocatedSize shareNumber timeout curState 
     newShareState =
         UploadState
             { uploadStateSize = allocatedSize
-            , uploadParts = UT.UploadTree mempty
+            , uploadParts = mempty
             , uploadResponse = Nothing
             , uploadSecret = secret
             , uploadProgressTimeout = timeout
@@ -320,7 +320,7 @@ niceShowPartUpload (StartUpload uploadId xs) = "<StartUpload " <> intercalate ",
 niceShowPartUpload s = show s
 
 niceShow :: UT.UploadTree backend delay -> String
-niceShow UT.UploadTree{..} = intercalate "," $ s <$> toList uploadTree
+niceShow uploadTree = intercalate "," $ s <$> toList uploadTree
   where
     s UT.PartData{..} = "<PartData length=" <> show (UT.intervalSize getInterval) <> ">"
     s UT.PartUploading{..} = "<PartUploading " <> show getPartNumber <> ">"
@@ -373,14 +373,14 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
         -- still buffering it.
         | otherwise = (partsInserted, Buffering)
       where
-        newTree = UT.UploadTree (FT.singleton (UT.PartUploading (UT.PartNumber 1) fullInterval))
-        wholeShare = B.concat . fmap UT.getShareData . toList . UT.uploadTree $ partsInserted
+        newTree = FT.singleton (UT.PartUploading (UT.PartNumber 1) fullInterval)
+        wholeShare = B.concat . fmap UT.getShareData . toList $ partsInserted
 
     -- Have we now received all of the data for the share in question?  This
     -- is the case if the contiguous bytes measure at the top of the tree
     -- equals the entire share size.
     allDataReceived :: UT.UploadTree backend b -> Bool
-    allDataReceived = (uploadStateSize ==) . UT.contiguousBytes . FT.measure . UT.uploadTree
+    allDataReceived = (uploadStateSize ==) . UT.contiguousBytes . FT.measure
 
 {- | Mark a part upload as finished and compute the new overall state of the
  multipart upload.
@@ -390,7 +390,7 @@ finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadP
     ( if multipartFinished then Nothing else Just u{uploadParts = newUploadParts}
     ,
         ( multipartFinished
-        , mapMaybe toCompleted . toList . UT.uploadTree $ newUploadParts
+        , mapMaybe toCompleted . toList $ newUploadParts
         )
     )
   where
@@ -399,8 +399,7 @@ finishPartUpload finishedPartNum finishedPartSize response u@UploadState{uploadP
     requiredCoverage = UT.Interval 0 (fromIntegral $ uploadStateSize - 1)
     multipartFinished = UT.fullyUploaded m && UT.coveringInterval m == requiredCoverage
       where
-        t = UT.uploadTree newUploadParts
-        m = FT.measure t
+        m = FT.measure newUploadParts
 
     -- The part which we just finished uploading changes from a
     -- `PartUploading` to a `PartUploaded`.

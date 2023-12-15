@@ -45,7 +45,6 @@ import Tahoe.Storage.Backend (
  )
 import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.S3 (
-    AWS,
     Minio,
     S3Backend (..),
     UploadState (uploadProgressTimeout),
@@ -73,7 +72,6 @@ import Test.QuickCheck (
     Arbitrary (arbitrary),
     NonEmptyList (..),
     forAll,
-    label,
     shuffle,
     (.&&.),
     (.||.),
@@ -125,7 +123,7 @@ spec = do
                         parts = sizedParts (zipWith UT.PartData intervals chunks)
                     forAll (shuffle parts) $ \parts' -> do
                         let tree = foldl' (flip UT.insert) emptyTree parts'
-                        B.concat (UT.getShareData <$> toList (UT.uploadTree tree)) === B.concat chunks
+                        B.concat (UT.getShareData <$> toList tree) === B.concat chunks
 
             it "contiguous data is merged" $
                 forAll arbitrary $ \(NonEmpty shares) -> do
@@ -137,7 +135,7 @@ spec = do
                         parts = sizedParts (zipWith UT.PartData intervals chunks)
                     forAll (shuffle parts) $ \parts' -> do
                         let tree = foldl' (flip UT.insert) emptyTree parts'
-                        length (toList (UT.uploadTree tree)) === 1
+                        length (toList tree) === 1
 
             it "has the same measurement if it has the same nodes" $
                 forAll arbitrary $ \(NonEmpty shares) -> do
@@ -151,7 +149,7 @@ spec = do
                         let manyInsertsTree = foldl' (flip UT.insert) emptyTree parts'
                             singleInsertTree = UT.insert (UT.PartData (fold intervals) (fold chunks) (sum sizes)) emptyTree
 
-                        FT.measure (UT.uploadTree manyInsertsTree) === FT.measure (UT.uploadTree singleInsertTree)
+                        FT.measure manyInsertsTree === FT.measure singleInsertTree
 
             it "allows inserts in any order explicit" $ do
                 let parts' =
@@ -164,7 +162,7 @@ spec = do
                             , UT.PartData (UT.Interval 0 0) "0"
                             ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
-                B.concat (UT.getShareData <$> toList (UT.uploadTree tree)) === "0123456789A"
+                B.concat (UT.getShareData <$> toList tree) === "0123456789A"
 
             it "measures full interval" $ do
                 -- let p = (UT.PartData :: UT.Interval -> B.ByteString -> UT.Part AWS b) (UT.Interval 0 10) "0123456789A"
@@ -188,7 +186,7 @@ spec = do
                             , UT.PartData (UT.Interval 0 5) "012345"
                             ]
                     tree1 = foldl' (flip UT.insert) emptyTree parts1
-                    tree2 = foldl' (flip UT.insert) emptyTree (toList (UT.uploadTree tree1))
+                    tree2 = foldl' (flip UT.insert) emptyTree (toList tree1)
                 tree1 === tree2
 
             it "has correct tree measure (simple, backwards)" $ do
@@ -199,7 +197,7 @@ spec = do
                             ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
                 tree === UT.insert (UT.PartData (UT.Interval 0 10) "0123456789A" 11) emptyTree
-            -- FT.measure (UT.uploadTree tree) === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
+            -- FT.measure tree === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
 
             it "has correct tree measure (simple)" $ do
                 let parts' =
@@ -208,7 +206,7 @@ spec = do
                             , UT.PartData (UT.Interval 6 10) "6789A"
                             ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
-                FT.measure (UT.uploadTree tree) === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
+                FT.measure tree === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
 
             it "has correct tree measure" $ do
                 let parts' =
@@ -221,7 +219,7 @@ spec = do
                             , UT.PartData (UT.Interval 0 0) "0"
                             ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
-                FT.measure (UT.uploadTree tree) === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
+                FT.measure tree === UT.UploadTreeMeasure (UT.Interval 0 10) 11 1 False
 
             it "get uploadable chunks explicit" $ do
                 let parts' =
@@ -238,7 +236,7 @@ spec = do
                 uploadable
                     === Just (UT.UploadInfo (UT.PartNumber 1) "0123456789A")
                     .&&. tree'
-                    === UT.UploadTree (FT.fromList [UT.PartUploading (UT.PartNumber 1) (UT.Interval 0 10)])
+                    === FT.fromList [UT.PartUploading (UT.PartNumber 1) (UT.Interval 0 10)]
 
             it "an uploadable chunk with unusable bytes on the left can be found" $ do
                 let parts' =
@@ -252,7 +250,7 @@ spec = do
                         ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
                     (uploadable, tree') = UT.findUploadableChunk tree 1
-                UT.uploadTree tree'
+                tree'
                     === FT.fromList
                         [ UT.PartData (UT.Interval 0 3) "0123" 22
                         , UT.PartData (UT.Interval 5 10) "56789A" 22
@@ -270,7 +268,7 @@ spec = do
                     (uploadable, tree') = UT.findUploadableChunk tree 1
                 uploadable
                     === Just (UT.UploadInfo (UT.PartNumber 2) "BCDEFGHIJKL")
-                    .&&. UT.uploadTree tree'
+                    .&&. tree'
                     === FT.fromList
                         [ UT.PartData (UT.Interval 0 1) "01" 22
                         , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 21)
@@ -282,7 +280,7 @@ spec = do
                     (uploadable, tree') = UT.findUploadableChunk tree 1
 
                 uploadable `shouldBe` Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
-                UT.uploadTree tree' `shouldBe` FT.fromList [UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 15)]
+                tree' `shouldBe` FT.fromList [UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 15)]
 
             it "the last uploadable part can be short (2 nodes)" $ do
                 let parts' =
@@ -293,7 +291,7 @@ spec = do
                     (uploadable, tree') = UT.findUploadableChunk tree 1
 
                 uploadable `shouldBe` Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
-                UT.uploadTree tree'
+                tree'
                     `shouldBe` FT.fromList
                         [ UT.PartData (UT.Interval 5 9) "56789" 16
                         , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 15)
@@ -310,7 +308,7 @@ spec = do
 
                 uploadable
                     `shouldBe` Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
-                UT.uploadTree tree'
+                tree'
                     `shouldBe` FT.fromList
                         [ UT.PartData (UT.Interval 0 3) "0123" 16
                         , UT.PartData (UT.Interval 5 9) "56789" 16
@@ -330,7 +328,7 @@ spec = do
 
                 uploadable
                     `shouldBe` Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
-                UT.uploadTree tree'
+                tree'
                     `shouldBe` FT.fromList
                         [ UT.PartData (UT.Interval 0 0) "0" 16
                         , UT.PartData (UT.Interval 2 2) "2" 16
@@ -348,7 +346,7 @@ spec = do
 
                 uploadable
                     `shouldBe` Just (UT.UploadInfo (UT.PartNumber 2) "BCDEF")
-                UT.uploadTree tree'
+                tree'
                     `shouldBe` FT.fromList
                         [ UT.PartData (UT.Interval 9 10) "9A" 16
                         , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 15)
@@ -365,7 +363,7 @@ spec = do
 
                 uploadable
                     `shouldBe` Just (UT.UploadInfo (UT.PartNumber 1) "0123456789A")
-                UT.uploadTree tree'
+                tree'
                     `shouldBe` FT.fromList
                         [ UT.PartUploading (UT.PartNumber 1) (UT.Interval 0 10)
                         , UT.PartData (UT.Interval 11 15) "BCDEF" 16
@@ -397,7 +395,7 @@ spec = do
                             -- Since we made none of the pieces contiguous, we
                             -- should get the same number out as we put in.
                             nodeCountMatches =
-                                length (toList (UT.uploadTree tree)) === length chunks
+                                length (toList tree) === length chunks
 
                             -- If no piece contained at least one complete
                             -- part then it is expected that we cannot find
@@ -415,7 +413,7 @@ spec = do
                             (_, right) =
                                 FT.split
                                     ((\i -> UT.intervalLow foundOffset >= UT.intervalLow i) . UT.coveringInterval)
-                                    (UT.uploadTree tree)
+                                    tree
                             foundPiece FT.:< _ = FT.viewl right
                             uploadBytesConsistent =
                                 UT.uploadInfoBytes found === partToBytes partSize foundPiece

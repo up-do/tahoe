@@ -116,11 +116,7 @@ instance IsBackend backend => FT.Measured (UploadTreeMeasure backend) (Part back
       where
         partSize = computePartSize @backend totalShareSize
 
-newtype UploadTree backend a = UploadTree
-    { uploadTree :: FT.FingerTree (UploadTreeMeasure backend) (Part backend a)
-    }
-    deriving newtype (Semigroup, Monoid)
-    deriving (Eq, Show)
+type UploadTree backend a = FT.FingerTree (UploadTreeMeasure backend) (Part backend a)
 
 {- | Compute the interval covering the last part of a share with the given
  size and part size.
@@ -173,8 +169,7 @@ findUploadableChunks t = if null allTrees then ([], t) else (infos, last allTree
  tree which has marked that chunk as being uploaded.
 -}
 findUploadableChunk :: forall backend a. (IsBackend backend, Show a) => UploadTree backend a -> Integer -> (Maybe UploadInfo, UploadTree backend a)
-findUploadableChunk t@UploadTree{uploadTree} minParts =
-    (upload, t{uploadTree = tree'})
+findUploadableChunk uploadTree minParts = (upload, tree')
   where
     position :: UploadTreeMeasure backend -> Bool
     position m = uploadableParts m >= minParts
@@ -224,7 +219,7 @@ findUploadableChunk t@UploadTree{uploadTree} minParts =
                 _ :> _ -> (Nothing, uploadTree)
         --
         -- Predicate flipped: the matching element is uploadable.  Extract it.
-        p@PartData{getInterval, getShareData, totalShareSize} :< righties ->
+        PartData{getInterval, getShareData, totalShareSize} :< righties ->
             (Just uploadInfo, left >< newTree >< righties)
           where
             (uploadInfo, newTree) = computeNewTree getInterval getShareData totalShareSize
@@ -299,7 +294,7 @@ partNumberToInterval :: PartSize backend -> PartNumber -> Interval
 partNumberToInterval (PartSize partSize) (PartNumber n) = Interval ((n - 1) * partSize) (n * partSize - 1)
 
 replace :: IsBackend backend => Interval -> Part backend a -> UploadTree backend a -> Maybe (UploadTree backend a)
-replace interval newPart t@UploadTree{uploadTree} =
+replace interval newPart uploadTree =
     case (left, right') of
         (lefties, _target :< righties) ->
             -- The new part might completely or only partially overlap with the
@@ -309,7 +304,7 @@ replace interval newPart t@UploadTree{uploadTree} =
             --
             -- XXX Deal with the partial overlaps.  Maybe by making sure all
             -- nodes in the tree are actually part boundary aligned?
-            Just $ t{uploadTree = (lefties |> newPart) >< righties}
+            Just $ (lefties |> newPart) >< righties
         _ ->
             -- Any other result means we didn't find a node relate to the
             -- PartNumber in the way we wanted.  Abandon the replacement
@@ -337,8 +332,7 @@ insert ::
     Part backend a ->
     UploadTree backend a ->
     UploadTree backend a
-insert p t@UploadTree{uploadTree} =
-    t{uploadTree = tree'}
+insert p uploadTree = tree'
   where
     (left, right) = splitInterval (getInterval p) uploadTree
 
