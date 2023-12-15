@@ -115,7 +115,7 @@ instance IsBackend backend => FT.Measured (UploadTreeMeasure backend) (Part back
                 -- part size.
                 n -> (intervalHigh getInterval - (intervalLow getInterval + (size - n)) + 1) `div` size
     measure PartUploading{getInterval} = UploadTreeMeasure getInterval 0 0 False
-    measure PartUploaded{totalShareSize, getPartNumber} = UploadTreeMeasure (partNumberToInterval partSize getPartNumber) 0 0 True
+    measure PartUploaded{totalShareSize, getPartNumber} = UploadTreeMeasure (partNumberToInterval totalShareSize partSize getPartNumber) 0 0 True
       where
         partSize = computePartSize @backend totalShareSize
 
@@ -293,8 +293,14 @@ computeNewTree getInterval getShareData totalShareSize = (uploadInfo, newTree)
     (prefixInterval, more) = splitIntervalAfter prefixLength getInterval
     (uploadableInterval, suffixInterval) = splitIntervalAfter chunkLength more
 
-partNumberToInterval :: PartSize backend -> PartNumber -> Interval
-partNumberToInterval (PartSize partSize) (PartNumber n) = Interval ((n - 1) * partSize) (n * partSize - 1)
+{- | Compute the interval covered by the given part number, for a share of a
+ certain size.
+-}
+partNumberToInterval :: Size -> PartSize backend -> PartNumber -> Interval
+partNumberToInterval totalSize (PartSize partSize) (PartNumber n) = Interval l h
+  where
+    l = (n - 1) * partSize
+    h = min totalSize (n * partSize) - 1
 
 replace :: IsBackend backend => Interval -> Part backend a -> UploadTree backend a -> Maybe (UploadTree backend a)
 replace interval newPart uploadTree =

@@ -93,7 +93,7 @@ data Minio
 
 -- See https://min.io/docs/minio/container/operations/checklists/thresholds.html
 instance UT.IsBackend Minio where
-    minPartSize = UT.PartSize 5_000_000
+    minPartSize = UT.PartSize (5 * 1024 * 1024)
     computePartSize totalSize = max UT.minPartSize (UT.PartSize $ totalSize `div` 10_000)
 
 useMultipartUpload :: forall backend. UT.IsBackend backend => Proxy backend -> Size -> Bool
@@ -404,7 +404,7 @@ finishPartUpload finishedPartNum response u@UploadState{uploadParts, uploadState
 
     -- The part which we just finished uploading changes from a
     -- `PartUploading` to a `PartUploaded`.
-    targetInterval = UT.partNumberToInterval (UT.computePartSize @backend uploadStateSize) finishedPartNum
+    targetInterval = UT.partNumberToInterval uploadStateSize (UT.computePartSize @backend uploadStateSize) finishedPartNum
 
     newUploadParts :: UT.UploadTree backend S3.UploadPartResponse
     newUploadParts = case UT.replace targetInterval finishedPart uploadParts of
