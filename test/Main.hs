@@ -47,10 +47,16 @@ import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.S3 (
     Minio,
     S3Backend (..),
+    ShareData,
     UploadState (uploadProgressTimeout),
     applyWriteVectors,
     immutableUploadProgressTimeout,
     newS3Backend,
+    shareConcat,
+    shareDrop,
+    shareLength,
+    shareTake,
+    toShareData,
  )
 import Tahoe.Storage.Testing.Spec (
     SomeShareData (..),
@@ -115,20 +121,20 @@ spec = do
         describe "UploadTree" $ do
             it "allows inserts in any order" $
                 forAll arbitrary $ \(NonEmpty shares) -> do
-                    let chunks = getShareData <$> shares
-                        sizes = fromIntegral . B.length <$> chunks
+                    let chunks = toShareData . getShareData <$> shares
+                        sizes = fromIntegral . shareLength <$> chunks
                         offsets = scanl' (+) 0 sizes
                         endpoints = subtract 1 <$> drop 1 offsets
                         intervals = zipWith UT.Interval offsets endpoints
                         parts = sizedParts (zipWith UT.PartData intervals chunks)
                     forAll (shuffle parts) $ \parts' -> do
                         let tree = foldl' (flip UT.insert) emptyTree parts'
-                        B.concat (UT.getShareData <$> toList tree) === B.concat chunks
+                        shareConcat (UT.getShareData <$> toList tree) === shareConcat chunks
 
             it "contiguous data is merged" $
                 forAll arbitrary $ \(NonEmpty shares) -> do
-                    let chunks = getShareData <$> shares
-                        sizes = fromIntegral . B.length <$> chunks
+                    let chunks = toShareData . getShareData <$> shares
+                        sizes = fromIntegral . shareLength <$> chunks
                         offsets = scanl' (+) 0 sizes
                         endpoints = subtract 1 <$> drop 1 offsets
                         intervals = zipWith UT.Interval offsets endpoints
@@ -139,8 +145,8 @@ spec = do
 
             it "has the same measurement if it has the same nodes" $
                 forAll arbitrary $ \(NonEmpty shares) -> do
-                    let chunks = getShareData <$> shares
-                        sizes = fromIntegral . B.length <$> chunks
+                    let chunks = toShareData . getShareData <$> shares
+                        sizes = fromIntegral . shareLength <$> chunks
                         offsets = scanl' (+) 0 sizes
                         endpoints = subtract 1 <$> drop 1 offsets
                         intervals = zipWith UT.Interval offsets endpoints
@@ -162,7 +168,7 @@ spec = do
                             , UT.PartData (UT.Interval 0 0) "0"
                             ]
                     tree = foldl' (flip UT.insert) emptyTree parts'
-                B.concat (UT.getShareData <$> toList tree) === "0123456789A"
+                shareConcat (UT.getShareData <$> toList tree) === "0123456789A"
 
             it "measures full interval" $ do
                 -- let p = (UT.PartData :: UT.Interval -> B.ByteString -> UT.Part AWS b) (UT.Interval 0 10) "0123456789A"
@@ -372,11 +378,11 @@ spec = do
             it "insert finds uploadable data regardless of gaps and insertion order" $
                 forAll arbitrary $ \sizeIncrements -> do
                     let sizes = scanr (+) 1 (fromIntegral @Word8 @Int . getPositive <$> sizeIncrements)
-                        chunks = zipWith B.replicate sizes (cycle [97 .. 97 + 26])
+                        chunks = toShareData <$> zipWith B.replicate sizes (cycle [97 .. 97 + 26])
                         -- offsets, but with a 1-byte gap in each
                         offsets :: [Integer]
                         offsets = scanl' (\a b -> a + b + 1) 0 (fromIntegral <$> sizes)
-                        intervals = zipWith (\o chunk -> UT.Interval o (o + fromIntegral (B.length chunk - 1))) offsets chunks
+                        intervals = zipWith (\o chunk -> UT.Interval o (o + fromIntegral (shareLength chunk - 1))) offsets chunks
                         parts = sizedParts (zipWith UT.PartData intervals chunks)
 
                         UT.PartSize partSize = UT.computePartSize @FakeBackend (UT.totalShareSize . head $ parts)
@@ -423,7 +429,7 @@ spec = do
                             -- in the more complex uploadBytesConsistent
                             -- property (it caught one already).
                             actualBytesCountConsistent =
-                                B.length (UT.uploadInfoBytes found) `mod` fromIntegral partSize === 0
+                                shareLength (UT.uploadInfoBytes found) `mod` fromIntegral partSize === 0
                          in nodeCountMatches .&&. (expectNoResult .||. actualBytesCountConsistent .&&. uploadBytesConsistent)
 
     context "backend" $ do
@@ -597,7 +603,7 @@ intervalForInfo :: Size -> UT.UploadInfo -> UT.Interval
 intervalForInfo partSize UT.UploadInfo{uploadInfoPartNumber = UT.PartNumber partNum, uploadInfoBytes} = UT.Interval (fromIntegral l) (fromIntegral h)
   where
     l = (partNum - 1) * fromIntegral partSize
-    h = l + fromIntegral (B.length uploadInfoBytes) - 1
+    h = l + fromIntegral (shareLength uploadInfoBytes) - 1
 
 {- | Find the contiguous bytes that belong to the given PartData and
  consistute full "parts" for a given part size.
@@ -605,9 +611,9 @@ intervalForInfo partSize UT.UploadInfo{uploadInfoPartNumber = UT.PartNumber part
  This parallels similar calculations in findUploadableChunk but tries to do so
  using different calculations to avoid duplicating any bugs there.
 -}
-partToBytes :: Size -> UT.Part a b -> B.ByteString
+partToBytes :: Size -> UT.Part a b -> ShareData
 partToBytes partSize UT.PartData{getInterval, getShareData} =
-    case B.length chunkBytes `mod` fromIntegral partSize of
+    case shareLength chunkBytes `mod` fromIntegral partSize of
         0 -> chunkBytes
         n -> error $ "partToBytes off by " <> show n <> " bytes"
   where
@@ -629,8 +635,8 @@ partToBytes partSize UT.PartData{getInterval, getShareData} =
 
     chunkBytes =
         -- Drop the prefix, if there is any.
-        B.drop (fromIntegral prefixLength)
+        shareDrop (fromIntegral prefixLength)
             -- Take the amount of data we want, discarding the suffix.
-            . B.take (fromIntegral dataLength)
+            . shareTake (fromIntegral dataLength)
             $ getShareData
 partToBytes _ _ = error "Can only convert PartData to bytes"

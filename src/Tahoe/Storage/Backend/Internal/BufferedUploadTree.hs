@@ -2,7 +2,7 @@
 
 module Tahoe.Storage.Backend.Internal.BufferedUploadTree where
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as B
 import Data.FingerTree (ViewL ((:<)), ViewR ((:>)), (<|), (><), (|>))
 import qualified Data.FingerTree as FT
 import Data.List (unfoldr)

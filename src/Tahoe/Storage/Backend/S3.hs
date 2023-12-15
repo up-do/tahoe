@@ -31,6 +31,7 @@ import Data.Bifunctor (Bifunctor (first, second))
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base64 as Base64
 import qualified Data.ByteString.Char8 as C8
+import qualified Data.ByteString.Lazy as LB
 import Data.Data (Proxy (Proxy))
 import Data.Either (rights)
 import qualified Data.FingerTree as FT
@@ -59,7 +60,6 @@ import Tahoe.Storage.Backend (
     ReadTestWriteResult (..),
     ReadTestWriteVectors (..),
     ReadVector (..),
-    ShareData,
     ShareNumber (..),
     Size,
     StorageIndex,
@@ -80,6 +80,19 @@ import TahoeLAFS.Storage.Backend (
     withUploadSecret,
  )
 import Text.Read (readMaybe)
+
+{- | The type of share data held in the server.  This is intended to make it
+ easier to switch between lazy and strict byte strings for performance
+ testing/measurement.
+-}
+type ShareData = LB.ByteString
+
+-- Various ByteString operations compatible with the choice of ShareData.
+shareLength = LB.length
+shareConcat = LB.concat
+toShareData = LB.fromStrict
+shareTake = LB.take
+shareDrop = LB.drop
 
 -- Where's my Cow? -- Terry Pratchett
 
@@ -353,7 +366,7 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
                 (action', partsActioned) = first (StartUpload uploadId) (UT.findUploadableChunks partsInserted)
     | otherwise = (u{uploadParts = newParts}, action)
   where
-    size = fromIntegral $ B.length shareData
+    size = fromIntegral $ shareLength shareData
     interval = UT.Interval (fromIntegral offset) (fromIntegral $ offset + size - 1)
     part = UT.PartData interval shareData uploadStateSize
 
@@ -375,7 +388,7 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
         | otherwise = (partsInserted, Buffering)
       where
         newTree = FT.singleton (UT.PartUploading (UT.PartNumber 1) fullInterval)
-        wholeShare = B.concat . fmap UT.getShareData . toList $ partsInserted
+        wholeShare = shareConcat . fmap UT.getShareData . toList $ partsInserted
 
     -- Have we now received all of the data for the share in question?  This
     -- is the case if the contiguous bytes measure at the top of the tree
@@ -559,13 +572,15 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
 
             runResourceT $ traverse_ f xs
 
-    writeImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> QueryRange -> IO ()
+    writeImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> B.ByteString -> QueryRange -> IO ()
     writeImmutableShare _ _ _ Nothing _ _ = throwIO MissingUploadSecret
     writeImmutableShare s3 storageIndex shareNum secrets shareData Nothing = do
         -- If no range is given, this is the whole thing.
         writeImmutableShare s3 storageIndex shareNum secrets shareData (Just [ByteRangeFromTo 0 (fromIntegral $ B.length shareData - 1)])
-    writeImmutableShare s3Backend storageIndex shareNum secrets shareData (Just byteRanges) =
+    writeImmutableShare s3Backend storageIndex shareNum secrets shareBytes (Just byteRanges) =
         traverse_ (uncurry (writeAnImmutableChunk s3Backend storageIndex shareNum secrets)) (divideByRanges byteRanges shareData)
+      where
+        shareData = toShareData shareBytes
 
     abortImmutableUpload :: S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
     abortImmutableUpload _ _ _ Nothing = throwIO MissingUploadSecret
@@ -628,17 +643,17 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
                   where
                     parsed = T.split (== '/') (view (S3.object_key . S3._ObjectKey) obj)
 
-    readImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO B.ByteString
     readImmutableShare (S3Backend{..}) storageIndex shareNum qrange =
         B.concat <$> runResourceT (readEach qrange)
       where
         objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
-        readEach :: Maybe [ByteRange] -> ResourceT IO [ShareData]
+        readEach :: Maybe [ByteRange] -> ResourceT IO [B.ByteString]
         readEach Nothing = do
             resp <- AWS.send s3BackendEnv (S3.newGetObject s3BackendBucket objectKey)
             pure . B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
         readEach (Just ranges) = mapM readOne ranges
-        readOne :: ByteRange -> ResourceT IO ShareData
+        readOne :: ByteRange -> ResourceT IO B.ByteString
         readOne br = do
             let getObj = set S3.getObject_range (Just . ("bytes=" <>) . T.pack . C8.unpack $ renderByteRange br) $ S3.newGetObject s3BackendBucket objectKey
             resp <- AWS.send s3BackendEnv getObj
@@ -718,7 +733,7 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
 
     getMutableShareNumbers = getImmutableShareNumbers
 
-    readMutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readMutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO B.ByteString
     readMutableShare = readImmutableShare
 
 {- | Given the complete bytes of a share, apply a single write vector and
@@ -779,7 +794,7 @@ newtype Metadata = Metadata
 
 readShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO (Metadata, ShareData)
 readShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum qrange =
-    runResourceT $ second B.concat <$> readEach qrange
+    runResourceT $ second shareConcat <$> readEach qrange
   where
     objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
 
@@ -787,7 +802,7 @@ readShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageInd
     readEach Nothing = do
         resp <- AWS.send s3BackendEnv (S3.newGetObject s3BackendBucket objectKey)
         body <- AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
-        pure (readMetadata resp, body)
+        pure (readMetadata resp, toShareData <$> body)
     readEach (Just []) = pure (Metadata Nothing, [])
     readEach (Just ranges) = do
         (metadata : _, shareData) <- unzip <$> traverse readOne ranges
@@ -800,7 +815,7 @@ readShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageInd
                     S3.newGetObject s3BackendBucket objectKey
         resp <- AWS.send s3BackendEnv getObj
         body <- B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
-        pure (readMetadata resp, body)
+        pure (readMetadata resp, toShareData body)
 
 writeEnablerSecretMetadataKey :: T.Text
 writeEnablerSecretMetadataKey = "write-enabler-secret"
@@ -931,7 +946,7 @@ divideByRanges :: [ByteRange] -> ShareData -> [(Offset, ShareData)]
 divideByRanges [] "" = []
 divideByRanges [] _ = error "There are no more ranges but there is still share data"
 divideByRanges (_ : _) "" = error "There are more ranges but we ran out of share data"
-divideByRanges (ByteRangeFromTo from to : rs) shareData = (from, B.take size shareData) : divideByRanges rs (B.drop size shareData)
+divideByRanges (ByteRangeFromTo from to : rs) shareData = (from, shareTake size shareData) : divideByRanges rs (shareDrop size shareData)
   where
     size = fromIntegral $ to - from + 1
 divideByRanges (_ : _) _ = error "Only `from-to` ranges are supported for uploads"
