@@ -18,15 +18,15 @@ import Amazonka (runResourceT)
 import qualified Amazonka as AWS
 import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
-import Conduit (ResourceT, sinkList)
+import Conduit (MonadIO (liftIO), MonadResource, MonadUnliftIO (withRunInIO), ResourceT, sinkList)
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Async (concurrently, mapConcurrently, mapConcurrently_, race)
 import Control.Concurrent.STM.Lifted (STM, atomically)
 import qualified Control.Concurrent.STM.Map as SMap
-import Control.Exception (Exception, SomeException, catch, throw, throwIO, try)
+import Control.Exception (Exception, SomeException, throw, throwIO, try)
 import Control.Lens (set, view, (.~), (?~), (^.))
 import Control.Monad (forM_, void, when)
-import Control.Monad.Catch (MonadCatch, onException)
+import Control.Monad.Catch (MonadCatch, catch, onException)
 import Data.Bifunctor (Bifunctor (first, second))
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base64 as Base64
@@ -268,6 +268,9 @@ internalFinishSingleUpload = SMap.delete .: (,)
 (.:) :: (c -> d) -> (a -> b -> c) -> (a -> b -> d)
 (f .: g) x = f . g x
 
+(.::) :: (e -> f) -> (a -> b -> c -> d -> e) -> (a -> b -> c -> d -> f)
+(f .:: g) w x y = f . g w x y
+
 internalFinishUpload ::
     UT.IsBackend backend =>
     UT.PartNumber ->
@@ -292,23 +295,6 @@ externalAllocate S3Backend{..} storageIndex shareNum =
   where
     objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
     uploadCreate = S3.newCreateMultipartUpload s3BackendBucket objectKey
-
--- runResourceT $
---     do
---         -- switch to sendEither when more brain is available
---         -- XXX Check to see if we already have local state related to this upload
---         -- XXX Check to see if S3 already has state related to this upload
---         -- XXX Use thread-safe primitives so the server can be multithreaded
---         let objectKeys = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex <$> shareNumbers
---             uploadCreates = S3.newCreateMultipartUpload s3BackendBucket <$> objectKeys
---         -- XXX HOW TO HANDLE FAILURE? this AWS.send should really be AWS.sendEither !
---         -- and then we handle errors that we can
---         multipartUploadResponse <- mapM (fmap (flip (UploadState allocatedSize []) uploadSecret) . AWS.send s3BackendEnv) uploadCreates
---         let keys = zip (repeat storageIndex) shareNumbers :: [(StorageIndex, ShareNumber)]
---             newMap = Map.fromList $ zip keys multipartUploadResponse
---         -- don't send anything that's already there
---         liftIO $ modifyIORef' s3BackendState (newMap `Map.union`)
---         pure $ AllocationResult{alreadyHave = [], allocated = shareNumbers}
 
 data PartUpload
     = -- | The associated CreateMultipartUpload has not yet completed.  XXX We
@@ -578,7 +564,7 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
         -- If no range is given, this is the whole thing.
         writeImmutableShare s3 storageIndex shareNum secrets shareData (Just [ByteRangeFromTo 0 (fromIntegral $ B.length shareData - 1)])
     writeImmutableShare s3Backend storageIndex shareNum secrets shareBytes (Just byteRanges) =
-        traverse_ (uncurry (writeAnImmutableChunk s3Backend storageIndex shareNum secrets)) (divideByRanges byteRanges shareData)
+        runResourceT $ traverse_ (uncurry (writeAnImmutableChunk s3Backend storageIndex shareNum secrets)) (divideByRanges byteRanges shareData)
       where
         shareData = toShareData shareBytes
 
@@ -597,14 +583,14 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
                 cancel progressTimeout
 
                 -- If there was also state on the S3 server, clean it up too.
-                forM_ backendState cancelMultipartUpload
+                runResourceT $ forM_ backendState cancelMultipartUpload
       where
         stateKey = (storageIndex, shareNum)
 
-        cancelMultipartUpload uploadId = runResourceT $ do
-            -- XXX Check the response for errors
-            _resp <- AWS.send s3BackendEnv $ S3.newAbortMultipartUpload s3BackendBucket (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum) uploadId
-            pure ()
+        cancelMultipartUpload uploadId =
+            void $
+                AWS.send s3BackendEnv $
+                    S3.newAbortMultipartUpload s3BackendBucket (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum) uploadId
 
         internalCancel :: UploadState backend delay -> (Maybe v, (delay, Maybe T.Text))
         internalCancel UploadState{uploadResponse, uploadSecret, uploadProgressTimeout, uploadStateSize}
@@ -624,40 +610,10 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
                 Nothing -> throw ShareAllocationIncomplete
                 Just uid -> uid
 
-    getImmutableShareNumbers (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = runResourceT $ do
-        resp <- AWS.send s3BackendEnv (set S3.listObjects_prefix (Just . storageIndexPrefix s3BackendPrefix $ storageIndex) $ S3.newListObjects s3BackendBucket)
-        case view S3.listObjectsResponse_contents resp of
-            Nothing -> pure $ CBORSet mempty
-            Just objects -> pure $ CBORSet shareNumbers
-              where
-                shareNumbers = Set.fromList (mapMaybe objToShareNum objects)
-
-                objToShareNum :: S3.Object -> Maybe ShareNumber
-                objToShareNum obj =
-                    case parsed of
-                        [prefix, si, shareNum] ->
-                            if prefix == s3BackendPrefix && T.unpack si == storageIndex
-                                then ShareNumber <$> readMaybe (T.unpack shareNum)
-                                else Nothing
-                        _ -> Nothing
-                  where
-                    parsed = T.split (== '/') (view (S3.object_key . S3._ObjectKey) obj)
+    getImmutableShareNumbers = runResourceT .: getImmutableShareNumbersR
 
     readImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO B.ByteString
-    readImmutableShare (S3Backend{..}) storageIndex shareNum qrange =
-        B.concat <$> runResourceT (readEach qrange)
-      where
-        objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
-        readEach :: Maybe [ByteRange] -> ResourceT IO [B.ByteString]
-        readEach Nothing = do
-            resp <- AWS.send s3BackendEnv (S3.newGetObject s3BackendBucket objectKey)
-            pure . B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
-        readEach (Just ranges) = mapM readOne ranges
-        readOne :: ByteRange -> ResourceT IO B.ByteString
-        readOne br = do
-            let getObj = set S3.getObject_range (Just . ("bytes=" <>) . T.pack . C8.unpack $ renderByteRange br) $ S3.newGetObject s3BackendBucket objectKey
-            resp <- AWS.send s3BackendEnv getObj
-            B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
+    readImmutableShare = runResourceT .:: readImmutableShareR
 
     readvAndTestvAndWritev :: HasCallStack => S3Backend backend delay -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev s3@S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex secret (ReadTestWriteVectors{readVector, testWriteVectors}) =
@@ -668,66 +624,74 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
         -- 2. Chunk data somehow to avoid catastrophic performance problems
         -- from the current strategy of whole-object updates for every write.
         --
-        case testWriteVectorList of
+        runResourceT $ case testWriteVectorList of
             [] ->
                 -- There are no writes so skip the secret check and the test/write logic.
                 ReadTestWriteResult True <$> doReads
             (arbShareNum, _) : _ -> do
                 expectedSecret <-
                     ( metadataWriteEnabler . fst
-                            <$> readShare s3 storageIndex arbShareNum (Just [ByteRangeFromTo 0 0])
+                            <$> readShareR s3 storageIndex arbShareNum (Just [ByteRangeFromTo 0 0])
                         )
                         `catch` on404 Nothing
 
-                when (isJust expectedSecret && Just secret /= expectedSecret) $ throwIO IncorrectWriteEnablerSecret
+                when (isJust expectedSecret && Just secret /= expectedSecret) $ throwR IncorrectWriteEnablerSecret
 
-                (readResults, testResults) <- concurrently doReads doTests
+                (readResults, testResults) <- withRunInIO (\runInIO -> concurrently (runInIO doReads) (runInIO doTests))
                 if and . fmap and $ testResults
                     then ReadTestWriteResult True readResults <$ doWrites
                     else pure $ ReadTestWriteResult False readResults
       where
         testWriteVectorList = Map.toList testWriteVectors
 
+        doReads :: ResourceT IO (Map.Map ShareNumber [B.ByteString])
         doReads = do
-            (CBORSet knownShareNumbers) <- getMutableShareNumbers s3 storageIndex
+            (CBORSet knownShareNumbers) <- getMutableShareNumbersR s3 storageIndex
             let shareNumberList = Set.toList knownShareNumbers
-            shareData <- mapConcurrently id $ readMutableShare s3 storageIndex <$> shareNumberList <*> pure (toQueryRange readVector)
+                rs = readMutableShareR s3 storageIndex <$> shareNumberList <*> pure (toQueryRange readVector)
+            shareData <- withRunInIO (\runInIO -> mapConcurrently runInIO rs)
+
             pure $ Map.fromList (zip shareNumberList ((: []) <$> shareData))
 
         toQueryRange = Just . fmap toSingleRange
           where
             toSingleRange (ReadVector offset size) = ByteRangeFromTo offset (offset + size - 1)
 
+        doTests :: ResourceT IO [[Bool]]
         doTests =
-            mapConcurrently
+            mapConcurrentlyR
                 (\(shareNum, testWriteVectors') -> zipWith runTestVector (test testWriteVectors') <$> mapM (readSomeThings shareNum) (test testWriteVectors'))
                 testWriteVectorList
 
+        doWrites :: ResourceT IO ()
         doWrites =
-            mapConcurrently_
-                (\(shareNum, testWriteVectors') -> readEverything shareNum >>= writeEverything shareNum . (`applyWriteVectors` write testWriteVectors'))
-                testWriteVectorList
+            void $
+                mapConcurrentlyR
+                    (\(shareNum, testWriteVectors') -> readEverything shareNum >>= writeEverything shareNum . (`applyWriteVectors` write testWriteVectors'))
+                    testWriteVectorList
 
+        runTestVector :: TestVector -> B.ByteString -> Bool
         runTestVector (TestVector _ _ Eq specimen) shareData = specimen == shareData
         runTestVector _ _ = False
 
+        readSomeThings :: ShareNumber -> TestVector -> ResourceT IO B.ByteString
         readSomeThings shareNum (TestVector offset size _ _) =
-            readMutableShare s3 storageIndex shareNum (Just [ByteRangeFromTo offset (offset + size - 1)])
+            readMutableShareR s3 storageIndex shareNum (Just [ByteRangeFromTo offset (offset + size - 1)])
                 `catch` on404 ""
 
+        readEverything :: ShareNumber -> ResourceT IO B.ByteString
         readEverything shareNum =
-            readMutableShare s3 storageIndex shareNum Nothing `catch` on404 ""
+            readMutableShareR s3 storageIndex shareNum Nothing `catch` on404 ""
 
         writeEverything shareNum bs =
-            runResourceT $
-                AWS.send
-                    s3BackendEnv
-                    ( (S3.putObject_metadata .~ HashMap.singleton writeEnablerSecretMetadataKey (base64WriteEnabler secret)) $
-                        S3.newPutObject
-                            s3BackendBucket
-                            (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum)
-                            (AWS.toBody bs)
-                    )
+            AWS.send
+                s3BackendEnv
+                ( (S3.putObject_metadata .~ HashMap.singleton writeEnablerSecretMetadataKey (base64WriteEnabler secret)) $
+                    S3.newPutObject
+                        s3BackendBucket
+                        (storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum)
+                        (AWS.toBody bs)
+                )
 
         base64WriteEnabler (WriteEnablerSecret bytes) = T.decodeLatin1 . Base64.encode $ bytes
 
@@ -792,9 +756,9 @@ newtype Metadata = Metadata
     { metadataWriteEnabler :: Maybe WriteEnablerSecret
     }
 
-readShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO (Metadata, ShareData)
-readShare (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum qrange =
-    runResourceT $ second shareConcat <$> readEach qrange
+readShareR :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> ResourceT IO (Metadata, ShareData)
+readShareR (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex shareNum qrange =
+    second shareConcat <$> readEach qrange
   where
     objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
 
@@ -826,9 +790,9 @@ readMetadata resp =
         { metadataWriteEnabler = (either (const Nothing) (Just . WriteEnablerSecret) . Base64.decode . T.encodeUtf8) =<< HashMap.lookup writeEnablerSecretMetadataKey (resp ^. S3.getObjectResponse_metadata)
         }
 
-on404 :: a -> AWS.Error -> IO a
+on404 :: a -> AWS.Error -> ResourceT IO a
 on404 result (AWS.ServiceError AWS.ServiceError'{status = Status{statusCode = 404}}) = pure result
-on404 _ e = throwIO e
+on404 _ e = throwR e
 
 {- | Allocate tracking state, locally and in the S3 server, for a new share of
  the given size at the given location.
@@ -882,12 +846,12 @@ cleanupExternalImmutable S3Backend{..} storageIndex shareNum createResponse =
     objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
     uploadId = createResponse ^. S3.createMultipartUploadResponse_uploadId
 
-writeAnImmutableChunk :: (UT.IsBackend backend, HasDelay delay) => S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> Offset -> ShareData -> IO ()
+writeAnImmutableChunk :: (UT.IsBackend backend, HasDelay delay) => S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> Offset -> ShareData -> ResourceT IO ()
 writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix, s3BackendState}) storageIndex shareNum secrets offset shareData =
     do
         -- call list objects on the backend, if this share already exists, reject the new write with ImmutableShareAlreadyWritten
-        CBORSet shareNumbers <- getImmutableShareNumbers s3backend storageIndex
-        when (shareNum `elem` shareNumbers) $ throwIO ImmutableShareAlreadyWritten
+        CBORSet shareNumbers <- getImmutableShareNumbersR s3backend storageIndex
+        when (shareNum `elem` shareNumbers) $ throwR ImmutableShareAlreadyWritten
 
         -- If possible, update internal state to reflect this new piece of
         -- share data.  If this new data is large enough on its own, or
@@ -896,14 +860,14 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
         uploadInfo <- atomically (internalStartUpload secrets storageIndex shareNum offset shareData s3BackendState)
 
         case uploadInfo of
-            Nothing -> throwIO ImmutableShareAlreadyWritten
-            Just NotReady -> throwIO ShareAllocationIncomplete
-            Just Collision -> throwIO ConflictingWrite
+            Nothing -> throwR ImmutableShareAlreadyWritten
+            Just NotReady -> throwR ShareAllocationIncomplete
+            Just Collision -> throwR ConflictingWrite
             Just Buffering -> updateTimeout
             Just (StartUpload uploadId xs) -> traverse_ (uploadOnePart uploadId) xs
             Just (StartSingleUpload dataToUpload) -> do
                 updateTimeout
-                void $ runResourceT $ AWS.send s3BackendEnv (S3.newPutObject s3BackendBucket objKey (AWS.toBody dataToUpload))
+                void $ AWS.send s3BackendEnv (S3.newPutObject s3BackendBucket objKey (AWS.toBody dataToUpload))
                 atomically $ internalFinishSingleUpload storageIndex shareNum s3BackendState
   where
     objKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
@@ -912,16 +876,16 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
         s <- atomically $ SMap.lookup (storageIndex, shareNum) s3BackendState
         case s of
             Nothing -> pure ()
-            Just UploadState{..} -> update uploadProgressTimeout immutableUploadProgressTimeout
+            Just UploadState{..} -> liftIO $ update uploadProgressTimeout immutableUploadProgressTimeout
 
-    uploadOnePart :: T.Text -> UT.UploadInfo -> IO ()
+    uploadOnePart :: T.Text -> UT.UploadInfo -> ResourceT IO ()
     uploadOnePart uploadId (UT.UploadInfo partNum' dataToUpload) = do
         updateTimeout
 
         let uploadPart = S3.newUploadPart s3BackendBucket objKey (fromIntegral partNum') uploadId (AWS.toBody dataToUpload)
 
         -- XXX This could, of course, fail...  Then we have some state to roll back.
-        response <- runResourceT $ AWS.send s3BackendEnv uploadPart
+        response <- AWS.send s3BackendEnv uploadPart
         newState <- atomically $ internalFinishUpload partNum' storageIndex shareNum response s3BackendState
         case newState of
             Nothing ->
@@ -935,7 +899,7 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
                             (S3.newCompleteMultipartUpload s3BackendBucket objKey uploadId)
 
                 -- XXX Oops, this could fail too.
-                void $ runResourceT $ AWS.send s3BackendEnv completeMultipartUpload
+                void $ AWS.send s3BackendEnv completeMultipartUpload
             Just (False, _) -> pure ()
 
 {- | Divide a single ByteString of data into pieces based on a list of ranges,
@@ -950,3 +914,49 @@ divideByRanges (ByteRangeFromTo from to : rs) shareData = (from, shareTake size 
   where
     size = fromIntegral $ to - from + 1
 divideByRanges (_ : _) _ = error "Only `from-to` ranges are supported for uploads"
+
+throwR :: Exception e => e -> ResourceT IO a
+throwR = liftIO . throwIO
+
+getImmutableShareNumbersR :: MonadResource m => S3Backend backend delay -> StorageIndex -> m (CBORSet ShareNumber)
+getImmutableShareNumbersR (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = do
+    resp <- AWS.send s3BackendEnv (set S3.listObjects_prefix (Just . storageIndexPrefix s3BackendPrefix $ storageIndex) $ S3.newListObjects s3BackendBucket)
+    case view S3.listObjectsResponse_contents resp of
+        Nothing -> pure $ CBORSet mempty
+        Just objects -> pure $ CBORSet shareNumbers
+          where
+            shareNumbers = Set.fromList (mapMaybe objToShareNum objects)
+
+            objToShareNum :: S3.Object -> Maybe ShareNumber
+            objToShareNum obj =
+                case parsed of
+                    [prefix, si, shareNum] ->
+                        if prefix == s3BackendPrefix && T.unpack si == storageIndex
+                            then ShareNumber <$> readMaybe (T.unpack shareNum)
+                            else Nothing
+                    _ -> Nothing
+              where
+                parsed = T.split (== '/') (view (S3.object_key . S3._ObjectKey) obj)
+
+getMutableShareNumbersR :: MonadResource m => S3Backend backend delay -> StorageIndex -> m (CBORSet ShareNumber)
+getMutableShareNumbersR = getImmutableShareNumbersR
+
+readImmutableShareR :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> ResourceT IO B.ByteString
+readImmutableShareR (S3Backend{..}) storageIndex shareNum qrange =
+    B.concat <$> readEach qrange
+  where
+    objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
+    readEach :: Maybe [ByteRange] -> ResourceT IO [B.ByteString]
+    readEach Nothing = do
+        resp <- AWS.send s3BackendEnv (S3.newGetObject s3BackendBucket objectKey)
+        pure . B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
+    readEach (Just ranges) = mapM readOne ranges
+    readOne :: ByteRange -> ResourceT IO B.ByteString
+    readOne br = do
+        let getObj = set S3.getObject_range (Just . ("bytes=" <>) . T.pack . C8.unpack $ renderByteRange br) $ S3.newGetObject s3BackendBucket objectKey
+        resp <- AWS.send s3BackendEnv getObj
+        B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
+
+readMutableShareR = readImmutableShareR
+
+mapConcurrentlyR f xs = withRunInIO (\runInIO -> mapConcurrently (runInIO . f) xs)
