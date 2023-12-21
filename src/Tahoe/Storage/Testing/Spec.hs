@@ -235,7 +235,7 @@ makeStorageSpec makeBackend cleanupBackend = do
 
             describe "write a share" $ do
                 it "disallows writing an unallocated share" $
-                    withMaxSuccess few $ \(ArbStorageIndex storageIndex) shareNum secret (SomeShareData shareData) ->
+                    withMaxSuccess few $ \(ArbStorageIndex storageIndex) shareNum secret (SmallShareData shareData) ->
                         runBackend $ \backend -> do
                             writeImmutableShare backend storageIndex shareNum (Just [Upload (UploadSecret secret)]) shareData Nothing
                                 `shouldThrow` (== ShareNotAllocated)
@@ -274,7 +274,7 @@ makeStorageSpec makeBackend cleanupBackend = do
                         abortImmutableUpload backend "storageindex" (ShareNumber 0) Nothing `shouldThrow` (== MissingUploadSecret)
 
             it "disallows upload completion after a successful abort" $
-                withMaxSuccess few $ \(ArbStorageIndex storageIndex) shareNum secret (SomeShareData shareData) size ->
+                withMaxSuccess few $ \(ArbStorageIndex storageIndex) shareNum secret (SmallShareData shareData) size ->
                     runBackend $ \backend -> do
                         void $ createImmutableStorageIndex backend storageIndex (Just [Upload (UploadSecret secret)]) (AllocateBuckets [shareNum] size)
                         abortImmutableUpload backend storageIndex shareNum (Just [Upload (UploadSecret secret)])
@@ -304,7 +304,7 @@ makeStorageSpec makeBackend cleanupBackend = do
                         forAll genStorageIndex (mutableWriteAndEnumerateShares runBackend)
 
                 it "rejects an update with the wrong write enabler" $
-                    forAll genStorageIndex $ \storageIndex shareNum (secret, wrongSecret) (SomeShareData shareData, SomeShareData junkData) (NonNegative offset) ->
+                    forAll genStorageIndex $ \storageIndex shareNum (secret, wrongSecret) (SmallShareData shareData, SmallShareData junkData) (NonNegative offset) ->
                         (secret /= wrongSecret)
                             && (shareData /= junkData)
                             ==> monadicIO
@@ -481,10 +481,10 @@ mutableWriteAndEnumerateShares ::
     ((b -> IO ()) -> IO ()) -> -- Execute a function on the backend.
     StorageIndex ->
     ShareNumbers ->
-    SomeShareData ->
+    SmallShareData ->
     Property
-mutableWriteAndEnumerateShares runBackend storageIndex (ShareNumbers shareNumbers) shareSeed = monadicIO $ do
-    let permutedShares = flip permuteShare shareSeed <$> shareNumbers
+mutableWriteAndEnumerateShares runBackend storageIndex (ShareNumbers shareNumbers) (SmallShareData shareSeed) = monadicIO $ do
+    let permutedShares = flip permuteShare (SomeShareData shareSeed) <$> shareNumbers
     let nullSecret = WriteEnablerSecret ""
     run $
         runBackend $ \backend -> do
