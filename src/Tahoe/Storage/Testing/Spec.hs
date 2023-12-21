@@ -77,7 +77,6 @@ import Test.QuickCheck (
     listOf1,
     oneof,
     shuffle,
-    sublistOf,
     suchThatMap,
     vector,
     vectorOf,
@@ -92,16 +91,21 @@ arbNonNeg = getNonNegative <$> arbitrary
 
 newtype ShareNumbers = ShareNumbers {getShareNumbers :: [ShareNumber]} deriving (Eq, Ord, Show)
 
+{- | All legal share numbers for all schemes in real-world use.
+
+ Pre-construct this so that the ShareNumbers Arbitrary instance doesn't have
+ to.
+-}
+allShareNums :: [ShareNumber]
+allShareNums = ShareNumber <$> [0 .. 255]
+
 {- | An Arbitrary instance that guarantees ShareNumbers are unique and
    non-empty (without invoking discard).
 -}
 instance Arbitrary ShareNumbers where
-    arbitrary = ShareNumbers . fmap ShareNumber <$> nums
+    arbitrary = ShareNumbers <$> nums
       where
-        nums =
-            arbitrary
-                >>= (shuffle . enumFromTo 0) . getNonNegative
-                >>= \(num : rest) -> (num :) <$> sublistOf rest
+        nums = take <$> chooseInt (1, 255) <*> shuffle allShareNums
 
     shrink (ShareNumbers []) = error "Empty ShareNumbers is not meaningful"
     shrink (ShareNumbers [_]) = []
@@ -154,6 +158,14 @@ instance Arbitrary SomeShareData where
     -- so at worst we miss out on a shorter counterexample sometimes.
     shrink (SomeShareData bs) =
         fmap SomeShareData . nubBy (\a b -> B.length a == B.length b) . filter (not . B.null) . shrinkBytes $ bs
+
+newtype SmallShareData = SmallShareData {getSmallShareData :: B.ByteString}
+    deriving (Show)
+
+-- | Generate some fairly short byte strings.
+instance Arbitrary SmallShareData where
+    arbitrary = SmallShareData . B.pack <$> (chooseInt (1, 1000) >>= flip vectorOf arbitrary)
+    shrink (SmallShareData bs) = SmallShareData <$> shrinkBytes bs
 
 {- | Shrink B.ByteString more efficiently than QuickCheck-instances can.  This
  implementation should be O(n) in the number of shrinks generated (not the
@@ -384,12 +396,11 @@ immutableWriteAndEnumerateShares ::
     ((b -> IO ()) -> IO ()) -> -- Execute a function on the backend.
     StorageIndex ->
     ShareNumbers ->
-    NonEmptyList SomeShareData ->
+    SmallShareData ->
     Property
-immutableWriteAndEnumerateShares runBackend storageIndex (ShareNumbers shareNumbers) (NonEmpty shareSeed) = do
-    let permutedShares = outerProduct permuteShare shareNumbers shareSeed
-        size = sum (fromIntegral . B.length . getShareData <$> shareSeed)
-        allocate = AllocateBuckets shareNumbers size
+immutableWriteAndEnumerateShares runBackend storageIndex (ShareNumbers shareNumbers) (SmallShareData shareSeed) = do
+    let permutedShares = outerProduct permuteShare shareNumbers [SomeShareData shareSeed]
+        allocate = AllocateBuckets shareNumbers (fromIntegral $ B.length shareSeed)
     forAll (traverse jumbleForUpload permutedShares) $ \shareChunks -> monadicIO $ do
         run $
             runBackend $ \backend -> do
