@@ -88,24 +88,6 @@
 
       apps.cabal-test = self.outputs.apps.${system}.cabal-test-943;
 
-      apps.release = {
-        type = "app";
-        program = "${
-          pkgs.writeShellApplication {
-            name = "release";
-            runtimeInputs = with pkgs; [
-              cabal-install
-              haskell.compiler.${ghcVersion}
-            ];
-            text = ''
-              set -x
-              sdist=$(cabal sdist | tail -n 1)
-              haddocks=$(cabal haddock --enable-doc --haddock-for-hackage | tail -n 1)
-              cabal upload "$sdist"
-              cabal upload --documentation "$haddocks"
-            '';
-          }
-        }/bin/release";
-      };
+      apps.release = hslib.apps.release {};
     });
 }

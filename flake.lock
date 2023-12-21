@@ -359,11 +359,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1699453849,
-        "narHash": "sha256-7qqW8WwJ3yDrEsO9EfL9GxJo8piV5QeR7/GI9yYngaU=",
+        "lastModified": 1703175794,
+        "narHash": "sha256-3pQNSSRG8nvaUYe480eCep3Ri2OZGBjeEVZJfbhGjd4=",
         "ref": "main",
-        "rev": "bb60f23c8660db38a2ff89ec731aaa3a08c9d7ba",
-        "revCount": 10,
+        "rev": "09e12106bd6f60de58854fab227f777d6768c45c",
+        "revCount": 13,
         "type": "git",
         "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types"
       },
