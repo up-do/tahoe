@@ -73,6 +73,7 @@ import Test.QuickCheck (
     chooseInteger,
     counterexample,
     forAll,
+    getSize,
     ioProperty,
     label,
     listOf1,
@@ -165,7 +166,7 @@ newtype SmallShareData = SmallShareData {getSmallShareData :: B.ByteString}
 
 -- | Generate some fairly short byte strings.
 instance Arbitrary SmallShareData where
-    arbitrary = SmallShareData . B.pack <$> (chooseInt (1, 1000) >>= flip vectorOf arbitrary)
+    arbitrary = getSize >>= \size -> SmallShareData . B.pack <$> vectorOf size arbitrary
     shrink (SmallShareData bs) = SmallShareData <$> shrinkBytes bs
 
 {- | Shrink B.ByteString more efficiently than QuickCheck-instances can.  This
