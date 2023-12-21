@@ -14,6 +14,7 @@ import Data.Bifunctor (Bifunctor (second))
 import Data.Bits (Bits (xor))
 import qualified Data.ByteString as B
 import Data.Composition ((.:))
+import Data.Function (on)
 import Data.Interval (
     Boundary (Closed, Open),
     Extended (..),
@@ -157,7 +158,7 @@ instance Arbitrary SomeShareData where
     -- differently.  If I'm wrong, at least this is only the shrinking logic
     -- so at worst we miss out on a shorter counterexample sometimes.
     shrink (SomeShareData bs) =
-        fmap SomeShareData . nubBy (\a b -> B.length a == B.length b) . filter (not . B.null) . shrinkBytes $ bs
+        fmap SomeShareData . nubBy ((==) `on` B.length) . filter (not . B.null) . shrinkBytes $ bs
 
 newtype SmallShareData = SmallShareData {getSmallShareData :: B.ByteString}
     deriving (Show)
