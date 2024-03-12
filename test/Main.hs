@@ -3,6 +3,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Main (main) where
 
@@ -25,6 +26,7 @@ import qualified Data.FingerTree as FT
 import Data.Foldable (Foldable (toList), fold, foldl')
 import Data.List (scanl')
 import Data.Maybe (catMaybes, isJust)
+import Data.Proxy
 import qualified Data.Text as T
 import Data.Word (Word8)
 import Delay (FakeDelay (..), timePasses)
@@ -83,6 +85,7 @@ import Test.QuickCheck (
     (.||.),
     (===),
  )
+import Test.QuickCheck.Classes
 import Test.QuickCheck.Modifiers (Positive (getPositive))
 
 main :: IO ()
@@ -90,6 +93,12 @@ main = hspec . parallel . describe "S3" $ spec
 
 spec :: Spec
 spec = do
+    context "instance laws" $ do
+        describe "semigroup and monoid" $ do
+            it "passes for UT.Interval" $
+                lawsCheck (semigroupMonoidLaws (Proxy :: Proxy UT.Interval))
+            it "passes for (UploadTreeMeasure backend)" $
+                lawsCheck (semigroupMonoidLaws (Proxy :: Proxy (UT.UploadTreeMeasure ())))
     context "utilities" $ do
         describe "applyWriteVectors" $ do
             it "replaces existing bytes with new bytes" $
@@ -537,7 +546,7 @@ s3Backend = runResourceT $ do
     let setLocalEndpoint = AWS.setEndpoint False "127.0.0.1" 9000
         setAddressingStyle s = s{AWS.s3AddressingStyle = AWS.S3AddressingStylePath}
 
-    logger <- AWS.newLogger AWS.Debug IO.stdout
+    _logger <- AWS.newLogger AWS.Debug IO.stdout
 
     env <- AWS.newEnv AWS.discover
     let loggedEnv = env -- {AWS.logger = logger}
@@ -640,3 +649,9 @@ partToBytes partSize UT.PartData{getInterval, getShareData} =
             . shareTake (fromIntegral dataLength)
             $ getShareData
 partToBytes _ _ = error "Can only convert PartData to bytes"
+
+instance Arbitrary UT.Interval where
+    arbitrary = UT.Interval <$> arbitrary <*> arbitrary
+
+instance Arbitrary (UT.UploadTreeMeasure ()) where
+    arbitrary = UT.UploadTreeMeasure <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary

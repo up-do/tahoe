@@ -194,6 +194,7 @@ test-suite tahoe-s3-test
     , http-types
     , lens
     , QuickCheck
+    , quickcheck-classes
     , quickcheck-instances
     , stm
     , stm-delay
