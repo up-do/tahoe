@@ -37,11 +37,11 @@
         "systems": "systems"
       },
       "locked": {
-        "lastModified": 1694529238,
-        "narHash": "sha256-zsNZZGTGnMOf9YpHKJqMSsa0dXbfmxeoJ7xHlrt+xmY=",
+        "lastModified": 1710146030,
+        "narHash": "sha256-SZ5L6eA7HJ/nmkzGG7/ISclqe6oZdOZTNoesiInkXPQ=",
         "owner": "numtide",
         "repo": "flake-utils",
-        "rev": "ff7b65b44d01cf9ba6a71320833626af21126384",
+        "rev": "b1d9ab70662946ef0850d488da1c9019f3a9752a",
         "type": "github"
       },
       "original": {
@@ -359,10 +359,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1703175794,
-        "narHash": "sha256-3pQNSSRG8nvaUYe480eCep3Ri2OZGBjeEVZJfbhGjd4=",
+        "lastModified": 1703180589,
+        "narHash": "sha256-smj9og81aJho3XdzhctG+/xHojjmwhpl3aHnwMk9UgE=",
         "ref": "main",
-        "rev": "09e12106bd6f60de58854fab227f777d6768c45c",
+        "rev": "1551123111245223a204bd410f7ccba78aa82812",
         "revCount": 13,
         "type": "git",
         "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types"
