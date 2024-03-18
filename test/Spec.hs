@@ -9,6 +9,7 @@ import Control.Exception (evaluate)
 import Control.Monad (void)
 import qualified SpecCHK
 import qualified SpecCrypto
+import qualified SpecDirectory
 import qualified SpecMerkle
 import qualified SpecSSK
 import qualified SpecServer
@@ -61,4 +62,4 @@ main = do
                 (failurePlaceholder "CHK" . ("Test vectors: " ++) . show)
                 SpecCHK.testsFromVectors
                 testVectors
-    defaultMain $ testGroup "Tahoe Capabilities" [testGroup "CHK" $ testVectorsTree : tests, SpecSSK.tests]
+    defaultMain $ testGroup "Tahoe Capabilities" [testGroup "CHK" $ testVectorsTree : tests, SpecSSK.tests, SpecDirectory.tests]

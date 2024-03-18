@@ -118,6 +118,10 @@ library
     Tahoe.CHK.Upload
     Tahoe.CHK.URIExtension
     Tahoe.CHK.Validate
+    Tahoe.Directory
+    Tahoe.Directory.Internal.Capability
+    Tahoe.Directory.Internal.Parsing
+    Tahoe.Directory.Internal.Types
     Tahoe.Netstring
     Tahoe.SDMF
     Tahoe.SDMF.Internal.Capability
@@ -247,10 +251,12 @@ test-suite tahoe-capabilities-test
   main-is:          Spec.hs
   other-modules:
     Generators
+    GeneratorsDirectory
     GeneratorsSSK
     Paths_tahoe_capabilities
     SpecCHK
     SpecCrypto
+    SpecDirectory
     SpecMerkle
     SpecServer
     SpecSSK
