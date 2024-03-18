@@ -4,8 +4,8 @@
   inputs = {
     # Nix Inputs
     nixpkgs.follows = "hs-flake-utils/nixpkgs";
-    flake-utils.url = github:numtide/flake-utils;
-    hs-flake-utils.url = "git+https://whetstone.private.storage/jcalderone/hs-flake-utils.git?ref=main";
+    flake-utils.url = "github:numtide/flake-utils";
+    hs-flake-utils.url = "git+https://gitlab.com/tahoe-lafs/hs-flake-utils.git?ref=main";
   };
 
   outputs = {
