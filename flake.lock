@@ -132,12 +132,12 @@
         "rev": "683abab784ee38ea61863b3594d3777345f420d6",
         "revCount": 20,
         "type": "git",
-        "url": "https://whetstone.private.storage/jcalderone/hs-flake-utils.git"
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
       },
       "original": {
         "ref": "main",
         "type": "git",
-        "url": "https://whetstone.private.storage/jcalderone/hs-flake-utils.git"
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
       }
     },
     "nixpkgs": {
@@ -261,12 +261,12 @@
         "rev": "57f02ab7d73b831afb0d2c8196bd3b02764bf29c",
         "revCount": 488,
         "type": "git",
-        "url": "https://whetstone.private.storage/PrivateStorage/tahoe-chk.git"
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-chk.git"
       },
       "original": {
         "ref": "main",
         "type": "git",
-        "url": "https://whetstone.private.storage/PrivateStorage/tahoe-chk.git"
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-chk.git"
       }
     },
     "tahoe-great-black-swamp-testing": {
