@@ -156,12 +156,12 @@
         "rev": "683abab784ee38ea61863b3594d3777345f420d6",
         "revCount": 20,
         "type": "git",
-        "url": "https://whetstone.private.storage/jcalderone/hs-flake-utils.git"
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
       },
       "original": {
         "ref": "main",
         "type": "git",
-        "url": "https://whetstone.private.storage/jcalderone/hs-flake-utils.git"
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
       }
     },
     "hs-flake-utils_2": {
