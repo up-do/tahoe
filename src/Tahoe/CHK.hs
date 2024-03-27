@@ -220,7 +220,7 @@ data EncodingState hash = CPState
     }
 
 -- | The initial state for CHK encoding.
-initEncodingState :: forall hash. HashAlgorithm hash => EncodingState hash
+initEncodingState :: forall hash. (HashAlgorithm hash) => EncodingState hash
 initEncodingState =
     CPState
         { cpCrypttextHash = hashUpdate (hashInit @hash) (netstring ciphertextTag)
@@ -248,7 +248,7 @@ segmentCiphertext Parameters{paramSegmentSize} ciphertext =
 {- | Process ciphertext into blocks, carrying hashes computed along the way as
  state.
 -}
-processCiphertext :: forall hash. HashAlgorithm hash => Parameters -> [LB.ByteString] -> IO (EncodingState hash)
+processCiphertext :: forall hash. (HashAlgorithm hash) => Parameters -> [LB.ByteString] -> IO (EncodingState hash)
 processCiphertext Parameters{paramRequiredShares, paramTotalShares} =
     foldlM processSegment (initEncodingState @hash)
   where
@@ -304,7 +304,8 @@ encode ::
     IO ([Share], Cap.Reader)
 encode readKey initParams@(Parameters maximumSegmentSize total _ required) ciphertext =
     processCiphertext p (segmentCiphertext p ciphertext) >>= \CPState{..} ->
-        let -- The number of segments encoded in the share.  There are the same number
+        let
+            -- The number of segments encoded in the share.  There are the same number
             -- of plaintext and ciphertext segments and this is also the number of
             -- blocks in each share (though each share may have a different _value_
             -- for each block).
@@ -383,7 +384,8 @@ encode readKey initParams@(Parameters maximumSegmentSize total _ required) ciphe
             shareBlockSize :: Parameters -> Word64
             shareBlockSize Parameters{paramSegmentSize, paramRequiredShares} =
                 fromIntegral paramSegmentSize `ceilDiv` fromIntegral paramRequiredShares
-         in pure
+         in
+            pure
                 ( zipWith3 toShare [0 ..] (transpose cpBlocks) (transpose cpBlockHashes)
                 , cap
                 )
@@ -434,7 +436,8 @@ decode reader shares
     | length shares < fromIntegral (required reader) = pure $ Left NotEnoughShares
     | length validShares < fromIntegral (required reader) = pure . Left . IntegrityError $ invalidShares
     | otherwise = do
-        let -- The ZFEC decoder takes as input a list of (share number, block
+        let
+            -- The ZFEC decoder takes as input a list of (share number, block
             -- bytes) tuples (and the encoding parameters).  It wants the list
             -- to contain *exactly* `k` distinct blocks.  Our job is to give
             -- it these such a list, then.  If there were shares with metadata
@@ -556,7 +559,7 @@ decode reader shares
     -- result is something we can transpose into the correct form for ZFEC
     -- decoding.
     fixBlocks :: (Int, [a]) -> [(Int, a)]
-    fixBlocks (sharenum, bs) = zip (repeat sharenum) bs
+    fixBlocks (sharenum, bs) = map (sharenum,) bs
 
     size = view (Cap.verifier . Cap.size)
     required = view (Cap.verifier . Cap.required)
@@ -624,20 +627,20 @@ partitionShares verifier shares =
 {- | Build a merkle tree where the leaves are the root hashes of the block
  hash tree of each share.
 -}
-makeShareTree :: HashAlgorithm hash => [MerkleTree B.ByteString hash] -> MerkleTree (MerkleTree B.ByteString hash) hash
+makeShareTree :: (HashAlgorithm hash) => [MerkleTree B.ByteString hash] -> MerkleTree (MerkleTree B.ByteString hash) hash
 makeShareTree = makeTreePartial . map rootHash
 
-makeCrypttextHash :: HashAlgorithm hash => Context hash -> CrypttextHash hash
+makeCrypttextHash :: (HashAlgorithm hash) => Context hash -> CrypttextHash hash
 makeCrypttextHash = Digest' . hashFinalize
 
-makeCrypttextRootHash :: HashAlgorithm hash => [CrypttextHash hash] -> CrypttextHash hash
+makeCrypttextRootHash :: (HashAlgorithm hash) => [CrypttextHash hash] -> CrypttextHash hash
 makeCrypttextRootHash = rootHash . makeTreePartial
 
 -- Construct the encoding parameters for the final segment which may be
 -- smaller than the earlier segments (if the size of the data to be encoded is
 -- not a multiple of the segment size).
 -- allmydata.immutable.encode.Encoder._got_all_encoding_parameters
-tailParams :: Integral a => Parameters -> a -> Parameters
+tailParams :: (Integral a) => Parameters -> a -> Parameters
 tailParams p@Parameters{paramSegmentSize, paramRequiredShares} dataSize =
     p{paramSegmentSize = nextMultipleOf paramRequiredShares tailSize'}
   where
@@ -677,7 +680,7 @@ blockHashRoot tree n
     leafs = leafHashes tree
 
 -- | Conditionally lift a value into a context.
-guarded :: Alternative f => (a -> Bool) -> a -> f a
+guarded :: (Alternative f) => (a -> Bool) -> a -> f a
 guarded predicate value
     | predicate value = pure value
     | otherwise = empty
