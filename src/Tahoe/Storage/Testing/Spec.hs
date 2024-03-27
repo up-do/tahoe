@@ -1,3 +1,4 @@
+{-# LANGUAGE NumericUnderscores #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Tahoe.Storage.Testing.Spec (
@@ -61,6 +62,7 @@ import Tahoe.Storage.Backend (
     writev,
  )
 import Test.Hspec (Expectation, HasCallStack, Selector, Spec, context, describe, it, shouldBe, shouldReturn, shouldThrow)
+import Test.Hspec.QuickCheck (modifyMaxShrinks)
 import Test.QuickCheck (
     Arbitrary (arbitrary, shrink),
     Gen,
@@ -221,155 +223,156 @@ makeStorageSpec ::
     Spec
 makeStorageSpec makeBackend cleanupBackend = do
     let runBackend = withBackend makeBackend cleanupBackend
-    context "v1" $ do
-        context "immutable" $ do
-            describe "allocate a storage index" $ do
-                it "rejects allocations above the immutable share size limit" $
-                    withMaxSuccess few $ \(ArbStorageIndex storageIndex) (ShareNumbers shareNums) secret (Positive extra) -> do
-                        runBackend $ \backend -> do
-                            limit <- maximumImmutableShareSize . parameters <$> version backend
-                            createImmutableStorageIndex backend storageIndex (Just [Upload (UploadSecret secret)]) (AllocateBuckets shareNums (limit + extra))
-                                `shouldThrow` (== MaximumShareSizeExceeded limit (limit + extra))
+    modifyMaxShrinks (const 10_000) $
+        context "v1" $ do
+            context "immutable" $ do
+                describe "allocate a storage index" $ do
+                    it "rejects allocations above the immutable share size limit" $
+                        withMaxSuccess few $ \(ArbStorageIndex storageIndex) (ShareNumbers shareNums) secret (Positive extra) -> do
+                            runBackend $ \backend -> do
+                                limit <- maximumImmutableShareSize . parameters <$> version backend
+                                createImmutableStorageIndex backend storageIndex (Just [Upload (UploadSecret secret)]) (AllocateBuckets shareNums (limit + extra))
+                                    `shouldThrow` (== MaximumShareSizeExceeded limit (limit + extra))
 
-                it "accounts for all allocated share numbers" $
+                    it "accounts for all allocated share numbers" $
+                        property $
+                            forAll genStorageIndex (alreadyHavePlusAllocatedImm runBackend)
+
+                describe "write a share" $ do
+                    it "disallows writing an unallocated share" $
+                        withMaxSuccess few $ \(ArbStorageIndex storageIndex) shareNum secret (SmallShareData shareData) ->
+                            runBackend $ \backend -> do
+                                writeImmutableShare backend storageIndex shareNum (Just [Upload (UploadSecret secret)]) shareData Nothing
+                                    `shouldThrow` (== ShareNotAllocated)
+
+                    it "disallows writes without an upload secret" $
+                        property $
+                            runBackend $ \backend -> do
+                                AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [anUploadSecret]) (AllocateBuckets [ShareNumber 0] 100)
+                                writeImmutableShare backend "storageindex" (ShareNumber 0) Nothing "fooooo" Nothing `shouldThrow` (== MissingUploadSecret)
+
+                    it "disallows writes without a matching upload secret" $
+                        property $
+                            runBackend $ \backend -> do
+                                AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [anUploadSecret]) (AllocateBuckets [ShareNumber 0] 100)
+                                -- Supply the wrong secret as an upload secret and the
+                                -- right secret marked for some other use - this
+                                -- should still fail.
+                                writeImmutableShare backend "storageindex" (ShareNumber 0) (Just [Upload (UploadSecret "wrongsecret")]) "fooooo" Nothing `shouldThrow` (== IncorrectUploadSecret)
+
+                    it "returns the share numbers that were written" $
+                        property $
+                            forAll genStorageIndex (immutableWriteAndEnumerateShares runBackend)
+
+                    it "returns the written data when requested" $
+                        property $
+                            forAll genStorageIndex (immutableWriteAndReadShare runBackend)
+
+                    it "cannot be written more than once" $
+                        property $
+                            forAll genStorageIndex (immutableWriteAndRewriteShare runBackend)
+
+            describe "aborting uploads" $ do
+                it "disallows aborts without an upload secret" $
                     property $
-                        forAll genStorageIndex (alreadyHavePlusAllocatedImm runBackend)
-
-            describe "write a share" $ do
-                it "disallows writing an unallocated share" $
-                    withMaxSuccess few $ \(ArbStorageIndex storageIndex) shareNum secret (SmallShareData shareData) ->
                         runBackend $ \backend -> do
+                            abortImmutableUpload backend "storageindex" (ShareNumber 0) Nothing `shouldThrow` (== MissingUploadSecret)
+
+                it "disallows upload completion after a successful abort" $
+                    withMaxSuccess few $ \(ArbStorageIndex storageIndex) shareNum secret (SmallShareData shareData) size ->
+                        runBackend $ \backend -> do
+                            void $ createImmutableStorageIndex backend storageIndex (Just [Upload (UploadSecret secret)]) (AllocateBuckets [shareNum] size)
+                            abortImmutableUpload backend storageIndex shareNum (Just [Upload (UploadSecret secret)])
                             writeImmutableShare backend storageIndex shareNum (Just [Upload (UploadSecret secret)]) shareData Nothing
                                 `shouldThrow` (== ShareNotAllocated)
 
-                it "disallows writes without an upload secret" $
+                it "disallows aborts without a matching upload secret" $
                     property $
                         runBackend $ \backend -> do
                             AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [anUploadSecret]) (AllocateBuckets [ShareNumber 0] 100)
-                            writeImmutableShare backend "storageindex" (ShareNumber 0) Nothing "fooooo" Nothing `shouldThrow` (== MissingUploadSecret)
+                            abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [Upload (UploadSecret "wrongsecret")]) `shouldThrow` (== IncorrectUploadSecret)
 
-                it "disallows writes without a matching upload secret" $
+                it "allows aborts with a matching upload secret" $
                     property $
                         runBackend $ \backend -> do
                             AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [anUploadSecret]) (AllocateBuckets [ShareNumber 0] 100)
-                            -- Supply the wrong secret as an upload secret and the
-                            -- right secret marked for some other use - this
-                            -- should still fail.
-                            writeImmutableShare backend "storageindex" (ShareNumber 0) (Just [Upload (UploadSecret "wrongsecret")]) "fooooo" Nothing `shouldThrow` (== IncorrectUploadSecret)
+                            abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [anUploadSecret])
 
-                it "returns the share numbers that were written" $
-                    property $
-                        forAll genStorageIndex (immutableWriteAndEnumerateShares runBackend)
+            context "mutable" $ do
+                -- XXX There's lots of problems around supplying negative integer
+                -- values in most places.  We avoid tripping over those cases here
+                -- but we should really fix the implementation to deal with them
+                -- sensible.
+                describe "write a share" $ do
+                    it "returns the share numbers that were written" $
+                        property $
+                            forAll genStorageIndex (mutableWriteAndEnumerateShares runBackend)
 
-                it "returns the written data when requested" $
-                    property $
-                        forAll genStorageIndex (immutableWriteAndReadShare runBackend)
+                    it "rejects an update with the wrong write enabler" $
+                        forAll genStorageIndex $ \storageIndex shareNum (secret, wrongSecret) (SmallShareData shareData, SmallShareData junkData) (NonNegative offset) ->
+                            (secret /= wrongSecret)
+                                && (shareData /= junkData)
+                                ==> monadicIO
+                                    . run
+                                    . runBackend
+                                $ \backend -> do
+                                    first <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (writev shareNum offset shareData)
+                                    success first `shouldBe` True
+                                    readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret wrongSecret) (writev shareNum offset junkData)
+                                        `shouldThrowAndShow` (== IncorrectWriteEnablerSecret)
+                                    third <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (readv offset (fromIntegral $ B.length shareData))
+                                    readData third `shouldBe` Map.singleton shareNum [shareData]
 
-                it "cannot be written more than once" $
-                    property $
-                        forAll genStorageIndex (immutableWriteAndRewriteShare runBackend)
+                    it "returns the written data when requested" $
+                        forAll genStorageIndex (mutableWriteAndReadShare runBackend)
 
-        describe "aborting uploads" $ do
-            it "disallows aborts without an upload secret" $
-                property $
-                    runBackend $ \backend -> do
-                        abortImmutableUpload backend "storageindex" (ShareNumber 0) Nothing `shouldThrow` (== MissingUploadSecret)
+                    it "overwrites older data with newer data" $
+                        -- XXX We go out of our way to generate a legal storage
+                        -- index here.  Illegal storage indexes aren't checked by
+                        -- the system anywhere but they really ought to be.
+                        forAll genStorageIndex $ \storageIndex (readVectors :: NonEmptyList ReadVector) secret shareNum -> do
+                            let is = readVectorToIntervalSet (getNonEmpty readVectors)
+                                sp = IS.span is
+                                (lower, upper) = toFiniteBounds sp
+                                size = upper - lower
+                            bs <- B.pack <$> vector (fromIntegral size)
+                            writeVectors <- writesThatResultIn bs lower size
+                            pure $
+                                counterexample ("write vectors: " <> show writeVectors) $
+                                    ioProperty $
+                                        runBackend $ \backend -> do
+                                            let x = foldMap (\(WriteVector off shareData) -> writev shareNum off shareData) writeVectors
+                                            writeResult <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) x
+                                            success writeResult `shouldBe` True
 
-            it "disallows upload completion after a successful abort" $
-                withMaxSuccess few $ \(ArbStorageIndex storageIndex) shareNum secret (SmallShareData shareData) size ->
-                    runBackend $ \backend -> do
-                        void $ createImmutableStorageIndex backend storageIndex (Just [Upload (UploadSecret secret)]) (AllocateBuckets [shareNum] size)
-                        abortImmutableUpload backend storageIndex shareNum (Just [Upload (UploadSecret secret)])
-                        writeImmutableShare backend storageIndex shareNum (Just [Upload (UploadSecret secret)]) shareData Nothing
-                            `shouldThrow` (== ShareNotAllocated)
+                                            let y = foldMap (\(ReadVector off sz) -> readv off sz) (getNonEmpty readVectors)
+                                            readResult <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) y
+                                            Map.map B.concat (readData readResult)
+                                                `shouldBe` Map.singleton shareNum (B.concat $ extractRead lower bs <$> getNonEmpty readVectors)
 
-            it "disallows aborts without a matching upload secret" $
-                property $
-                    runBackend $ \backend -> do
-                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [anUploadSecret]) (AllocateBuckets [ShareNumber 0] 100)
-                        abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [Upload (UploadSecret "wrongsecret")]) `shouldThrow` (== IncorrectUploadSecret)
+                    it "accepts writes for which the test condition succeeds" $
+                        withMaxSuccess few $ \(ArbStorageIndex storageIndex) secret ->
+                            runBackend $ \backend -> do
+                                runReadTestWrite_ backend storageIndex (WriteEnablerSecret secret) (writev (ShareNumber 0) 0 "abc")
+                                runReadTestWrite_ backend storageIndex (WriteEnablerSecret secret) (testv (ShareNumber 0) 0 "abc" <> writev (ShareNumber 0) 0 "xyz")
+                                readMutableShare backend storageIndex (ShareNumber 0) Nothing `shouldReturn` "xyz"
 
-            it "allows aborts with a matching upload secret" $
-                property $
-                    runBackend $ \backend -> do
-                        AllocationResult [] [ShareNumber 0] <- createImmutableStorageIndex backend "storageindex" (Just [anUploadSecret]) (AllocateBuckets [ShareNumber 0] 100)
-                        abortImmutableUpload backend "storageindex" (ShareNumber 0) (Just [anUploadSecret])
+                    it "rejects writes for which the test condition fails" $
+                        withMaxSuccess few $ \(ArbStorageIndex storageIndex) secret ->
+                            runBackend $ \backend -> do
+                                runReadTestWrite_ backend storageIndex (WriteEnablerSecret secret) (writev (ShareNumber 0) 0 "abc")
+                                runReadTestWrite backend storageIndex (WriteEnablerSecret secret) (testv (ShareNumber 0) 0 "abd" <> writev (ShareNumber 0) 0 "xyz")
+                                    `shouldThrow` (\WriteRefused{} -> True)
+                                readMutableShare backend storageIndex (ShareNumber 0) Nothing `shouldReturn` "abc"
 
-        context "mutable" $ do
-            -- XXX There's lots of problems around supplying negative integer
-            -- values in most places.  We avoid tripping over those cases here
-            -- but we should really fix the implementation to deal with them
-            -- sensible.
-            describe "write a share" $ do
-                it "returns the share numbers that were written" $
-                    property $
-                        forAll genStorageIndex (mutableWriteAndEnumerateShares runBackend)
-
-                it "rejects an update with the wrong write enabler" $
-                    forAll genStorageIndex $ \storageIndex shareNum (secret, wrongSecret) (SmallShareData shareData, SmallShareData junkData) (NonNegative offset) ->
-                        (secret /= wrongSecret)
-                            && (shareData /= junkData)
-                            ==> monadicIO
-                                . run
-                                . runBackend
-                            $ \backend -> do
-                                first <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (writev shareNum offset shareData)
-                                success first `shouldBe` True
-                                readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret wrongSecret) (writev shareNum offset junkData)
-                                    `shouldThrowAndShow` (== IncorrectWriteEnablerSecret)
-                                third <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) (readv offset (fromIntegral $ B.length shareData))
-                                readData third `shouldBe` Map.singleton shareNum [shareData]
-
-                it "returns the written data when requested" $
-                    forAll genStorageIndex (mutableWriteAndReadShare runBackend)
-
-                it "overwrites older data with newer data" $
-                    -- XXX We go out of our way to generate a legal storage
-                    -- index here.  Illegal storage indexes aren't checked by
-                    -- the system anywhere but they really ought to be.
-                    forAll genStorageIndex $ \storageIndex (readVectors :: NonEmptyList ReadVector) secret shareNum -> do
-                        let is = readVectorToIntervalSet (getNonEmpty readVectors)
-                            sp = IS.span is
-                            (lower, upper) = toFiniteBounds sp
-                            size = upper - lower
-                        bs <- B.pack <$> vector (fromIntegral size)
-                        writeVectors <- writesThatResultIn bs lower size
-                        pure $
-                            counterexample ("write vectors: " <> show writeVectors) $
-                                ioProperty $
-                                    runBackend $ \backend -> do
-                                        let x = foldMap (\(WriteVector off shareData) -> writev shareNum off shareData) writeVectors
-                                        writeResult <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) x
-                                        success writeResult `shouldBe` True
-
-                                        let y = foldMap (\(ReadVector off sz) -> readv off sz) (getNonEmpty readVectors)
-                                        readResult <- readvAndTestvAndWritev backend storageIndex (WriteEnablerSecret secret) y
-                                        Map.map B.concat (readData readResult)
-                                            `shouldBe` Map.singleton shareNum (B.concat $ extractRead lower bs <$> getNonEmpty readVectors)
-
-                it "accepts writes for which the test condition succeeds" $
-                    withMaxSuccess few $ \(ArbStorageIndex storageIndex) secret ->
-                        runBackend $ \backend -> do
-                            runReadTestWrite_ backend storageIndex (WriteEnablerSecret secret) (writev (ShareNumber 0) 0 "abc")
-                            runReadTestWrite_ backend storageIndex (WriteEnablerSecret secret) (testv (ShareNumber 0) 0 "abc" <> writev (ShareNumber 0) 0 "xyz")
-                            readMutableShare backend storageIndex (ShareNumber 0) Nothing `shouldReturn` "xyz"
-
-                it "rejects writes for which the test condition fails" $
-                    withMaxSuccess few $ \(ArbStorageIndex storageIndex) secret ->
-                        runBackend $ \backend -> do
-                            runReadTestWrite_ backend storageIndex (WriteEnablerSecret secret) (writev (ShareNumber 0) 0 "abc")
-                            runReadTestWrite backend storageIndex (WriteEnablerSecret secret) (testv (ShareNumber 0) 0 "abd" <> writev (ShareNumber 0) 0 "xyz")
-                                `shouldThrow` (\WriteRefused{} -> True)
-                            readMutableShare backend storageIndex (ShareNumber 0) Nothing `shouldReturn` "abc"
-
-                it "retrieves share data from before writes are applied" $ do
-                    withMaxSuccess few $ \(ArbStorageIndex storageIndex) secret ->
-                        runBackend $ \backend -> do
-                            runReadTestWrite_ backend storageIndex (WriteEnablerSecret secret) (writev (ShareNumber 0) 0 "abc")
-                            runReadTestWrite backend storageIndex (WriteEnablerSecret secret) (readv 0 3 <> writev (ShareNumber 0) 0 "xyz")
-                                `shouldReturn` Map.fromList [(ShareNumber 0, ["abc"])]
-                            runReadTestWrite backend storageIndex (WriteEnablerSecret secret) (readv 0 3)
-                                `shouldReturn` Map.fromList [(ShareNumber 0, ["xyz"])]
+                    it "retrieves share data from before writes are applied" $ do
+                        withMaxSuccess few $ \(ArbStorageIndex storageIndex) secret ->
+                            runBackend $ \backend -> do
+                                runReadTestWrite_ backend storageIndex (WriteEnablerSecret secret) (writev (ShareNumber 0) 0 "abc")
+                                runReadTestWrite backend storageIndex (WriteEnablerSecret secret) (readv 0 3 <> writev (ShareNumber 0) 0 "xyz")
+                                    `shouldReturn` Map.fromList [(ShareNumber 0, ["abc"])]
+                                runReadTestWrite backend storageIndex (WriteEnablerSecret secret) (readv 0 3)
+                                    `shouldReturn` Map.fromList [(ShareNumber 0, ["xyz"])]
 
 alreadyHavePlusAllocatedImm ::
     Backend b =>
@@ -439,7 +442,7 @@ immutableWriteAndReadShare runBackend storageIndex (ShareNumbers shareNumbers) (
     let permutedShares = outerProduct permuteShare shareNumbers shareSeed
         size = sum (fromIntegral . B.length . getShareData <$> shareSeed)
         allocate = AllocateBuckets shareNumbers size
-    label ("Share size: <" <> show (size `div` 1024 + 1) <> " KiB") $
+    label ("Share size: <" <> show (size `div` 1_024 + 1) <> " KiB") $
         forAll (traverse jumbleForUpload permutedShares) $ \shareChunks -> monadicIO $ do
             run $
                 runBackend $ \backend -> do
