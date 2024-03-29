@@ -18,7 +18,7 @@
   in
     ulib.eachSystem ["x86_64-linux" "aarch64-darwin"] (system: let
       pkgs = nixpkgs.legacyPackages.${system};
-      ghcVersion = "ghc96";
+      ghcVersion = "ghc94";
       hslib = hs-flake-utils.lib {
         inherit pkgs;
         src = ./.;
