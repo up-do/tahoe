@@ -70,11 +70,11 @@
         "systems": "systems_2"
       },
       "locked": {
-        "lastModified": 1694529238,
-        "narHash": "sha256-zsNZZGTGnMOf9YpHKJqMSsa0dXbfmxeoJ7xHlrt+xmY=",
+        "lastModified": 1710146030,
+        "narHash": "sha256-SZ5L6eA7HJ/nmkzGG7/ISclqe6oZdOZTNoesiInkXPQ=",
         "owner": "numtide",
         "repo": "flake-utils",
-        "rev": "ff7b65b44d01cf9ba6a71320833626af21126384",
+        "rev": "b1d9ab70662946ef0850d488da1c9019f3a9752a",
         "type": "github"
       },
       "original": {
@@ -150,11 +150,11 @@
         "pre-commit-hooks": "pre-commit-hooks"
       },
       "locked": {
-        "lastModified": 1696872058,
-        "narHash": "sha256-QCfoTnGtUABi5KbWXrTh4fhvLGP5B0gAG6KU1ACd96s=",
+        "lastModified": 1711046962,
+        "narHash": "sha256-zVh8GvjEZL5P/hVpYZZxedvwZGp/n2dlTMs+vcmDN/A=",
         "ref": "main",
-        "rev": "683abab784ee38ea61863b3594d3777345f420d6",
-        "revCount": 20,
+        "rev": "463b30a35db273814df47da68f37f4401d9548a9",
+        "revCount": 22,
         "type": "git",
         "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
       },
@@ -171,32 +171,32 @@
         "pre-commit-hooks": "pre-commit-hooks_2"
       },
       "locked": {
-        "lastModified": 1696872058,
-        "narHash": "sha256-QCfoTnGtUABi5KbWXrTh4fhvLGP5B0gAG6KU1ACd96s=",
+        "lastModified": 1711046962,
+        "narHash": "sha256-zVh8GvjEZL5P/hVpYZZxedvwZGp/n2dlTMs+vcmDN/A=",
         "ref": "main",
-        "rev": "683abab784ee38ea61863b3594d3777345f420d6",
-        "revCount": 20,
+        "rev": "463b30a35db273814df47da68f37f4401d9548a9",
+        "revCount": 22,
         "type": "git",
-        "url": "https://whetstone.private.storage/jcalderone/hs-flake-utils.git"
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
       },
       "original": {
         "ref": "main",
         "type": "git",
-        "url": "https://whetstone.private.storage/jcalderone/hs-flake-utils.git"
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
       }
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1677624842,
-        "narHash": "sha256-4DF9DbDuK4/+KYx0L6XcPBeDHUFVCtzok2fWtwXtb5w=",
+        "lastModified": 1711460390,
+        "narHash": "sha256-akSgjDZL6pVHEfSE6sz1DNSXuYX6hq+P/1Z5IoYWs7E=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "d70f5cd5c3bef45f7f52698f39e7cc7a89daa7f0",
+        "rev": "44733514b72e732bd49f5511bd0203dea9b9a434",
         "type": "github"
       },
       "original": {
         "owner": "nixos",
-        "ref": "nixos-22.11",
+        "ref": "nixos-23.11",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -235,16 +235,16 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1677624842,
-        "narHash": "sha256-4DF9DbDuK4/+KYx0L6XcPBeDHUFVCtzok2fWtwXtb5w=",
+        "lastModified": 1711460390,
+        "narHash": "sha256-akSgjDZL6pVHEfSE6sz1DNSXuYX6hq+P/1Z5IoYWs7E=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "d70f5cd5c3bef45f7f52698f39e7cc7a89daa7f0",
+        "rev": "44733514b72e732bd49f5511bd0203dea9b9a434",
         "type": "github"
       },
       "original": {
         "owner": "nixos",
-        "ref": "nixos-22.11",
+        "ref": "nixos-23.11",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -359,16 +359,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1703180589,
-        "narHash": "sha256-smj9og81aJho3XdzhctG+/xHojjmwhpl3aHnwMk9UgE=",
-        "ref": "main",
-        "rev": "1551123111245223a204bd410f7ccba78aa82812",
-        "revCount": 13,
+        "lastModified": 1711740210,
+        "narHash": "sha256-EHz11c11lAMeP/udIZFr3Hvv8Vb53M1PZe8z44dxC4Q=",
+        "ref": "depfix",
+        "rev": "1f10846bed8dd9051690c7c0826b65f30f18a678",
+        "revCount": 18,
         "type": "git",
         "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types"
       },
       "original": {
-        "ref": "main",
+        "ref": "depfix",
         "type": "git",
         "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types"
       }

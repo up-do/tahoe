@@ -6,7 +6,7 @@
     nixpkgs.follows = "hs-flake-utils/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
     hs-flake-utils.url = "git+https://gitlab.com/tahoe-lafs/hs-flake-utils.git?ref=main";
-    tahoe-great-black-swamp-types.url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types?ref=main";
+    tahoe-great-black-swamp-types.url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types?ref=depfix";
   };
 
   outputs = {
@@ -17,7 +17,7 @@
     hs-flake-utils,
   }: let
     ulib = flake-utils.lib;
-    ghcVersion = "ghc8107";
+    ghcVersion = "ghc94";
   in
     ulib.eachSystem ["x86_64-linux" "aarch64-darwin"] (system: let
       # Get a nixpkgs customized for this system and including our overlay.
@@ -30,8 +30,7 @@
         compilerVersion = ghcVersion;
         packageName = "tahoe-great-black-swamp-testing";
         hsPkgsOverrides = hfinal: hprev: {
-          tahoe-great-black-swamp-types =
-            tahoe-great-black-swamp-types.outputs.packages.${system}.default;
+          tahoe-great-black-swamp-types = tahoe-great-black-swamp-types.outputs.packages.${system}.default;
         };
       };
 
