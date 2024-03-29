@@ -54,7 +54,7 @@ main = do
     -- we have no idea when `FEC.fec ...` will actually cause initialization
     -- of the underlying lib.  Replace this with `FEC.initialize` when
     -- possible.
-    void $ evaluate $ FEC.fec 2 3
+    FEC.initialize
 
     testVectors <- loadTestVectorData
     let testVectorsTree =
