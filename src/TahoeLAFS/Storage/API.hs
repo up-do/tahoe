@@ -31,7 +31,6 @@ module TahoeLAFS.Storage.API (
     CorruptionDetails (..),
     TestOperator (..),
     StorageAPI,
-    LeaseSecret (..),
     UploadSecret (..),
     WriteEnablerSecret (..),
     isUploadSecret,
@@ -69,7 +68,6 @@ import Data.Aeson.Types (
  )
 import Data.Bifunctor (Bifunctor (bimap))
 import qualified Data.ByteString as B
-import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
 import qualified Data.Map as Map
 import Data.Map.Strict (
     Map,
@@ -80,6 +78,7 @@ import Data.Text.Encoding (
     decodeUtf8',
  )
 import Network.HTTP.Types (
+    ByteRange,
     ByteRanges,
     parseByteRanges,
     renderByteRanges,
@@ -139,6 +138,7 @@ import Web.HttpApiData (
     FromHttpApiData (..),
     ToHttpApiData (..),
  )
+import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
 import Prelude hiding (
     toInteger,
  )
@@ -151,13 +151,13 @@ tahoeJSONOptions =
 
 -- The expected lengths of the secrets represented as opaque byte strings.
 -- I haven't checked that these values are correct according to Tahoe-LAFS.
-renewSecretLength :: Num a => a
+renewSecretLength :: (Num a) => a
 renewSecretLength = 32
-writeEnablerSecretLength :: Num a => a
+writeEnablerSecretLength :: (Num a) => a
 writeEnablerSecretLength = 32
-leaseRenewSecretLength :: Num a => a
+leaseRenewSecretLength :: (Num a) => a
 leaseRenewSecretLength = 32
-leaseCancelSecretLength :: Num a => a
+leaseCancelSecretLength :: (Num a) => a
 leaseCancelSecretLength = 32
 
 -- | Encode a CBORSet using a CBOR "set" tag and a determinate length list.
@@ -355,17 +355,27 @@ instance ToJSON CorruptionDetails where
 instance FromJSON CorruptionDetails where
     parseJSON = genericParseJSON tahoeJSONOptions
 
-instance FromHttpApiData ByteRanges where
+instance FromHttpApiData [ByteRange] where
     parseHeader bs =
         case parseByteRanges bs of
             Nothing -> Left "parse failed"
             Just br -> Right br
 
-    parseUrlPiece _ = Left "Cannot parse ByteRanges from URL piece"
-    parseQueryParam _ = Left "Cannot parse ByteRanges from query params"
-
-instance ToHttpApiData ByteRanges where
+instance ToHttpApiData [ByteRange] where
     toHeader = renderByteRanges
+
+    toUrlPiece _ = error "Cannot serialize ByteRanges to URL piece"
+    toQueryParam _ = error "Cannot serialize ByteRanges to query params"
+
+instance FromHttpApiData ByteRange where
+    parseHeader bs =
+        case parseByteRanges bs of
+            Nothing -> Left "parse failed"
+            Just (x : _) -> Right x
+            Just _ -> Left "parse failed srsly"
+
+instance ToHttpApiData ByteRange where
+    toHeader br = renderByteRanges [br]
 
     toUrlPiece _ = error "Cannot serialize ByteRanges to URL piece"
     toQueryParam _ = error "Cannot serialize ByteRanges to query params"
@@ -432,7 +442,7 @@ type CreateImmutableStorageIndex = "immutable" :> Capture "storage_index" Storag
 -- is total nonsense and supplying JSON here will almost certainly break.
 -- At some point hopefully we'll fix servant-py to not need this and then
 -- fix the signature here.
-type WriteImmutableShareData = "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Authz :> ReqBody '[OctetStream, JSON] ShareData :> Header "Content-Range" ByteRanges :> Verb 'PATCH 201 '[CBOR, JSON] ()
+type WriteImmutableShareData = "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Authz :> ReqBody '[OctetStream, JSON] ShareData :> Header "Content-Range" ByteRange :> Verb 'PATCH 201 '[CBOR, JSON] ()
 
 -- PUT .../immutable/:storage_index/:share_number/unstableSort
 -- Cancel an incomplete immutable share upload.
@@ -449,7 +459,7 @@ type GetShareNumbers = Capture "storage_index" StorageIndex :> "shares" :> Get '
 --
 -- GET .../v1/immutable/<storage_index:storage_index>/<int(signed=False):share_number>"
 -- Read from an immutable storage index, possibly from multiple shares, possibly limited to certain ranges
-type ReadImmutableShareData = "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Header "Content-Range" ByteRanges :> Get '[OctetStream, JSON] ShareData
+type ReadImmutableShareData = "immutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Header "Content-Range" ByteRange :> Get '[OctetStream, JSON] ShareData
 
 -- POST .../v1/mutable/:storage_index/read-test-write
 -- General purpose read-test-and-write operation.
@@ -457,7 +467,7 @@ type ReadTestWrite = "mutable" :> Capture "storage_index" StorageIndex :> "read-
 
 -- GET /v1/mutable/:storage_index/:share_number
 -- Read from a mutable storage index
-type ReadMutableShareData = "mutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Header "Content-Range" ByteRanges :> Get '[OctetStream, JSON] ShareData
+type ReadMutableShareData = "mutable" :> Capture "storage_index" StorageIndex :> Capture "share_number" ShareNumber :> Header "Content-Range" ByteRange :> Get '[OctetStream, JSON] ShareData
 
 type StorageAPI =
     "storage"

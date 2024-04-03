@@ -7,18 +7,18 @@
     flake-utils.url = "github:numtide/flake-utils";
     hs-flake-utils.url = "git+https://gitlab.com/tahoe-lafs/hs-flake-utils.git?ref=main";
 
-    tahoe-chk = {
-      url = "git+https://gitlab.com/tahoe-lafs/tahoe-chk.git?ref=main";
+    tahoe-capabilities = {
+      url = "git+https://gitlab.com/tahoe-lafs/tahoe-capabilities.git?ref=merge-libs";
       inputs.nixpkgs.follows = "hs-flake-utils/nixpkgs";
       inputs.hs-flake-utils.follows = "hs-flake-utils";
     };
     tahoe-great-black-swamp-types = {
-      url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types?ref=main";
+      url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types?ref=depfix";
       inputs.nixpkgs.follows = "hs-flake-utils/nixpkgs";
       inputs.hs-flake-utils.follows = "hs-flake-utils";
     };
     tahoe-great-black-swamp-testing = {
-      url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing?ref=main";
+      url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing?ref=exception-eating";
       inputs.nixpkgs.follows = "hs-flake-utils/nixpkgs";
       inputs.hs-flake-utils.follows = "hs-flake-utils";
       inputs.tahoe-great-black-swamp-types.follows = "tahoe-great-black-swamp-types";
@@ -30,12 +30,12 @@
     nixpkgs,
     flake-utils,
     hs-flake-utils,
-    tahoe-chk,
+    tahoe-capabilities,
     tahoe-great-black-swamp-types,
     tahoe-great-black-swamp-testing,
   }: let
     ulib = flake-utils.lib;
-    ghcVersion = "ghc8107";
+    ghcVersion = "ghc94";
   in
     ulib.eachSystem ["x86_64-linux" "aarch64-darwin"] (system: let
       # Get a nixpkgs customized for this system
@@ -56,7 +56,7 @@
         compilerVersion = ghcVersion;
         packageName = "haskell-tahoe-lafs-storage-server";
         hsPkgsOverrides = hfinal: hprev: {
-          tahoe-chk = tahoe-chk.outputs.packages.${system}.default;
+          tahoe-capabilities = tahoe-capabilities.outputs.packages.${system}.default;
           tahoe-great-black-swamp-types = tahoe-great-black-swamp-types.outputs.packages.${system}.default;
           tahoe-great-black-swamp-testing = tahoe-great-black-swamp-testing.outputs.packages.${system}.default;
         };
@@ -77,7 +77,7 @@
       apps = {
         write-cabal-project = hslib.apps.write-cabal-project {
           localPackages = {
-            tahoe-chk = tahoe-chk.sourceInfo.outPath;
+            tahoe-capabilities = tahoe-capabilities.sourceInfo.outPath;
             tahoe-great-black-swamp-types = tahoe-great-black-swamp-types.sourceInfo.outPath;
             tahoe-great-black-swamp-testing = tahoe-great-black-swamp-testing.sourceInfo.outPath;
           };

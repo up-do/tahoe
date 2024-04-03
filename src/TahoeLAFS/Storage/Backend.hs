@@ -5,7 +5,6 @@ module TahoeLAFS.Storage.Backend (
     WriteImmutableError (..),
     writeMutableShare,
     withUploadSecret,
-    module Tahoe.Storage.Backend,
 ) where
 
 import Control.Exception (
@@ -13,10 +12,12 @@ import Control.Exception (
     throw,
     throwIO,
  )
+import qualified Data.ByteString.Lazy as BSL
 import Data.Map.Strict (
     fromList,
  )
 import Network.HTTP.Types (
+    ByteRange (..),
     ByteRanges,
  )
 import Tahoe.Storage.Backend
@@ -25,7 +26,7 @@ import TahoeLAFS.Storage.API (
  )
 
 writeMutableShare ::
-    Backend b =>
+    (Backend b) =>
     b ->
     StorageIndex ->
     ShareNumber ->
@@ -69,3 +70,5 @@ withUploadSecret ss f =
     case filter isUploadSecret <$> ss of
         Just [Upload s] -> f s
         _ -> throwIO MissingUploadSecret
+
+-- instance Monoid [(ByteRange, BSL.ByteString)]

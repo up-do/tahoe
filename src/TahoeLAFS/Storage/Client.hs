@@ -26,16 +26,18 @@ module TahoeLAFS.Storage.Client (
 ) where
 
 import Control.Monad ((>=>))
-import qualified "base64" Data.ByteString.Base64.URL as Base64URL
 import Data.Proxy (Proxy (..))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Network.HTTP.Client.TLS (
     newTlsManagerWith,
  )
+
+-- URI (URI, uriAuthority, uriPath),
+import Data.ByteString (ByteString)
+import Network.HTTP.Types (ByteRange)
 import Network.Socket (HostName, PortNumber)
 import Network.URI (
-    -- URI (URI, uriAuthority, uriPath),
     URIAuth (URIAuth, uriPort, uriRegName, uriUserInfo),
     parseURI,
  )
@@ -54,9 +56,11 @@ import Servant.Client (
  )
 import TahoeLAFS.Internal.Client (SPKIHash (SPKIHash), mkGBSManagerSettings)
 import TahoeLAFS.Storage.API (
+    ShareNumber,
     StorageAPI,
  )
 import Text.Read (readMaybe)
+import qualified "base64" Data.ByteString.Base64.URL as Base64URL
 
 newApi :: Proxy StorageAPI
 newApi = Proxy
@@ -69,19 +73,24 @@ newApi = Proxy
         :<|> getImmutableShareNumbers
         :<|> adviseCorruptImmutableShare
         :<|> readTestWrite
-        :<|> readMutableShares
+        :<|> ( readMutableShares ::
+                    [Char] ->
+                    ShareNumber ->
+                    Maybe ByteRange ->
+                    ClientM ByteString
+                )
         :<|> getMutableShareNumbers
         :<|> adviseCorruptMutableShare
     ) = client newApi
 
 -- | Represent a "new" style service URL.
 data NURL = NURLv1
-    { -- | The cryptographic fingerprint of the server hosting the service.
-      nurlv1Fingerprint :: SPKIHash
-    , -- | A hint about the network location of the server hosting the service.
-      nurlv1Address :: (HostName, PortNumber)
-    , -- | The secret identifier for the service within the scope of the server.
-      nurlv1Swissnum :: T.Text
+    { nurlv1Fingerprint :: SPKIHash
+    -- ^ The cryptographic fingerprint of the server hosting the service.
+    , nurlv1Address :: (HostName, PortNumber)
+    -- ^ A hint about the network location of the server hosting the service.
+    , nurlv1Swissnum :: T.Text
+    -- ^ The secret identifier for the service within the scope of the server.
     }
     deriving (Ord, Eq, Show)
 

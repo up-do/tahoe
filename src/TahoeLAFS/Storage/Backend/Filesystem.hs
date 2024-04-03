@@ -34,6 +34,7 @@ import qualified Data.Set as Set
 import Network.HTTP.Types (ByteRange (..))
 import System.Directory (
     createDirectoryIfMissing,
+    doesDirectoryExist,
     doesPathExist,
     listDirectory,
     removeFile,
@@ -99,7 +100,7 @@ maxMutableShareSize = 69_105 * 1_000 * 1_000 * 1_000 * 1_000
 -- Perhaps should be based on the underlying filesystem?  Currently a single
 -- file is used per share so we cannot hold a share larger than the
 -- filesystem's largest support file.
-maximumShareSize :: Integral i => i
+maximumShareSize :: (Integral i) => i
 maximumShareSize = fromIntegral (maxBound :: Int)
 
 --  storage/
@@ -195,9 +196,9 @@ instance Backend FilesystemBackend where
     getMutableShareNumbers = getImmutableShareNumbers
 
     readMutableShare backend storageIndex shareNum Nothing =
-        readMutableShare backend storageIndex shareNum (Just [ByteRangeFrom 0])
+        readMutableShare backend storageIndex shareNum (Just $ ByteRangeFrom 0)
     readMutableShare (FilesystemBackend root) storageIndex shareNum (Just ranges) =
-        B.concat <$> mapM (readMutableShare' root storageIndex shareNum) ranges
+        readMutableShare' root storageIndex shareNum ranges
 
     readvAndTestvAndWritev
         backend@(FilesystemBackend root)
@@ -328,7 +329,7 @@ checkUploadSecret sharePath (UploadSecret uploadSecret) = do
     unless matches (throwIO IncorrectUploadSecret)
 
 -- | Partition a list based on the result of a monadic predicate.
-partitionM :: Monad m => (a -> m Bool) -> [a] -> m ([a], [a])
+partitionM :: (Monad m) => (a -> m Bool) -> [a] -> m ([a], [a])
 partitionM pred' items = bimap (fst <$>) (fst <$>) . Data.List.partition snd . zip items <$> mapM pred' items
 
 {- | Throw IncorrectUploadSecret if the given secret does not match the

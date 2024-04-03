@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TupleSections #-}
 
 module TahoeLAFS.Storage.Backend.Memory where
 
@@ -9,6 +10,7 @@ import Control.Exception (
 import Control.Foldl.ByteString (Word8)
 import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as LB
 import Data.Composition ((.:))
 import Data.IORef (
     IORef,
@@ -21,6 +23,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isNothing)
 import Data.Monoid (All (All, getAll), First (First, getFirst))
 import qualified Data.Set as Set
+import Network.HTTP.Types (ByteRange (..))
 import Tahoe.Storage.Backend (
     AllocateBuckets (AllocateBuckets),
     AllocationResult (..),
@@ -53,8 +56,15 @@ import Prelude hiding (
     lookup,
     map,
  )
+import qualified Prelude as Prelude
 
-data ImmutableShare = Complete ShareData | Uploading UploadSecret ShareData
+data ImmutableShare = Complete ShareData | Uploading UploadSecret PartialShare
+
+data PartialShare = PartialShare {partialShareData :: LB.ByteString, partialShareWritten :: [Bool]}
+
+-- Data.Default ?
+emptyPartialShare :: Int -> PartialShare
+emptyPartialShare size = PartialShare (LB.replicate (fromIntegral size) 0) (replicate size False)
 
 data Bucket = Bucket
     { bucketSize :: Size
@@ -63,7 +73,7 @@ data Bucket = Bucket
 
 data SecretProtected a = SecretProtected WriteEnablerSecret a deriving (Eq)
 
-instance Show a => Show (SecretProtected a) where
+instance (Show a) => Show (SecretProtected a) where
     show (SecretProtected _ a) = "SecretProtected " <> show a
 
 readSecret :: SecretProtected a -> WriteEnablerSecret
@@ -160,8 +170,8 @@ allocate storageIndex shareNumbers uploadSecret size backend@MemoryBackend{memor
     mergeBuckets (Bucket _ newShares) (Bucket _ oldShares) = Bucket size (newShares <> oldShares)
 
     -- The bucket we would allocate if there were no relevant existing state.
-    newBucket = Bucket size (Map.fromList (zip shareNumbers (repeat newUpload)))
-    newUpload = Uploading uploadSecret ""
+    newBucket = Bucket size (Map.fromList (Prelude.map (,newUpload) shareNumbers))
+    newUpload = Uploading uploadSecret (emptyPartialShare (fromIntegral size))
 
 abort ::
     StorageIndex ->
@@ -185,34 +195,56 @@ writeImm ::
     StorageIndex ->
     ShareNumber ->
     UploadSecret ->
-    B.ByteString ->
+    ShareData ->
+    ByteRange ->
     MemoryBackend ->
     (MemoryBackend, ())
-writeImm storageIndex shareNum (UploadSecret uploadSecret) newData b@MemoryBackend{memoryBackendBuckets}
-    | isNothing share = throw ShareNotAllocated
-    | otherwise = (b{memoryBackendBuckets = updated}, ())
+writeImm storageIndex shareNum (UploadSecret uploadSecret) newData range b@MemoryBackend{memoryBackendBuckets} = (b{memoryBackendBuckets = updated}, ())
   where
-    bucket = Map.lookup storageIndex memoryBackendBuckets
-    share = bucket >>= Map.lookup shareNum . bucketShares
-    size = bucketSize <$> bucket
-    updated = Map.adjust (\bkt -> bkt{bucketShares = Map.adjust writeToShare shareNum (bucketShares bkt)}) storageIndex memoryBackendBuckets
+    updated = case Map.lookup storageIndex memoryBackendBuckets of
+        Just _ -> Map.adjust (\bkt -> bkt{bucketShares = Map.adjust writeToShare shareNum (bucketShares bkt)}) storageIndex memoryBackendBuckets
+        Nothing -> throw ShareNotAllocated
 
     writeToShare :: ImmutableShare -> ImmutableShare
     writeToShare (Complete _) = throw ImmutableShareAlreadyWritten
-    writeToShare (Uploading (UploadSecret existingSecret) existingData)
-        | authorized =
-            (if Just True == (complete existingData newData <$> size) then Complete else Uploading (UploadSecret existingSecret)) (existingData <> newData)
-        | otherwise = throw IncorrectUploadSecret
+    writeToShare (Uploading (UploadSecret existingSecret) existing)
+        | not authorized = throw IncorrectUploadSecret
+        | isComplete newShare = Complete (LB.toStrict $ partialShareData newShare)
+        | otherwise = Uploading (UploadSecret existingSecret) newShare
       where
         authorized = constEq existingSecret uploadSecret
+        newShare = integrate existing (newData, range)
+        isComplete (PartialShare _ ws) = and ws
 
-    complete x y = (B.length x + B.length y ==) . fromIntegral
+-- splitAllByRanges :: ShareData -> [ByteRange] -> [(ShareData, ByteRange)]
+-- splitAllByRanges "" [] = []
+-- splitAllByRanges "" _ = error "splitAllByRanges ran out of bytes, still have ranges"
+-- splitAllByRanges bs (r : rs) = (left, r) : splitAllByRanges right rs
+--   where
+--     (left, right) = splitByRange bs r
+-- splitAllByRanges _ [] = error "splitAllByRanges ran out of ranges, still have bytes"
+
+-- splitByRange :: ShareData -> ByteRange -> (ShareData, ShareData)
+-- splitByRange bs (ByteRangeFromTo start end) = B.splitAt (fromIntegral $ end - start + 1) bs
+-- splitByRange bs (ByteRangeFrom _) = (bs, "")
+-- splitByRange bs (ByteRangeSuffix suffixLength) = B.splitAt (fromIntegral suffixLength) bs
+
+integrate :: PartialShare -> (ShareData, ByteRange) -> PartialShare
+integrate PartialShare{partialShareData, partialShareWritten} (new, ByteRangeFromTo start end)
+    | or writtenInRange = throw ConflictingWrite
+    | otherwise = PartialShare (dataPrefix <> LB.fromStrict new <> dataSuffix) (writtenPrefix <> replicate numBytes True <> writtenSuffix)
+  where
+    numBytes = fromIntegral $ end - start + 1
+    (writtenPrefix, writtenMore) = splitAt (fromIntegral start) partialShareWritten
+    (writtenInRange, writtenSuffix) = splitAt numBytes writtenMore
+    (dataPrefix, dataMore) = LB.splitAt (fromIntegral start) partialShareData
+    (_, dataSuffix) = LB.splitAt (fromIntegral numBytes) dataMore
 
 instance Show MemoryBackend where
     show _ = "<MemoryBackend>"
 
-maximumShareSize :: Integral i => i
-maximumShareSize = fromIntegral (maxBound :: Int)
+maximumShareSize :: (Integral i) => i
+maximumShareSize = 1024 * 1024 * 100
 
 makeVersionParams :: Integer -> Version1Parameters
 makeVersionParams totalSize =
@@ -285,8 +317,8 @@ instance Backend (IORef MemoryBackend) where
                     Just newShares -> (m{mutableShares = newShares}, TestSuccess)
             | otherwise = (m, TestFail)
 
-    readMutableShare backend storageIndex shareNum queryRange =
-        B.concat <$> readMutableShare' backend storageIndex shareNum queryRange
+    readMutableShare backend storageIndex shareNum theRange =
+        B.concat <$> readMutableShare' backend storageIndex shareNum (pure <$> theRange) -- turn "Just theRange" into "Just [theRange]"
 
     createImmutableStorageIndex backend storageIndex secrets (AllocateBuckets shareNums size) =
         withUploadSecret secrets $ \secret ->
@@ -296,10 +328,11 @@ instance Backend (IORef MemoryBackend) where
         withUploadSecret secrets $ \secret ->
             atomicModifyIORef' backend (abort storageIndex shareNumber secret)
 
-    writeImmutableShare backend storageIndex shareNumber secrets shareData Nothing = do
+    writeImmutableShare backend storageIndex shareNumber secrets shareData qrange = do
         withUploadSecret secrets $ \secret ->
-            atomicModifyIORef' backend (writeImm storageIndex shareNumber secret shareData)
-    writeImmutableShare _ _ _ _ _ _ = error "writeImmutableShare got bad input"
+            atomicModifyIORef' backend (writeImm storageIndex shareNumber secret shareData ranges)
+      where
+        ranges = fromMaybe (ByteRangeFromTo 0 (fromIntegral $ B.length shareData - 1)) qrange
 
     adviseCorruptImmutableShare _backend _ _ _ =
         return mempty

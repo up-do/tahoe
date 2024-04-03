@@ -2,23 +2,8 @@ module SemanticSpec (
     spec,
 ) where
 
-import Control.Monad (
-    void,
-    when,
- )
-import Data.Bits (
-    xor,
- )
-import qualified Data.ByteString as B
 import Data.Data (Proxy (Proxy))
-import Data.IORef (IORef)
-import Data.Interval (Boundary (Closed, Open), Extended (Finite), Interval, interval, lowerBound, upperBound)
-import qualified Data.IntervalSet as IS
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
-import GHC.Word (
-    Word8,
- )
 import Network.HTTP.Types (ByteRange (ByteRangeSuffix))
 import System.Directory (
     removeDirectoryRecursive,
@@ -28,51 +13,20 @@ import System.IO.Temp (
     getCanonicalTemporaryDirectory,
  )
 import Tahoe.Storage.Testing.Spec (
-    ShareNumbers (..),
-    genStorageIndex,
     makeStorageSpec,
  )
 import TahoeLAFS.Storage.API (
-    AllocateBuckets (AllocateBuckets),
-    AllocationResult (AllocationResult),
-    CBORSet (..),
-    LeaseSecret (..),
-    Offset,
-    ReadTestWriteResult (readData, success),
     ReadTestWriteVectors,
     ReadVector (ReadVector),
-    ShareData,
     ShareNumber (ShareNumber),
-    Size,
-    StorageIndex,
     TestWriteVectors,
-    UploadSecret (UploadSecret),
     WriteEnablerSecret (WriteEnablerSecret),
     WriteVector (WriteVector),
-    allocated,
-    alreadyHave,
-    readv,
-    toInteger,
-    writev,
- )
-import TahoeLAFS.Storage.Backend (
-    Backend (
-        abortImmutableUpload,
-        createImmutableStorageIndex,
-        getImmutableShareNumbers,
-        getMutableShareNumbers,
-        readImmutableShare,
-        readvAndTestvAndWritev,
-        writeImmutableShare
-    ),
-    WriteImmutableError (..),
-    writeMutableShare,
  )
 import TahoeLAFS.Storage.Backend.Filesystem (
     FilesystemBackend (FilesystemBackend),
  )
 import TahoeLAFS.Storage.Backend.Memory (
-    MemoryBackend (..),
     MutableShareSize (..),
     SecretProtected (..),
     addShares,
@@ -90,28 +44,11 @@ import Test.Hspec (
     describe,
     it,
     shouldBe,
-    shouldThrow,
  )
 import Test.QuickCheck (
-    Gen,
-    NonEmptyList (getNonEmpty),
-    NonNegative (NonNegative),
-    Positive (..),
-    Property,
-    chooseInteger,
-    counterexample,
-    forAll,
-    ioProperty,
-    oneof,
     property,
-    vector,
-    (==>),
  )
 import Test.QuickCheck.Classes (Laws (..), semigroupMonoidLaws)
-import Test.QuickCheck.Monadic (
-    monadicIO,
-    run,
- )
 import Prelude hiding (
     lookup,
     toInteger,
@@ -203,5 +140,8 @@ createTemporaryDirectory = do
     parent <- getCanonicalTemporaryDirectory
     createTempDirectory parent "gbs-semanticspec"
 
+cleanupFilesystem :: FilesystemBackend -> IO ()
 cleanupFilesystem (FilesystemBackend path) = removeDirectoryRecursive path
+
+cleanupMemory :: (Applicative f) => p -> f ()
 cleanupMemory _ = pure ()
