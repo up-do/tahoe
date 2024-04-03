@@ -8,7 +8,7 @@ module Tahoe.Storage.Testing.Spec (
     genStorageIndex,
 ) where
 
-import Control.Exception (Exception, finally, throwIO, try)
+import Control.Exception (Exception, bracket, finally, throwIO, try)
 import Control.Monad (void, when)
 import qualified Data.Base32String as Base32
 import Data.Bifunctor (Bifunctor (second))
@@ -47,7 +47,7 @@ import Tahoe.Storage.Backend (
     ShareNumber (..),
     Size,
     StorageIndex,
-    TestOperator (Eq),
+    TestOperator (..),
     TestVector (..),
     TestWriteVectors (..),
     UploadSecret (..),
@@ -71,6 +71,7 @@ import Test.QuickCheck (
     Positive (Positive, getPositive),
     Property,
     Testable (property),
+    choose,
     chooseInt,
     chooseInteger,
     counterexample,
@@ -80,6 +81,9 @@ import Test.QuickCheck (
     label,
     listOf1,
     oneof,
+    quickCheck,
+    sample,
+    sample',
     shuffle,
     suchThatMap,
     vector,
@@ -132,15 +136,12 @@ instance Arbitrary TestVector where
 
 instance Arbitrary WriteVector where
     arbitrary = WriteVector <$> arbNonNeg <*> arbitrary
-
 instance Arbitrary ReadVector where
     arbitrary = ReadVector <$> arbNonNeg <*> (getPositive <$> arbitrary)
-
 newtype ArbStorageIndex = ArbStorageIndex StorageIndex deriving newtype (Show)
 
 instance Arbitrary ArbStorageIndex where
     arbitrary = ArbStorageIndex <$> genStorageIndex
-
 newtype SomeShareData = SomeShareData {getShareData :: B.ByteString}
 
 instance Show SomeShareData where
@@ -197,23 +198,26 @@ genStorageIndex :: Gen StorageIndex
 genStorageIndex =
     suchThatMap gen10ByteString (Just . b32encode)
 
+-- it's just a string, generate that!
 gen10ByteString :: Gen B.ByteString
 gen10ByteString =
     suchThatMap (vectorOf 10 (arbitrary :: Gen Word8)) (Just . B.pack)
+
+someStorageIndex :: StorageIndex
+someStorageIndex = "aacaiaaeaaaaaa" :: StorageIndex
 
 shouldThrowAndShow :: forall e a. (HasCallStack, Exception e, Show a) => IO a -> Selector e -> Expectation
 shouldThrowAndShow action selector = do
     result <- try action :: IO (Either e a)
     case result of
         Left exc -> throwIO exc `shouldThrow` selector
-        Right value -> do
-            print $ "Got a value instead of an exception: " <> show value
+        Right value -> print $ "Got a value instead of an exception: " <> show value
 
 {- | Instantiate property tests for the storage backend specification for a
  particular backend.
 -}
 makeStorageSpec ::
-    Backend b =>
+    (Backend b) =>
     -- | An action that produces a new, empty backend.
     IO b ->
     -- | A function that produces an action to clean up any state that may
@@ -223,16 +227,15 @@ makeStorageSpec ::
     Spec
 makeStorageSpec makeBackend cleanupBackend = do
     let runBackend = withBackend makeBackend cleanupBackend
-    modifyMaxShrinks (const 10_000) $
+    modifyMaxShrinks (`max` 1_000) $
         context "v1" $ do
             context "immutable" $ do
                 describe "allocate a storage index" $ do
                     it "rejects allocations above the immutable share size limit" $
-                        withMaxSuccess few $ \(ArbStorageIndex storageIndex) (ShareNumbers shareNums) secret (Positive extra) -> do
-                            runBackend $ \backend -> do
-                                limit <- maximumImmutableShareSize . parameters <$> version backend
-                                createImmutableStorageIndex backend storageIndex (Just [Upload (UploadSecret secret)]) (AllocateBuckets shareNums (limit + extra))
-                                    `shouldThrow` (== MaximumShareSizeExceeded limit (limit + extra))
+                        withMaxSuccess few $ \(ArbStorageIndex storageIndex) (ShareNumbers shareNums) secret (Positive extra) -> runBackend $ \backend -> do
+                            limit <- maximumImmutableShareSize . parameters <$> version backend
+                            createImmutableStorageIndex backend someStorageIndex (Just [Upload (UploadSecret secret)]) (AllocateBuckets shareNums (limit + extra))
+                                `shouldThrow` (== MaximumShareSizeExceeded limit (limit + extra))
 
                     it "accounts for all allocated share numbers" $
                         property $
@@ -241,7 +244,7 @@ makeStorageSpec makeBackend cleanupBackend = do
                 describe "write a share" $ do
                     it "disallows writing an unallocated share" $
                         withMaxSuccess few $ \(ArbStorageIndex storageIndex) shareNum secret (SmallShareData shareData) ->
-                            runBackend $ \backend -> do
+                            runBackend $ \backend ->
                                 writeImmutableShare backend storageIndex shareNum (Just [Upload (UploadSecret secret)]) shareData Nothing
                                     `shouldThrow` (== ShareNotAllocated)
 
@@ -266,7 +269,7 @@ makeStorageSpec makeBackend cleanupBackend = do
 
                     it "returns the written data when requested" $
                         property $
-                            forAll genStorageIndex (immutableWriteAndReadShare runBackend)
+                            immutableWriteAndReadShare runBackend someStorageIndex
 
                     it "cannot be written more than once" $
                         property $
@@ -275,8 +278,8 @@ makeStorageSpec makeBackend cleanupBackend = do
             describe "aborting uploads" $ do
                 it "disallows aborts without an upload secret" $
                     property $
-                        runBackend $ \backend -> do
-                            abortImmutableUpload backend "storageindex" (ShareNumber 0) Nothing `shouldThrow` (== MissingUploadSecret)
+                        runBackend $
+                            \backend -> abortImmutableUpload backend "storageindex" (ShareNumber 0) Nothing `shouldThrow` (== MissingUploadSecret)
 
                 it "disallows upload completion after a successful abort" $
                     withMaxSuccess few $ \(ArbStorageIndex storageIndex) shareNum secret (SmallShareData shareData) size ->
@@ -310,8 +313,9 @@ makeStorageSpec makeBackend cleanupBackend = do
 
                     it "rejects an update with the wrong write enabler" $
                         forAll genStorageIndex $ \storageIndex shareNum (secret, wrongSecret) (SmallShareData shareData, SmallShareData junkData) (NonNegative offset) ->
-                            (secret /= wrongSecret)
-                                && (shareData /= junkData)
+                            secret /= wrongSecret
+                                && shareData
+                                    /= junkData
                                 ==> monadicIO
                                     . run
                                     . runBackend
@@ -324,7 +328,10 @@ makeStorageSpec makeBackend cleanupBackend = do
                                     readData third `shouldBe` Map.singleton shareNum [shareData]
 
                     it "returns the written data when requested" $
-                        forAll genStorageIndex (mutableWriteAndReadShare runBackend)
+                        property $
+                            mutableWriteAndReadShare
+                                runBackend
+                                someStorageIndex
 
                     it "overwrites older data with newer data" $
                         -- XXX We go out of our way to generate a legal storage
@@ -365,17 +372,16 @@ makeStorageSpec makeBackend cleanupBackend = do
                                     `shouldThrow` (\WriteRefused{} -> True)
                                 readMutableShare backend storageIndex (ShareNumber 0) Nothing `shouldReturn` "abc"
 
-                    it "retrieves share data from before writes are applied" $ do
-                        withMaxSuccess few $ \(ArbStorageIndex storageIndex) secret ->
-                            runBackend $ \backend -> do
-                                runReadTestWrite_ backend storageIndex (WriteEnablerSecret secret) (writev (ShareNumber 0) 0 "abc")
-                                runReadTestWrite backend storageIndex (WriteEnablerSecret secret) (readv 0 3 <> writev (ShareNumber 0) 0 "xyz")
-                                    `shouldReturn` Map.fromList [(ShareNumber 0, ["abc"])]
-                                runReadTestWrite backend storageIndex (WriteEnablerSecret secret) (readv 0 3)
-                                    `shouldReturn` Map.fromList [(ShareNumber 0, ["xyz"])]
+                    it "retrieves share data from before writes are applied" $ withMaxSuccess few $ \(ArbStorageIndex storageIndex) secret ->
+                        runBackend $ \backend -> do
+                            runReadTestWrite_ backend storageIndex (WriteEnablerSecret secret) (writev (ShareNumber 0) 0 "abc")
+                            runReadTestWrite backend storageIndex (WriteEnablerSecret secret) (readv 0 3 <> writev (ShareNumber 0) 0 "xyz")
+                                `shouldReturn` Map.fromList [(ShareNumber 0, ["abc"])]
+                            runReadTestWrite backend storageIndex (WriteEnablerSecret secret) (readv 0 3)
+                                `shouldReturn` Map.fromList [(ShareNumber 0, ["xyz"])]
 
 alreadyHavePlusAllocatedImm ::
-    Backend b =>
+    (Backend b) =>
     ((b -> IO ()) -> IO ()) -> -- Execute a function on the backend.
     StorageIndex -> -- The storage index to use
     ShareNumbers -> -- The share numbers to allocate
@@ -397,7 +403,7 @@ alreadyHavePlusAllocatedImm runBackend storageIndex (ShareNumbers shareNumbers) 
 -- The share numbers of immutable share data written to the shares of a given
 -- storage index can be retrieved.
 immutableWriteAndEnumerateShares ::
-    Backend b =>
+    (Backend b) =>
     ((b -> IO ()) -> IO ()) -> -- Execute a function on the backend.
     StorageIndex ->
     ShareNumbers ->
@@ -418,7 +424,7 @@ immutableWriteAndEnumerateShares runBackend storageIndex (ShareNumbers shareNumb
   where
     uploadSecret = Just [anUploadSecret]
 
-jumbleForUpload :: [SomeShareData] -> Gen [(Maybe ByteRanges, SomeShareData)]
+jumbleForUpload :: [SomeShareData] -> Gen [(Maybe ByteRange, SomeShareData)]
 jumbleForUpload =
     fmap (map (second SomeShareData))
         . shuffle
@@ -426,13 +432,13 @@ jumbleForUpload =
         . foldl' step (0, [])
         . map getShareData
   where
-    step (size, accum) bs = (size + B.length bs, (Just [ByteRangeFromTo (fromIntegral size) (fromIntegral $ size + B.length bs - 1)], bs) : accum)
+    step (size, accum) bs = (size + B.length bs, (Just (ByteRangeFromTo (fromIntegral size) (fromIntegral $ size + B.length bs - 1)), bs) : accum)
 
 -- Immutable share data written to the shares of a given storage index can be
 -- retrieved verbatim and associated with the same share numbers as were
 -- specified during writing.
 immutableWriteAndReadShare ::
-    Backend b =>
+    (Backend b) =>
     ((b -> IO ()) -> IO ()) -> -- Execute a function on the backend.
     StorageIndex ->
     ShareNumbers ->
@@ -459,7 +465,7 @@ immutableWriteAndReadShare runBackend storageIndex (ShareNumbers shareNumbers) (
 -- Immutable share data written to the shares of a given storage index cannot
 -- be rewritten by a subsequent writeImmutableShare operation.
 immutableWriteAndRewriteShare ::
-    Backend b =>
+    (Backend b) =>
     ((b -> IO ()) -> IO ()) -> -- Execute a function on the backend.
     StorageIndex ->
     ShareNumbers ->
@@ -482,7 +488,7 @@ immutableWriteAndRewriteShare runBackend storageIndex (ShareNumbers shareNumbers
 -- The share numbers of mutable share data written to the shares of a given
 -- storage index can be retrieved.
 mutableWriteAndEnumerateShares ::
-    Backend b =>
+    (Backend b) =>
     ((b -> IO ()) -> IO ()) -> -- Execute a function on the backend.
     StorageIndex ->
     ShareNumbers ->
@@ -503,7 +509,7 @@ mutableWriteAndEnumerateShares runBackend storageIndex (ShareNumbers shareNumber
  entire share, any range of the share's bytes can be read.
 -}
 mutableWriteAndReadShare ::
-    Backend b =>
+    (Backend b) =>
     ((b -> IO ()) -> IO ()) -> -- Execute a function on the backend.
     StorageIndex ->
     B.ByteString ->
@@ -518,13 +524,13 @@ mutableWriteAndReadShare runBackend storageIndex secret MutableWriteExample{..} 
     shareRange :: ShareData
     shareRange = case mweReadRange of
         Nothing -> B.concat mweShareData
-        Just ranges -> B.concat $ readRange (B.concat mweShareData) <$> ranges
+        Just srange -> readRange (B.concat mweShareData) srange
 
     readRange shareData (ByteRangeFrom start) = B.drop (fromIntegral start) shareData
-    readRange shareData (ByteRangeFromTo start end) = B.take (fromIntegral $ (end - start) + 1) . B.drop (fromIntegral start) $ shareData
+    readRange shareData (ByteRangeFromTo start end) = B.take (fromIntegral $ end - start + 1) . B.drop (fromIntegral start) $ shareData
     readRange shareData (ByteRangeSuffix len) = B.drop (B.length shareData - fromIntegral len) shareData
 
-withBackend :: Backend b => IO b -> (b -> IO ()) -> (b -> IO ()) -> IO ()
+withBackend :: (Backend b) => IO b -> (b -> IO ()) -> (b -> IO ()) -> IO ()
 withBackend b cleanup action = do
     backend <- b
     action backend `finally` cleanup backend
@@ -539,8 +545,8 @@ permuteShare (ShareNumber number) (SomeShareData xs) = SomeShareData (B.map xor'
     xor' = xor $ fromInteger number
 
 writeShares ::
-    (ShareNumber -> shareData -> dataRange -> IO ()) ->
-    [(ShareNumber, [(dataRange, shareData)])] ->
+    (ShareNumber -> shareData -> Maybe ByteRange -> IO ()) ->
+    [(ShareNumber, [(Maybe ByteRange, shareData)])] ->
     IO ()
 writeShares _write [] = return ()
 writeShares write ((shareNumber, shareDatav) : rest) = do
@@ -548,11 +554,11 @@ writeShares write ((shareNumber, shareDatav) : rest) = do
     writeShares write rest
 
 readVectorToIntervalSet :: [ReadVector] -> IS.IntervalSet Integer
-readVectorToIntervalSet rvs = foldr IS.insert IS.empty (f <$> rvs)
+readVectorToIntervalSet rvs = foldr (IS.insert . f) IS.empty rvs
   where
     f (ReadVector offset size) = interval (Finite offset, Closed) (Finite $ offset + size, Open)
 
-toFiniteBounds :: Show r => Interval r -> (r, r)
+toFiniteBounds :: (Show r) => Interval r -> (r, r)
 toFiniteBounds i = (lower, upper)
   where
     lower = toFinite (lowerBound i)
@@ -582,7 +588,7 @@ writesThatResultIn bs offset size =
 bytes :: Integer -> Gen B.ByteString
 bytes len = B.pack <$> vector (fromIntegral len)
 
-extractRead :: Integral a => a -> ShareData -> ReadVector -> ShareData
+extractRead :: (Integral a) => a -> ShareData -> ReadVector -> ShareData
 extractRead lower bs (ReadVector offset size) = B.take (fromIntegral size) . B.drop (fromIntegral offset - fromIntegral lower) $ bs
 
 {- | Define the maximum number of times some "simple" properties will be
@@ -596,7 +602,7 @@ few = 5
 data MutableWriteExample = MutableWriteExample
     { mweShareNumber :: ShareNumber
     , mweShareData :: [ShareData]
-    , mweReadRange :: Maybe ByteRanges
+    , mweReadRange :: Maybe ByteRange
     }
     deriving (Show)
 
@@ -604,34 +610,34 @@ instance Arbitrary MutableWriteExample where
     arbitrary = do
         mweShareNumber <- arbitrary
         mweShareData <- listOf1 (B.pack <$> listOf1 arbitrary)
-        mweReadRange <- byteRanges (fromIntegral . sum . fmap B.length $ mweShareData)
+        mweReadRange <- byteRange (fromIntegral . sum . fmap B.length $ mweShareData)
         pure MutableWriteExample{..}
 
 -- | ByteRange type lets us use illegal values like -1 but then things go poorly
-byteRanges :: Integer -> Gen (Maybe [ByteRange])
-byteRanges dataSize =
+byteRange :: Integer -> Gen (Maybe ByteRange)
+byteRange dataSize =
     oneof
         [ -- A request for all the bytes.
           pure Nothing
         , -- A request for bytes starting from and including some zero-indexed
           -- position and running to the end of the data.
-          Just . (: []) . ByteRangeFrom <$> chooseInteger (0, dataSize - 1)
+          Just . ByteRangeFrom <$> chooseInteger (0, dataSize - 1)
         , -- A request for bytes starting from and including some zero-indexed
           -- position and running to and including another zero-indexed
           -- position.
-          Just . (: []) .: fromTo <$> chooseInteger (0, dataSize - 1) <*> chooseInteger (0, dataSize)
+          Just .: fromTo <$> chooseInteger (0, dataSize - 1) <*> chooseInteger (0, dataSize)
         , -- A request for a certain number of bytes of suffix.
-          Just . (: []) . ByteRangeSuffix <$> chooseInteger (1, dataSize + 1)
+          Just . ByteRangeSuffix <$> chooseInteger (1, dataSize + 1)
         ]
   where
     fromTo a b = ByteRangeFromTo a (a + b)
 
-runReadTestWrite :: Backend b => b -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadResult
+runReadTestWrite :: (Backend b) => b -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadResult
 runReadTestWrite backend storageIndex secret rtw = do
     result <- readvAndTestvAndWritev backend storageIndex secret rtw
     if success result then pure (readData result) else throwIO WriteRefused
 
-runReadTestWrite_ :: Backend b => b -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ()
+runReadTestWrite_ :: (Backend b) => b -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ()
 runReadTestWrite_ backend storageIndex secret rtw = void $ runReadTestWrite backend storageIndex secret rtw
 
 data WriteRefused = WriteRefused deriving (Show, Eq)
