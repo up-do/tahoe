@@ -19,7 +19,6 @@ import Data.Aeson (
  )
 import Data.ByteArray (constEq)
 import qualified Data.ByteString as B
-import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
 import Data.Hashable (Hashable (hashWithSalt))
 import Data.Map.Merge.Strict (merge, preserveMissing, zipWithMatched)
 import qualified Data.Map.Strict as Map
@@ -29,8 +28,10 @@ import GHC.Generics (
     Generic,
  )
 import Network.HTTP.Types (
+    ByteRange,
     ByteRanges,
  )
+import qualified "base64-bytestring" Data.ByteString.Base64 as Base64
 
 -- | A human-readable description of the backend software in use.
 type ApplicationVersion = B.ByteString
@@ -134,9 +135,9 @@ data ReadTestWriteVectors = ReadTestWriteVectors
 data TestWriteVectors = TestWriteVectors
     { test :: [TestVector]
     , write :: [WriteVector]
-    , -- | If given, truncate or extend the object to the given size.  If
-      -- necessary, fill new space with NUL.
-      newLength :: Maybe Integer
+    , newLength :: Maybe Integer
+    -- ^ If given, truncate or extend the object to the given size.  If
+    -- necessary, fill new space with NUL.
     }
     deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
@@ -338,11 +339,11 @@ class Backend b where
 
     -- May throw ImmutableShareAlreadyWritten
     -- XXX Return should indicate what remains to be written
-    writeImmutableShare :: b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> Maybe ByteRanges -> IO ()
+    writeImmutableShare :: b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> ShareData -> Maybe ByteRange -> IO ()
     abortImmutableUpload :: b -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
     adviseCorruptImmutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
     getImmutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
-    readImmutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readImmutableShare :: b -> StorageIndex -> ShareNumber -> Maybe ByteRange -> IO ShareData
 
     -- | Read some ranges of all shares held and/or, if test conditions are
     -- met, overwrite some ranges of some shares.
@@ -356,6 +357,6 @@ class Backend b where
         ReadTestWriteVectors ->
         IO ReadTestWriteResult
 
-    readMutableShare :: b -> StorageIndex -> ShareNumber -> QueryRange -> IO ShareData
+    readMutableShare :: b -> StorageIndex -> ShareNumber -> Maybe ByteRange -> IO ShareData
     getMutableShareNumbers :: b -> StorageIndex -> IO (CBORSet ShareNumber)
     adviseCorruptMutableShare :: b -> StorageIndex -> ShareNumber -> CorruptionDetails -> IO ()
