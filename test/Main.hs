@@ -251,7 +251,7 @@ spec = do
                 uploadable
                     === Just (UT.UploadInfo (UT.PartNumber 1) "0123456789A")
                     .&&. tree'
-                    === FT.fromList [UT.PartUploading (UT.PartNumber 1) (UT.Interval 0 10)]
+                        === FT.fromList [UT.PartUploading (UT.PartNumber 1) (UT.Interval 0 10)]
 
             it "an uploadable chunk with unusable bytes on the left can be found" $ do
                 let parts' =
@@ -272,7 +272,7 @@ spec = do
                         , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 21)
                         ]
                     .&&. (UT.uploadInfoBytes <$> uploadable)
-                    === Just "BCDEFGHIJKL"
+                        === Just "BCDEFGHIJKL"
 
             it "an uploadable part can be found on the right hand side of a disconnected tree" $ do
                 let parts' =
@@ -284,10 +284,10 @@ spec = do
                 uploadable
                     === Just (UT.UploadInfo (UT.PartNumber 2) "BCDEFGHIJKL")
                     .&&. tree'
-                    === FT.fromList
-                        [ UT.PartData (UT.Interval 0 1) "01" 22
-                        , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 21)
-                        ]
+                        === FT.fromList
+                            [ UT.PartData (UT.Interval 0 1) "01" 22
+                            , UT.PartUploading (UT.PartNumber 2) (UT.Interval 11 21)
+                            ]
 
             it "the last uploadable part can be short (1 nodes)" $ do
                 let part = UT.PartData (UT.Interval 11 15) "BCDEF" 16
@@ -503,7 +503,7 @@ spec = do
                 atomically $ s3TimePasses (immutableUploadProgressTimeout `div` 3 * 2) (storageIndex, ShareNumber 1) backend
 
                 -- Then make some progress
-                writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Hello world" (Just [ByteRangeFromTo 0 10])
+                writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Hello world" (Just $ ByteRangeFromTo 0 10)
 
                 -- Then allow more time to pass such that the total elapsed
                 -- time exceeds the progress timeout.
@@ -512,7 +512,7 @@ spec = do
                 -- Then make some more progress.  This is allowed because the
                 -- full progress timeout never elapsed without some progress
                 -- being made.
-                writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Goodbye world" (Just [ByteRangeFromTo 11 23])
+                writeImmutableShare backend storageIndex (ShareNumber 1) secrets "Goodbye world" (Just $ ByteRangeFromTo 11 23)
 
         describe "S3Backend" $ makeStorageSpec (s3Backend @Minio) cleanupS3
 

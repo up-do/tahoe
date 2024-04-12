@@ -20,7 +20,7 @@ import qualified Amazonka.S3 as S3
 import qualified Amazonka.S3.Lens as S3
 import Conduit (MonadIO (liftIO), MonadResource, MonadUnliftIO (withRunInIO), ResourceT, sinkList)
 import Control.Concurrent (forkIO)
-import Control.Concurrent.Async (concurrently, mapConcurrently, mapConcurrently_, race)
+import Control.Concurrent.Async (concurrently, mapConcurrently, race)
 import Control.Concurrent.STM.Lifted (STM, atomically)
 import qualified Control.Concurrent.STM.Map as SMap
 import Control.Exception (Exception, SomeException, throw, throwIO, try)
@@ -76,9 +76,13 @@ import Tahoe.Storage.Backend (
  )
 import qualified Tahoe.Storage.Backend.Internal.BufferedUploadTree as UT
 import Tahoe.Storage.Backend.Internal.Delay (HasDelay (..), TimeoutOperation (Cancelled, Delayed))
+
 import TahoeLAFS.Storage.Backend (
+    -- LeaseSecret (..),
     withUploadSecret,
  )
+
+-- import TahoeLAFS.Storage.Backend.API (LeaseSecret)
 import Text.Read (readMaybe)
 
 {- | The type of share data held in the server.  This is intended to make it
@@ -109,7 +113,7 @@ instance UT.IsBackend Minio where
     minPartSize = UT.PartSize (5 * 1024 * 1024)
     computePartSize totalSize = max UT.minPartSize (UT.PartSize $ totalSize `div` 10_000)
 
-useMultipartUpload :: forall backend. UT.IsBackend backend => Proxy backend -> Size -> Bool
+useMultipartUpload :: forall backend. (UT.IsBackend backend) => Proxy backend -> Size -> Bool
 useMultipartUpload _ size = size >= partSize
   where
     UT.PartSize partSize = UT.minPartSize @backend
@@ -117,23 +121,23 @@ useMultipartUpload _ size = size >= partSize
 -- | This saves in-progress uploads so we can finish or abort
 data UploadState backend delay where
     UploadState ::
-        { -- | The total size of the data for this particular upload (ie, the
-          -- share size).
-          uploadStateSize :: Integer
-        , -- | A tree tracking separate pieces of the data for this particular
-          -- upload.  Pieces can be added in any order as long as they are
-          -- eventually all added.
-          uploadParts :: UT.UploadTree backend S3.UploadPartResponse
-        , -- | If the data is large enough to use the multipart upload API and a
-          -- response has been received to the request creating the new
-          -- multipart upload tracking value, it is here.
-          uploadResponse :: Maybe S3.CreateMultipartUploadResponse
-        , -- | The Tahoe client-facing upload secret protecting writes to this
-          -- state.
-          uploadSecret :: UploadSecret
-        , -- | The delay which will eventually timeout this upload and clean up
-          -- this state if progress is not made quickly enough.
-          uploadProgressTimeout :: delay
+        { uploadStateSize :: Integer
+        -- ^ The total size of the data for this particular upload (ie, the
+        -- share size).
+        , uploadParts :: UT.UploadTree backend S3.UploadPartResponse
+        -- ^ A tree tracking separate pieces of the data for this particular
+        -- upload.  Pieces can be added in any order as long as they are
+        -- eventually all added.
+        , uploadResponse :: Maybe S3.CreateMultipartUploadResponse
+        -- ^ If the data is large enough to use the multipart upload API and a
+        -- response has been received to the request creating the new
+        -- multipart upload tracking value, it is here.
+        , uploadSecret :: UploadSecret
+        -- ^ The Tahoe client-facing upload secret protecting writes to this
+        -- state.
+        , uploadProgressTimeout :: delay
+        -- ^ The delay which will eventually timeout this upload and clean up
+        -- this state if progress is not made quickly enough.
         } ->
         UploadState backend delay
 
@@ -150,18 +154,18 @@ type AllocatedShares backend delay = SMap.Map (StorageIndex, ShareNumber) (Uploa
 -- | The top-level type of the S3 backend implementation.
 data S3Backend backend delay where
     S3Backend ::
-        { -- | Details about how to talk to the S3 server (for example, to
-          -- establish connections and authorizer requests).
-          s3BackendEnv :: AWS.Env
-        , -- | The name of the S3 bucket in which this backend will store all
-          -- data.
-          s3BackendBucket :: S3.BucketName
-        , -- | A prefix to apply to all S3 object keys operated on by this
-          -- backend.
-          s3BackendPrefix :: T.Text
-        , -- | Internal state relating to immutable uploads that are in
-          -- progress.
-          s3BackendState :: AllocatedShares backend delay
+        { s3BackendEnv :: AWS.Env
+        -- ^ Details about how to talk to the S3 server (for example, to
+        -- establish connections and authorizer requests).
+        , s3BackendBucket :: S3.BucketName
+        -- ^ The name of the S3 bucket in which this backend will store all
+        -- data.
+        , s3BackendPrefix :: T.Text
+        -- ^ A prefix to apply to all S3 object keys operated on by this
+        -- backend.
+        , s3BackendState :: AllocatedShares backend delay
+        -- ^ Internal state relating to immutable uploads that are in
+        -- progress.
         } ->
         S3Backend backend delay
 
@@ -176,7 +180,7 @@ data InternalAllocationResult backend delay response
 
 internalAllocate ::
     forall backend delay.
-    UT.IsBackend backend =>
+    (UT.IsBackend backend) =>
     StorageIndex ->
     UploadSecret ->
     Integer ->
@@ -233,7 +237,7 @@ internalAllocateComplete storageIndex shareNum response curState = do
  that share and that part upload's state.  Otherwise, throw an error.
 -}
 internalStartUpload ::
-    UT.IsBackend backend =>
+    (UT.IsBackend backend) =>
     -- | Secrets provided to authorize this upload.
     Maybe [LeaseSecret] ->
     -- | The storage index of the share the upload will be part of.
@@ -272,7 +276,7 @@ internalFinishSingleUpload = SMap.delete .: (,)
 (f .:: g) w x y = f . g w x y
 
 internalFinishUpload ::
-    UT.IsBackend backend =>
+    (UT.IsBackend backend) =>
     UT.PartNumber ->
     StorageIndex ->
     ShareNumber ->
@@ -284,7 +288,7 @@ internalFinishUpload partNum' storageIndex shareNum response =
   where
     stateKey = (storageIndex, shareNum)
 
-infiniteRetry :: MonadCatch m => m b -> m b
+infiniteRetry :: (MonadCatch m) => m b -> m b
 infiniteRetry a = a `onException` infiniteRetry a
 
 externalAllocate :: S3Backend backend delay -> StorageIndex -> ShareNumber -> ResourceT IO S3.CreateMultipartUploadResponse
@@ -332,7 +336,7 @@ niceShow uploadTree = intercalate "," $ s <$> toList uploadTree
 -}
 startPartUpload ::
     forall backend delay.
-    UT.IsBackend backend =>
+    (UT.IsBackend backend) =>
     Offset ->
     ShareData ->
     UploadState backend delay ->
@@ -385,7 +389,7 @@ startPartUpload offset shareData u@UploadState{uploadStateSize, uploadParts, upl
 {- | Mark a part upload as finished and compute the new overall state of the
  multipart upload.
 -}
-finishPartUpload :: forall backend delay. UT.IsBackend backend => UT.PartNumber -> S3.UploadPartResponse -> UploadState backend delay -> (Maybe (UploadState backend delay), (Bool, [S3.CompletedPart]))
+finishPartUpload :: forall backend delay. (UT.IsBackend backend) => UT.PartNumber -> S3.UploadPartResponse -> UploadState backend delay -> (Maybe (UploadState backend delay), (Bool, [S3.CompletedPart]))
 finishPartUpload finishedPartNum response u@UploadState{uploadParts, uploadStateSize} =
     ( if multipartFinished then Nothing else Just u{uploadParts = newUploadParts}
     ,
@@ -558,15 +562,16 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
 
             runResourceT $ traverse_ f xs
 
-    writeImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> B.ByteString -> QueryRange -> IO ()
+    writeImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> B.ByteString -> Maybe ByteRange -> IO ()
     writeImmutableShare _ _ _ Nothing _ _ = throwIO MissingUploadSecret
     writeImmutableShare s3 storageIndex shareNum secrets shareData Nothing = do
         -- If no range is given, this is the whole thing.
-        writeImmutableShare s3 storageIndex shareNum secrets shareData (Just [ByteRangeFromTo 0 (fromIntegral $ B.length shareData - 1)])
+        writeImmutableShare s3 storageIndex shareNum secrets shareData (Just $ ByteRangeFromTo 0 (fromIntegral $ B.length shareData - 1))
     writeImmutableShare s3Backend storageIndex shareNum secrets shareBytes (Just byteRanges) =
-        runResourceT $ traverse_ (uncurry (writeAnImmutableChunk s3Backend storageIndex shareNum secrets)) (divideByRanges byteRanges shareData)
+        runResourceT $ writeAnImmutableChunk s3Backend storageIndex shareNum secrets offset shareData'
       where
         shareData = toShareData shareBytes
+        [(offset, shareData')] = divideByRanges [byteRanges] shareData
 
     abortImmutableUpload :: S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe [LeaseSecret] -> IO ()
     abortImmutableUpload _ _ _ Nothing = throwIO MissingUploadSecret
@@ -612,10 +617,10 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
 
     getImmutableShareNumbers = runResourceT .: getImmutableShareNumbersR
 
-    readImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO B.ByteString
+    readImmutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe ByteRange -> IO B.ByteString
     readImmutableShare = runResourceT .:: readImmutableShareR
 
-    readvAndTestvAndWritev :: HasCallStack => S3Backend backend delay -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadTestWriteResult
+    readvAndTestvAndWritev :: (HasCallStack) => S3Backend backend delay -> StorageIndex -> WriteEnablerSecret -> ReadTestWriteVectors -> IO ReadTestWriteResult
     readvAndTestvAndWritev s3@S3Backend{s3BackendPrefix, s3BackendBucket, s3BackendEnv} storageIndex secret (ReadTestWriteVectors{readVector, testWriteVectors}) =
         -- XXX
         --
@@ -638,7 +643,7 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
                 when (isJust expectedSecret && Just secret /= expectedSecret) $ throwR IncorrectWriteEnablerSecret
 
                 (readResults, testResults) <- withRunInIO (\runInIO -> concurrently (runInIO doReads) (runInIO doTests))
-                if and . fmap and $ testResults
+                if all and $ testResults
                     then ReadTestWriteResult True readResults <$ doWrites
                     else pure $ ReadTestWriteResult False readResults
       where
@@ -648,14 +653,13 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
         doReads = do
             (CBORSet knownShareNumbers) <- getMutableShareNumbersR s3 storageIndex
             let shareNumberList = Set.toList knownShareNumbers
-                rs = readMutableShareR s3 storageIndex <$> shareNumberList <*> pure (toQueryRange readVector)
-            shareData <- withRunInIO (\runInIO -> mapConcurrently runInIO rs)
+                rs = readMutableShareR s3 storageIndex <$> shareNumberList <*> (Just . toSingleRange <$> readVector)
+            shareData <- withRunInIO (`mapConcurrently` rs)
 
             pure $ Map.fromList (zip shareNumberList ((: []) <$> shareData))
 
-        toQueryRange = Just . fmap toSingleRange
-          where
-            toSingleRange (ReadVector offset size) = ByteRangeFromTo offset (offset + size - 1)
+        -- toQueryRange = Just . fmap toSingleRange
+        toSingleRange (ReadVector offset size) = ByteRangeFromTo offset (offset + size - 1)
 
         doTests :: ResourceT IO [[Bool]]
         doTests =
@@ -676,7 +680,7 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
 
         readSomeThings :: ShareNumber -> TestVector -> ResourceT IO B.ByteString
         readSomeThings shareNum (TestVector offset size _ _) =
-            readMutableShareR s3 storageIndex shareNum (Just [ByteRangeFromTo offset (offset + size - 1)])
+            readMutableShareR s3 storageIndex shareNum (Just $ ByteRangeFromTo offset (offset + size - 1))
                 `catch` on404 ""
 
         readEverything :: ShareNumber -> ResourceT IO B.ByteString
@@ -697,7 +701,7 @@ instance forall backend delay. (UT.IsBackend backend, HasDelay delay) => Backend
 
     getMutableShareNumbers = getImmutableShareNumbers
 
-    readMutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> IO B.ByteString
+    readMutableShare :: S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe ByteRange -> IO B.ByteString
     readMutableShare = readImmutableShare
 
 {- | Given the complete bytes of a share, apply a single write vector and
@@ -712,7 +716,7 @@ applyWriteVector bs (WriteVector offset shareData) =
     filler = B.replicate (fromIntegral offset - B.length bs) 0
 
 -- | Given the complete bytes of a share, apply a
-applyWriteVectors :: Foldable f => B.ByteString -> f WriteVector -> B.ByteString
+applyWriteVectors :: (Foldable f) => B.ByteString -> f WriteVector -> B.ByteString
 applyWriteVectors = foldl' applyWriteVector
 
 storageIndexShareNumberToObjectKey :: T.Text -> StorageIndex -> ShareNumber -> S3.ObjectKey
@@ -738,7 +742,7 @@ class Backend b where
  If the map does not include the key, do nothing.  Otherwise, replace the old
  value with the new value and return the result value.
 -}
-adjust' :: Hashable k => (v -> (Maybe v, b)) -> k -> SMap.Map k v -> STM (Maybe b)
+adjust' :: (Hashable k) => (v -> (Maybe v, b)) -> k -> SMap.Map k v -> STM (Maybe b)
 adjust' f k m = do
     SMap.lookup k m >>= \case
         Nothing -> pure Nothing
@@ -798,7 +802,7 @@ on404 _ e = throwR e
  the given size at the given location.
 -}
 createOneImmutableShare ::
-    UT.IsBackend backend =>
+    (UT.IsBackend backend) =>
     S3Backend backend delay ->
     StorageIndex ->
     Integer ->
@@ -915,10 +919,10 @@ divideByRanges (ByteRangeFromTo from to : rs) shareData = (from, shareTake size 
     size = fromIntegral $ to - from + 1
 divideByRanges (_ : _) _ = error "Only `from-to` ranges are supported for uploads"
 
-throwR :: Exception e => e -> ResourceT IO a
+throwR :: (Exception e) => e -> ResourceT IO a
 throwR = liftIO . throwIO
 
-getImmutableShareNumbersR :: MonadResource m => S3Backend backend delay -> StorageIndex -> m (CBORSet ShareNumber)
+getImmutableShareNumbersR :: (MonadResource m) => S3Backend backend delay -> StorageIndex -> m (CBORSet ShareNumber)
 getImmutableShareNumbersR (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPrefix}) storageIndex = do
     resp <- AWS.send s3BackendEnv (set S3.listObjects_prefix (Just . storageIndexPrefix s3BackendPrefix $ storageIndex) $ S3.newListObjects s3BackendBucket)
     case view S3.listObjectsResponse_contents resp of
@@ -938,12 +942,12 @@ getImmutableShareNumbersR (S3Backend{s3BackendEnv, s3BackendBucket, s3BackendPre
               where
                 parsed = T.split (== '/') (view (S3.object_key . S3._ObjectKey) obj)
 
-getMutableShareNumbersR :: MonadResource m => S3Backend backend delay -> StorageIndex -> m (CBORSet ShareNumber)
+getMutableShareNumbersR :: (MonadResource m) => S3Backend backend delay -> StorageIndex -> m (CBORSet ShareNumber)
 getMutableShareNumbersR = getImmutableShareNumbersR
 
-readImmutableShareR :: S3Backend backend delay -> StorageIndex -> ShareNumber -> QueryRange -> ResourceT IO B.ByteString
+readImmutableShareR :: S3Backend backend delay -> StorageIndex -> ShareNumber -> Maybe ByteRange -> ResourceT IO B.ByteString
 readImmutableShareR (S3Backend{..}) storageIndex shareNum qrange =
-    B.concat <$> readEach qrange
+    B.concat <$> readEach (pure <$> qrange) -- ugly hack to get this working with a single Maybe ByteRange
   where
     objectKey = storageIndexShareNumberToObjectKey s3BackendPrefix storageIndex shareNum
     readEach :: Maybe [ByteRange] -> ResourceT IO [B.ByteString]
@@ -957,6 +961,7 @@ readImmutableShareR (S3Backend{..}) storageIndex shareNum qrange =
         resp <- AWS.send s3BackendEnv getObj
         B.concat <$> AWS.sinkBody (resp ^. S3.getObjectResponse_body) sinkList
 
+--  (local-set-key "M" '(self-insert-command "M"))
 readMutableShareR = readImmutableShareR
 
 mapConcurrentlyR f xs = withRunInIO (\runInIO -> mapConcurrently (runInIO . f) xs)
