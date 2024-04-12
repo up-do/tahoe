@@ -913,7 +913,10 @@ writeAnImmutableChunk s3backend@(S3Backend{s3BackendEnv, s3BackendBucket, s3Back
 divideByRanges :: [ByteRange] -> ShareData -> [(Offset, ShareData)]
 divideByRanges [] "" = []
 divideByRanges [] _ = error "There are no more ranges but there is still share data"
-divideByRanges (_ : _) "" = error "There are more ranges but we ran out of share data"
+divideByRanges (ByteRangeFromTo from@0 to@0 : rs) shareData@"" = (from, shareTake size shareData) : divideByRanges rs (shareDrop size shareData)
+  where
+    size = fromIntegral $ to - from + 1
+divideByRanges br@(_ : _) "" = error $ "There are more ranges but we ran out of share data,and ByteRange is " <> show br
 divideByRanges (ByteRangeFromTo from to : rs) shareData = (from, shareTake size shareData) : divideByRanges rs (shareDrop size shareData)
   where
     size = fromIntegral $ to - from + 1
