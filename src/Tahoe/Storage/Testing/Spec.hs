@@ -432,7 +432,7 @@ jumbleForUpload =
         . foldl' step (0, [])
         . map getShareData
   where
-    step (size, accum) bs = (size + B.length bs, (Just (ByteRangeFromTo (fromIntegral size) (fromIntegral $ size + B.length bs - 1)), bs) : accum)
+    step (size, accum) bs = (size + B.length bs, (Just (ByteRangeFromTo (fromIntegral size) (max 0 $ fromIntegral $ size + B.length bs - 1)), bs) : accum)
 
 -- Immutable share data written to the shares of a given storage index can be
 -- retrieved verbatim and associated with the same share numbers as were
