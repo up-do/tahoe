@@ -60,8 +60,6 @@ extra-doc-files:
 
 -- Extra source files to be distributed with the package, such as examples, or a tutorial module.
 extra-source-files:
-  ChangeLog.md
-  README.md
   test/data/3of10.0
   test/data/3of10.1
   test/data/3of10.2
