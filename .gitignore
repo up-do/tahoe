@@ -1,2 +1,6 @@
 dist-newstyle
 .stack-work
+.updo
+updo
+project-nix
+project-versions.nix
