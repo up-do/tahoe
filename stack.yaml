@@ -1,0 +1,54 @@
+user-message: "WARNING: This stack project is generated."
+allow-newer: true
+allow-newer-deps:
+  - aeson
+  - http-api-data
+  - servant-docs
+  - servant-foreign
+  - text-short
+  - lattices
+  - quickcheck-instances
+
+resolver: lts-18.28
+
+# We have 1 package.
+packages:
+  - ./.
+
+# We have 4 source packages:
+#   * external 0
+#   * internal 4
+#   * external forks 0
+#   * internal forks 0
+extra-deps:
+  # Source Packages, internal to this organisation (private and public).
+  - git: https://gitlab.com/philderbeast/tahoe-capabilities.git
+    commit: fca4ccfa60754b0b82b8f5a8b511b429a4cc52e1
+  - git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp.git
+    commit: 6544c432230e25fadff383bb7adfff211c89e89d
+  - git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing.git
+    commit: ae4d7c1427af533cc607adc116d989ad836ee9aa
+  - git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types.git
+    commit: fa7bd9edc495018bd4bac605f03289ed848e2200
+
+  # Package versions for published packages either not on Stackage or
+  # not matching the version on Stackage for the resolver we use.
+  # These package-version extra dependencies are equivalent to cabal constraints.
+  - OneTuple-0.4.2
+  - amazonka-2.0
+  - amazonka-core-2.0
+  - amazonka-s3-2.0
+  - amazonka-sso-2.0
+  - amazonka-sts-2.0
+  - crypton-1.0.0
+  - data-array-byte-0.1.0.1
+  - fec-0.1.1
+  - foldable1-classes-compat-0.1
+  - hashable-1.4.7.0
+  - lens-5.2.3
+  - network-3.1.4.0
+  - quickcheck-instances-0.3.30
+  - semialign-1.2.0.1
+  - servant-js-0.9.4.2
+  - tahoe-chk-0.2.0.0
+  - tree-diff-0.3.0.1
