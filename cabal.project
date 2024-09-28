@@ -2,7 +2,7 @@ import: ./project-stackage/lts-18.28.config
 
 -- We have 1 package.
 packages:
-    .
+    s3
 
 -- We have 4 source packages:
 --   * external 0

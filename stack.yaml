@@ -4,7 +4,7 @@ resolver: lts-18.28
 
 # We have 1 package.
 packages:
-  - ./.
+  - ./s3
 
 # We have 4 source packages:
 #   * external 0
