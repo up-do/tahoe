@@ -1,4 +1,5 @@
 [ { dep = "OneTuple", ver = "0.4.2" }
+, { dep = "aeson", ver = "1.5.6.0@rev:7" }
 , { dep = "amazonka", ver = "2.0" }
 , { dep = "amazonka-core", ver = "2.0" }
 , { dep = "amazonka-s3", ver = "2.0" }
@@ -6,14 +7,18 @@
 , { dep = "amazonka-sts", ver = "2.0" }
 , { dep = "crypton", ver = "1.0.0" }
 , { dep = "data-array-byte", ver = "0.1.0.1" }
-, { dep = "fec", ver = "0.1.1" }
+, { dep = "fec", ver = "0.2.0" }
 , { dep = "foldable1-classes-compat", ver = "0.1" }
 , { dep = "hashable", ver = "1.4.7.0" }
+, { dep = "http-api-data", ver = "0.4.3" }
 , { dep = "lens", ver = "5.2.3" }
 , { dep = "network", ver = "3.1.4.0" }
 , { dep = "quickcheck-instances", ver = "0.3.30" }
 , { dep = "semialign", ver = "1.2.0.1" }
+, { dep = "servant-docs", ver = "0.12" }
+, { dep = "servant-foreign", ver = "0.15.4@rev:8" }
 , { dep = "servant-js", ver = "0.9.4.2" }
 , { dep = "tahoe-chk", ver = "0.2.0.0" }
+, { dep = "text-short", ver = "0.1.6" }
 , { dep = "tree-diff", ver = "0.3.0.1" }
 ]

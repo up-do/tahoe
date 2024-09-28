@@ -1,8 +1,4 @@
-[ { loc = "https://gitlab.com/philderbeast/tahoe-capabilities.git"
-  , tag = "bc0b9aba4840de4c3aaa9bc33013fd1d3260288b"
-  , sub = [] : List Text
-  }
-, { loc = "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp.git"
+[ { loc = "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp.git"
   , tag = "6544c432230e25fadff383bb7adfff211c89e89d"
   , sub = [] : List Text
   }
