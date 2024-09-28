@@ -1,0 +1,988 @@
+{
+  "nodes": {
+    "flake-compat": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1673956053,
+        "narHash": "sha256-4gtG9iQuiKITOjNQQeQIpoIB6b16fm+504Ch3sNKLd8=",
+        "owner": "edolstra",
+        "repo": "flake-compat",
+        "rev": "35bb57c0c8d8b62bbfd284272c928ceb64ddbde9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "edolstra",
+        "repo": "flake-compat",
+        "type": "github"
+      }
+    },
+    "flake-compat_2": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1673956053,
+        "narHash": "sha256-4gtG9iQuiKITOjNQQeQIpoIB6b16fm+504Ch3sNKLd8=",
+        "owner": "edolstra",
+        "repo": "flake-compat",
+        "rev": "35bb57c0c8d8b62bbfd284272c928ceb64ddbde9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "edolstra",
+        "repo": "flake-compat",
+        "type": "github"
+      }
+    },
+    "flake-compat_3": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1673956053,
+        "narHash": "sha256-4gtG9iQuiKITOjNQQeQIpoIB6b16fm+504Ch3sNKLd8=",
+        "owner": "edolstra",
+        "repo": "flake-compat",
+        "rev": "35bb57c0c8d8b62bbfd284272c928ceb64ddbde9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "edolstra",
+        "repo": "flake-compat",
+        "type": "github"
+      }
+    },
+    "flake-compat_4": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1673956053,
+        "narHash": "sha256-4gtG9iQuiKITOjNQQeQIpoIB6b16fm+504Ch3sNKLd8=",
+        "owner": "edolstra",
+        "repo": "flake-compat",
+        "rev": "35bb57c0c8d8b62bbfd284272c928ceb64ddbde9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "edolstra",
+        "repo": "flake-compat",
+        "type": "github"
+      }
+    },
+    "flake-utils": {
+      "inputs": {
+        "systems": "systems"
+      },
+      "locked": {
+        "lastModified": 1710146030,
+        "narHash": "sha256-SZ5L6eA7HJ/nmkzGG7/ISclqe6oZdOZTNoesiInkXPQ=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "b1d9ab70662946ef0850d488da1c9019f3a9752a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_10": {
+      "locked": {
+        "lastModified": 1676283394,
+        "narHash": "sha256-XX2f9c3iySLCw54rJ/CZs+ZK6IQy7GXNY4nSOyu2QG4=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "3db36a8b464d0c4532ba1c7dda728f4576d6d073",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_11": {
+      "inputs": {
+        "systems": "systems_6"
+      },
+      "locked": {
+        "lastModified": 1710146030,
+        "narHash": "sha256-SZ5L6eA7HJ/nmkzGG7/ISclqe6oZdOZTNoesiInkXPQ=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "b1d9ab70662946ef0850d488da1c9019f3a9752a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_12": {
+      "locked": {
+        "lastModified": 1676283394,
+        "narHash": "sha256-XX2f9c3iySLCw54rJ/CZs+ZK6IQy7GXNY4nSOyu2QG4=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "3db36a8b464d0c4532ba1c7dda728f4576d6d073",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_2": {
+      "locked": {
+        "lastModified": 1676283394,
+        "narHash": "sha256-XX2f9c3iySLCw54rJ/CZs+ZK6IQy7GXNY4nSOyu2QG4=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "3db36a8b464d0c4532ba1c7dda728f4576d6d073",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_3": {
+      "inputs": {
+        "systems": "systems_2"
+      },
+      "locked": {
+        "lastModified": 1710146030,
+        "narHash": "sha256-SZ5L6eA7HJ/nmkzGG7/ISclqe6oZdOZTNoesiInkXPQ=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "b1d9ab70662946ef0850d488da1c9019f3a9752a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_4": {
+      "locked": {
+        "lastModified": 1676283394,
+        "narHash": "sha256-XX2f9c3iySLCw54rJ/CZs+ZK6IQy7GXNY4nSOyu2QG4=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "3db36a8b464d0c4532ba1c7dda728f4576d6d073",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_5": {
+      "locked": {
+        "lastModified": 1676283394,
+        "narHash": "sha256-XX2f9c3iySLCw54rJ/CZs+ZK6IQy7GXNY4nSOyu2QG4=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "3db36a8b464d0c4532ba1c7dda728f4576d6d073",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_6": {
+      "locked": {
+        "lastModified": 1667395993,
+        "narHash": "sha256-nuEHfE/LcWyuSWnS8t12N1wc105Qtau+/OdUAjtQ0rA=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "5aed5285a952e0b949eb3ba02c12fa4fcfef535f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_7": {
+      "inputs": {
+        "systems": "systems_3"
+      },
+      "locked": {
+        "lastModified": 1694529238,
+        "narHash": "sha256-zsNZZGTGnMOf9YpHKJqMSsa0dXbfmxeoJ7xHlrt+xmY=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "ff7b65b44d01cf9ba6a71320833626af21126384",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_8": {
+      "inputs": {
+        "systems": "systems_4"
+      },
+      "locked": {
+        "lastModified": 1694529238,
+        "narHash": "sha256-zsNZZGTGnMOf9YpHKJqMSsa0dXbfmxeoJ7xHlrt+xmY=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "ff7b65b44d01cf9ba6a71320833626af21126384",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_9": {
+      "inputs": {
+        "systems": "systems_5"
+      },
+      "locked": {
+        "lastModified": 1710146030,
+        "narHash": "sha256-SZ5L6eA7HJ/nmkzGG7/ISclqe6oZdOZTNoesiInkXPQ=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "b1d9ab70662946ef0850d488da1c9019f3a9752a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "gitignore": {
+      "inputs": {
+        "nixpkgs": [
+          "hs-flake-utils",
+          "pre-commit-hooks",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1660459072,
+        "narHash": "sha256-8DFJjXG8zqoONA1vXtgeKXy68KdJL5UaXR8NtVMUbx8=",
+        "owner": "hercules-ci",
+        "repo": "gitignore.nix",
+        "rev": "a20de23b925fd8264fd7fad6454652e142fd7f73",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "gitignore.nix",
+        "type": "github"
+      }
+    },
+    "gitignore_2": {
+      "inputs": {
+        "nixpkgs": [
+          "tahoe-great-black-swamp",
+          "hs-flake-utils",
+          "pre-commit-hooks",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1660459072,
+        "narHash": "sha256-8DFJjXG8zqoONA1vXtgeKXy68KdJL5UaXR8NtVMUbx8=",
+        "owner": "hercules-ci",
+        "repo": "gitignore.nix",
+        "rev": "a20de23b925fd8264fd7fad6454652e142fd7f73",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "gitignore.nix",
+        "type": "github"
+      }
+    },
+    "gitignore_3": {
+      "inputs": {
+        "nixpkgs": [
+          "tahoe-great-black-swamp-testing",
+          "hs-flake-utils",
+          "pre-commit-hooks",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1660459072,
+        "narHash": "sha256-8DFJjXG8zqoONA1vXtgeKXy68KdJL5UaXR8NtVMUbx8=",
+        "owner": "hercules-ci",
+        "repo": "gitignore.nix",
+        "rev": "a20de23b925fd8264fd7fad6454652e142fd7f73",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "gitignore.nix",
+        "type": "github"
+      }
+    },
+    "gitignore_4": {
+      "inputs": {
+        "nixpkgs": [
+          "tahoe-great-black-swamp-types",
+          "hs-flake-utils",
+          "pre-commit-hooks",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1660459072,
+        "narHash": "sha256-8DFJjXG8zqoONA1vXtgeKXy68KdJL5UaXR8NtVMUbx8=",
+        "owner": "hercules-ci",
+        "repo": "gitignore.nix",
+        "rev": "a20de23b925fd8264fd7fad6454652e142fd7f73",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "gitignore.nix",
+        "type": "github"
+      }
+    },
+    "hs-flake-utils": {
+      "inputs": {
+        "flake-utils": "flake-utils_2",
+        "nixpkgs": "nixpkgs",
+        "pre-commit-hooks": "pre-commit-hooks"
+      },
+      "locked": {
+        "lastModified": 1711046962,
+        "narHash": "sha256-zVh8GvjEZL5P/hVpYZZxedvwZGp/n2dlTMs+vcmDN/A=",
+        "ref": "main",
+        "rev": "463b30a35db273814df47da68f37f4401d9548a9",
+        "revCount": 22,
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
+      }
+    },
+    "hs-flake-utils_2": {
+      "inputs": {
+        "flake-utils": "flake-utils_5",
+        "nixpkgs": "nixpkgs_2",
+        "pre-commit-hooks": "pre-commit-hooks_2"
+      },
+      "locked": {
+        "lastModified": 1696872058,
+        "narHash": "sha256-QCfoTnGtUABi5KbWXrTh4fhvLGP5B0gAG6KU1ACd96s=",
+        "ref": "main",
+        "rev": "683abab784ee38ea61863b3594d3777345f420d6",
+        "revCount": 20,
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
+      }
+    },
+    "hs-flake-utils_3": {
+      "inputs": {
+        "flake-utils": "flake-utils_10",
+        "nixpkgs": "nixpkgs_3",
+        "pre-commit-hooks": "pre-commit-hooks_3"
+      },
+      "locked": {
+        "lastModified": 1696872058,
+        "narHash": "sha256-QCfoTnGtUABi5KbWXrTh4fhvLGP5B0gAG6KU1ACd96s=",
+        "ref": "main",
+        "rev": "683abab784ee38ea61863b3594d3777345f420d6",
+        "revCount": 20,
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
+      }
+    },
+    "hs-flake-utils_4": {
+      "inputs": {
+        "flake-utils": "flake-utils_12",
+        "nixpkgs": "nixpkgs_4",
+        "pre-commit-hooks": "pre-commit-hooks_4"
+      },
+      "locked": {
+        "lastModified": 1696872058,
+        "narHash": "sha256-QCfoTnGtUABi5KbWXrTh4fhvLGP5B0gAG6KU1ACd96s=",
+        "ref": "main",
+        "rev": "683abab784ee38ea61863b3594d3777345f420d6",
+        "revCount": 20,
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/hs-flake-utils.git"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1712168706,
+        "narHash": "sha256-XP24tOobf6GGElMd0ux90FEBalUtw6NkBSVh/RlA6ik=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "1487bdea619e4a7a53a4590c475deabb5a9d1bfb",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixos-23.11",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs-stable": {
+      "locked": {
+        "lastModified": 1673800717,
+        "narHash": "sha256-SFHraUqLSu5cC6IxTprex/nTsI81ZQAtDvlBvGDWfnA=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "2f9fd351ec37f5d479556cd48be4ca340da59b8f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-22.11",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs-stable_2": {
+      "locked": {
+        "lastModified": 1673800717,
+        "narHash": "sha256-SFHraUqLSu5cC6IxTprex/nTsI81ZQAtDvlBvGDWfnA=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "2f9fd351ec37f5d479556cd48be4ca340da59b8f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-22.11",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs-stable_3": {
+      "locked": {
+        "lastModified": 1673800717,
+        "narHash": "sha256-SFHraUqLSu5cC6IxTprex/nTsI81ZQAtDvlBvGDWfnA=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "2f9fd351ec37f5d479556cd48be4ca340da59b8f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-22.11",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs-stable_4": {
+      "locked": {
+        "lastModified": 1673800717,
+        "narHash": "sha256-SFHraUqLSu5cC6IxTprex/nTsI81ZQAtDvlBvGDWfnA=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "2f9fd351ec37f5d479556cd48be4ca340da59b8f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-22.11",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_2": {
+      "locked": {
+        "lastModified": 1677624842,
+        "narHash": "sha256-4DF9DbDuK4/+KYx0L6XcPBeDHUFVCtzok2fWtwXtb5w=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "d70f5cd5c3bef45f7f52698f39e7cc7a89daa7f0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixos-22.11",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_3": {
+      "locked": {
+        "lastModified": 1677624842,
+        "narHash": "sha256-4DF9DbDuK4/+KYx0L6XcPBeDHUFVCtzok2fWtwXtb5w=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "d70f5cd5c3bef45f7f52698f39e7cc7a89daa7f0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixos-22.11",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_4": {
+      "locked": {
+        "lastModified": 1677624842,
+        "narHash": "sha256-4DF9DbDuK4/+KYx0L6XcPBeDHUFVCtzok2fWtwXtb5w=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "d70f5cd5c3bef45f7f52698f39e7cc7a89daa7f0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixos-22.11",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "pre-commit-hooks": {
+      "inputs": {
+        "flake-compat": "flake-compat",
+        "flake-utils": [
+          "hs-flake-utils",
+          "flake-utils"
+        ],
+        "gitignore": "gitignore",
+        "nixpkgs": [
+          "hs-flake-utils",
+          "nixpkgs"
+        ],
+        "nixpkgs-stable": "nixpkgs-stable"
+      },
+      "locked": {
+        "lastModified": 1677722096,
+        "narHash": "sha256-7mjVMvCs9InnrRybBfr5ohqcOz+pyEX8m22C1XsDilg=",
+        "owner": "cachix",
+        "repo": "pre-commit-hooks.nix",
+        "rev": "61a3511668891c68ebd19d40122150b98dc2fe3b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cachix",
+        "repo": "pre-commit-hooks.nix",
+        "type": "github"
+      }
+    },
+    "pre-commit-hooks_2": {
+      "inputs": {
+        "flake-compat": "flake-compat_2",
+        "flake-utils": [
+          "tahoe-great-black-swamp",
+          "hs-flake-utils",
+          "flake-utils"
+        ],
+        "gitignore": "gitignore_2",
+        "nixpkgs": [
+          "tahoe-great-black-swamp",
+          "hs-flake-utils",
+          "nixpkgs"
+        ],
+        "nixpkgs-stable": "nixpkgs-stable_2"
+      },
+      "locked": {
+        "lastModified": 1677722096,
+        "narHash": "sha256-7mjVMvCs9InnrRybBfr5ohqcOz+pyEX8m22C1XsDilg=",
+        "owner": "cachix",
+        "repo": "pre-commit-hooks.nix",
+        "rev": "61a3511668891c68ebd19d40122150b98dc2fe3b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cachix",
+        "repo": "pre-commit-hooks.nix",
+        "type": "github"
+      }
+    },
+    "pre-commit-hooks_3": {
+      "inputs": {
+        "flake-compat": "flake-compat_3",
+        "flake-utils": [
+          "tahoe-great-black-swamp-testing",
+          "hs-flake-utils",
+          "flake-utils"
+        ],
+        "gitignore": "gitignore_3",
+        "nixpkgs": [
+          "tahoe-great-black-swamp-testing",
+          "hs-flake-utils",
+          "nixpkgs"
+        ],
+        "nixpkgs-stable": "nixpkgs-stable_3"
+      },
+      "locked": {
+        "lastModified": 1677722096,
+        "narHash": "sha256-7mjVMvCs9InnrRybBfr5ohqcOz+pyEX8m22C1XsDilg=",
+        "owner": "cachix",
+        "repo": "pre-commit-hooks.nix",
+        "rev": "61a3511668891c68ebd19d40122150b98dc2fe3b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cachix",
+        "repo": "pre-commit-hooks.nix",
+        "type": "github"
+      }
+    },
+    "pre-commit-hooks_4": {
+      "inputs": {
+        "flake-compat": "flake-compat_4",
+        "flake-utils": [
+          "tahoe-great-black-swamp-types",
+          "hs-flake-utils",
+          "flake-utils"
+        ],
+        "gitignore": "gitignore_4",
+        "nixpkgs": [
+          "tahoe-great-black-swamp-types",
+          "hs-flake-utils",
+          "nixpkgs"
+        ],
+        "nixpkgs-stable": "nixpkgs-stable_4"
+      },
+      "locked": {
+        "lastModified": 1677722096,
+        "narHash": "sha256-7mjVMvCs9InnrRybBfr5ohqcOz+pyEX8m22C1XsDilg=",
+        "owner": "cachix",
+        "repo": "pre-commit-hooks.nix",
+        "rev": "61a3511668891c68ebd19d40122150b98dc2fe3b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cachix",
+        "repo": "pre-commit-hooks.nix",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "flake-utils": "flake-utils",
+        "hs-flake-utils": "hs-flake-utils",
+        "nixpkgs": [
+          "hs-flake-utils",
+          "nixpkgs"
+        ],
+        "tahoe-capabilities": "tahoe-capabilities",
+        "tahoe-great-black-swamp": "tahoe-great-black-swamp",
+        "tahoe-great-black-swamp-testing": "tahoe-great-black-swamp-testing_2",
+        "tahoe-great-black-swamp-types": "tahoe-great-black-swamp-types_2"
+      }
+    },
+    "systems": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_2": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_3": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_4": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_5": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_6": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "tahoe-capabilities": {
+      "inputs": {
+        "flake-utils": "flake-utils_3",
+        "hs-flake-utils": [
+          "hs-flake-utils"
+        ],
+        "nixpkgs": [
+          "hs-flake-utils",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1711740068,
+        "narHash": "sha256-k2SODTgmgcPR4EYEw3G/p8acMYu2TjvCEpZ8Z4Wz/fA=",
+        "ref": "merge-libs",
+        "rev": "5e40ef4c0a4d89f3756bf57c7a4e2b2ea67a3d14",
+        "revCount": 31,
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-capabilities.git"
+      },
+      "original": {
+        "ref": "merge-libs",
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-capabilities.git"
+      }
+    },
+    "tahoe-chk": {
+      "inputs": {
+        "flake-utils": "flake-utils_6",
+        "hs-flake-utils": [
+          "tahoe-great-black-swamp",
+          "hs-flake-utils"
+        ],
+        "nixpkgs": [
+          "tahoe-great-black-swamp",
+          "hs-flake-utils",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1696270283,
+        "narHash": "sha256-0/6VEsjXe7EvYY2BnkWkmHCVzdp1WcFLjx5mvHDMLnM=",
+        "ref": "main",
+        "rev": "57f02ab7d73b831afb0d2c8196bd3b02764bf29c",
+        "revCount": 488,
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-chk.git"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-chk.git"
+      }
+    },
+    "tahoe-great-black-swamp": {
+      "inputs": {
+        "flake-utils": "flake-utils_4",
+        "hs-flake-utils": "hs-flake-utils_2",
+        "nixpkgs": [
+          "tahoe-great-black-swamp",
+          "hs-flake-utils",
+          "nixpkgs"
+        ],
+        "tahoe-chk": "tahoe-chk",
+        "tahoe-great-black-swamp-testing": "tahoe-great-black-swamp-testing",
+        "tahoe-great-black-swamp-types": "tahoe-great-black-swamp-types"
+      },
+      "locked": {
+        "lastModified": 1711032583,
+        "narHash": "sha256-AR1zGKdsieKqYqpNXSTlYkmrMRAzY746WBiD1+ATjDw=",
+        "ref": "main",
+        "rev": "5687c4bc0fe45b5ce2221b5577ad5bdd587d881e",
+        "revCount": 303,
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp.git"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp.git"
+      }
+    },
+    "tahoe-great-black-swamp-testing": {
+      "inputs": {
+        "flake-utils": "flake-utils_7",
+        "hs-flake-utils": [
+          "tahoe-great-black-swamp",
+          "hs-flake-utils"
+        ],
+        "nixpkgs": [
+          "tahoe-great-black-swamp",
+          "hs-flake-utils",
+          "nixpkgs"
+        ],
+        "tahoe-great-black-swamp-types": [
+          "tahoe-great-black-swamp",
+          "tahoe-great-black-swamp-types"
+        ]
+      },
+      "locked": {
+        "lastModified": 1699477067,
+        "narHash": "sha256-PwyrDMZXAhLb94XtRx2MIOz/77Zm5I7P8ag23WAFRPE=",
+        "ref": "main",
+        "rev": "1b34f87d90e3dbc61401ea46e4f02303c35aaf6d",
+        "revCount": 6,
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing"
+      }
+    },
+    "tahoe-great-black-swamp-testing_2": {
+      "inputs": {
+        "flake-utils": "flake-utils_9",
+        "hs-flake-utils": "hs-flake-utils_3",
+        "nixpkgs": [
+          "tahoe-great-black-swamp-testing",
+          "hs-flake-utils",
+          "nixpkgs"
+        ],
+        "tahoe-great-black-swamp-types": [
+          "tahoe-great-black-swamp-types"
+        ]
+      },
+      "locked": {
+        "lastModified": 1710789884,
+        "narHash": "sha256-C57tlOAEXuA9JVHglo+V2W5zEydJEdGm6xQ7X5TsEM8=",
+        "ref": "main",
+        "rev": "789db4ea0448b4e65cd68cc58e8a4dbb44492ef4",
+        "revCount": 23,
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing.git"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing.git"
+      }
+    },
+    "tahoe-great-black-swamp-types": {
+      "inputs": {
+        "flake-utils": "flake-utils_8",
+        "hs-flake-utils": [
+          "tahoe-great-black-swamp",
+          "hs-flake-utils"
+        ],
+        "nixpkgs": [
+          "tahoe-great-black-swamp",
+          "hs-flake-utils",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1699453849,
+        "narHash": "sha256-7qqW8WwJ3yDrEsO9EfL9GxJo8piV5QeR7/GI9yYngaU=",
+        "ref": "main",
+        "rev": "bb60f23c8660db38a2ff89ec731aaa3a08c9d7ba",
+        "revCount": 10,
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types"
+      }
+    },
+    "tahoe-great-black-swamp-types_2": {
+      "inputs": {
+        "flake-utils": "flake-utils_11",
+        "hs-flake-utils": "hs-flake-utils_4",
+        "nixpkgs": [
+          "tahoe-great-black-swamp-types",
+          "hs-flake-utils",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1710789936,
+        "narHash": "sha256-XOsU9hkKUcYqV5/nXJJs/Ghi2IDrmAplOcqlk0K3C04=",
+        "ref": "main",
+        "rev": "9a110a3f6906c7f63f91096447cb90e87717a513",
+        "revCount": 14,
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types.git"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types.git"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
