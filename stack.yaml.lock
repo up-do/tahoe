@@ -5,15 +5,15 @@
 
 packages:
 - completed:
-    commit: fca4ccfa60754b0b82b8f5a8b511b429a4cc52e1
+    commit: bc0b9aba4840de4c3aaa9bc33013fd1d3260288b
     git: https://gitlab.com/philderbeast/tahoe-capabilities.git
     name: tahoe-capabilities
     pantry-tree:
-      sha256: 542334063caa6ac68d45f8cf868d9abf3bb481797605b8e1f1afc2e252f15109
+      sha256: dbcc174cf3e27956804b92eb5b1407ad44df99da4eb5db8b25dcd4057c89aaa3
       size: 5657
     version: 0.6.0.0
   original:
-    commit: fca4ccfa60754b0b82b8f5a8b511b429a4cc52e1
+    commit: bc0b9aba4840de4c3aaa9bc33013fd1d3260288b
     git: https://gitlab.com/philderbeast/tahoe-capabilities.git
 - completed:
     commit: 6544c432230e25fadff383bb7adfff211c89e89d

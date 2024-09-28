@@ -14,7 +14,7 @@ packages:
 extra-deps:
   # Source Packages, internal to this organisation (private and public).
   - git: https://gitlab.com/philderbeast/tahoe-capabilities.git
-    commit: fca4ccfa60754b0b82b8f5a8b511b429a4cc52e1
+    commit: bc0b9aba4840de4c3aaa9bc33013fd1d3260288b
   - git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp.git
     commit: 6544c432230e25fadff383bb7adfff211c89e89d
   - git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing.git
