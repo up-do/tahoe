@@ -5,17 +5,6 @@
 
 packages:
 - completed:
-    commit: bc0b9aba4840de4c3aaa9bc33013fd1d3260288b
-    git: https://gitlab.com/philderbeast/tahoe-capabilities.git
-    name: tahoe-capabilities
-    pantry-tree:
-      sha256: dbcc174cf3e27956804b92eb5b1407ad44df99da4eb5db8b25dcd4057c89aaa3
-      size: 5657
-    version: 0.6.0.0
-  original:
-    commit: bc0b9aba4840de4c3aaa9bc33013fd1d3260288b
-    git: https://gitlab.com/philderbeast/tahoe-capabilities.git
-- completed:
     commit: 6544c432230e25fadff383bb7adfff211c89e89d
     git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp.git
     name: tahoe-great-black-swamp
@@ -55,6 +44,13 @@ packages:
       size: 506
   original:
     hackage: OneTuple-0.4.2
+- completed:
+    hackage: aeson-1.5.6.0@sha256:6e617a81afddc3797a4a1e40f303b264d50eba1f030fe9f8818ec2028cf77ae1,6794
+    pantry-tree:
+      sha256: 6fc377f7dc8ec4387d6e90b95ca55d4cfd9721c4c15c39ca6f7921da913e1908
+      size: 37981
+  original:
+    hackage: aeson-1.5.6.0@rev:7
 - completed:
     hackage: amazonka-2.0@sha256:d401ac9094bb331d1bfb9be879d9007ca6bc94085ab745de5aa827128ad7917c,3522
     pantry-tree:
@@ -105,12 +101,12 @@ packages:
   original:
     hackage: data-array-byte-0.1.0.1
 - completed:
-    hackage: fec-0.1.1@sha256:916d302856260e975d778d23b8369a6267bca561e5614852044958caa89954dd,1287
+    hackage: fec-0.2.0@sha256:e5740424d9a4b21e63a12ed9fad1cb099ff723c7f3bedca635276098822f7bb6,2451
     pantry-tree:
-      sha256: 4cc825d2b161a52f2e0aafc59ebb94c0cb6c45994fc249369f4dbed36fcf9965
-      size: 430
+      sha256: 752d0364288b0927e869a354969f3f37804b560ecca41ab0170fc666e79cca48
+      size: 561
   original:
-    hackage: fec-0.1.1
+    hackage: fec-0.2.0
 - completed:
     hackage: foldable1-classes-compat-0.1@sha256:f2f1c40f9e3322ce8d4101cb2925b420e19b993ef543a6b106d91accf08be78d,3782
     pantry-tree:
@@ -125,6 +121,13 @@ packages:
       size: 1578
   original:
     hackage: hashable-1.4.7.0
+- completed:
+    hackage: http-api-data-0.4.3@sha256:f4134a06d6544193a4d088df362e132a6cb71a0538f5636bf860971cd0879960,3845
+    pantry-tree:
+      sha256: 05c7bfafbf73d7d8eff5915b580e5ef6bf85232764fad871476a6952f746d9f9
+      size: 887
+  original:
+    hackage: http-api-data-0.4.3
 - completed:
     hackage: lens-5.2.3@sha256:08f4e81aa3fa3f175f6932089d6bb8b17669e3d00aa2968b853287e5e8d7f024,15237
     pantry-tree:
@@ -154,6 +157,20 @@ packages:
   original:
     hackage: semialign-1.2.0.1
 - completed:
+    hackage: servant-docs-0.12@sha256:ada81c8af4f1273c9e225b043a92421dee66f9fcf91adf431480e17ac8fb9d92,3383
+    pantry-tree:
+      sha256: 14541bc161c7fced7371deb0354d9a1ac65b3f11c32c748455d32029f8d42966
+      size: 702
+  original:
+    hackage: servant-docs-0.12
+- completed:
+    hackage: servant-foreign-0.15.4@sha256:ee260dbc2e5a27aee5d31c6231d14570cb65a978af401f7ff3078c9a206b6c36,2873
+    pantry-tree:
+      sha256: c634ac148854169e26f3b43ba75e8c392a6355bfec591fbf83b864cd7b0ad251
+      size: 590
+  original:
+    hackage: servant-foreign-0.15.4@rev:8
+- completed:
     hackage: servant-js-0.9.4.2@sha256:aa675b06e43c3182b6eb4efe44d0ab88334ce4fd89c31fec61582d2870893c16,3571
     pantry-tree:
       sha256: 9c86eea630b862164ec0a36fd51938e9c7ae566f2bb53d22aed3352d810df458
@@ -167,6 +184,13 @@ packages:
       size: 1980
   original:
     hackage: tahoe-chk-0.2.0.0
+- completed:
+    hackage: text-short-0.1.6@sha256:5953dc14c71b6047edab2dc89e922678ff5cbe2e98d16b9e7078150083940be4,2812
+    pantry-tree:
+      sha256: 2bf0d894430aa05c0d60ac901fd224dd2a9acb0e13e83cb241afbfb571e0be75
+      size: 612
+  original:
+    hackage: text-short-0.1.6
 - completed:
     hackage: tree-diff-0.3.0.1@sha256:093c1731742686a1e349cf44e1f7f6a0486ee09419db981e3252aaade5e1f098,5475
     pantry-tree:
