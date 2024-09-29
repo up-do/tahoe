@@ -6,8 +6,4 @@
   , tag = "ae4d7c1427af533cc607adc116d989ad836ee9aa"
   , sub = [] : List Text
   }
-, { loc = "https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types.git"
-  , tag = "fa7bd9edc495018bd4bac605f03289ed848e2200"
-  , sub = [] : List Text
-  }
 ]

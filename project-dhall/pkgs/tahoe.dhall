@@ -1,1 +1,1 @@
-[ "capabilities", "s3" ]
+[ "capabilities", "s3", "swamp/types" ]
