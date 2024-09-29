@@ -27,17 +27,6 @@ packages:
     commit: ae4d7c1427af533cc607adc116d989ad836ee9aa
     git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing.git
 - completed:
-    commit: fa7bd9edc495018bd4bac605f03289ed848e2200
-    git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types.git
-    name: tahoe-great-black-swamp-types
-    pantry-tree:
-      sha256: 08aca93054fb99b8ab8df85cde7357e58361a2723eae94cd33df9710cc2366b9
-      size: 394
-    version: 0.6.0.0
-  original:
-    commit: fa7bd9edc495018bd4bac605f03289ed848e2200
-    git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types.git
-- completed:
     hackage: OneTuple-0.4.2@sha256:ce39b24139694ee1facfdbf0eed3fbca3444fa3c7bcaa386c65cd4e1b7691a4d,1976
     pantry-tree:
       sha256: b0de4b84e7f224bc8d5c28c173e8a652feaf1da71589290d1a9702d474b9cc1e

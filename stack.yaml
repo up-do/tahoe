@@ -6,14 +6,15 @@ flags:
 
 resolver: lts-18.28
 
-# We have 2 packages.
+# We have 3 packages.
 packages:
   - ./capabilities
   - ./s3
+  - ./swamp/types
 
-# We have 3 source packages:
+# We have 2 source packages:
 #   * external 0
-#   * internal 3
+#   * internal 2
 #   * external forks 0
 #   * internal forks 0
 extra-deps:
@@ -22,8 +23,6 @@ extra-deps:
     commit: 6544c432230e25fadff383bb7adfff211c89e89d
   - git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing.git
     commit: ae4d7c1427af533cc607adc116d989ad836ee9aa
-  - git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types.git
-    commit: fa7bd9edc495018bd4bac605f03289ed848e2200
 
   # Package versions for published packages either not on Stackage or
   # not matching the version on Stackage for the resolver we use.
