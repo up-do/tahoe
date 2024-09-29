@@ -6,19 +6,15 @@ flags:
 
 resolver: lts-18.28
 
-# We have 4 packages.
+# We have 5 packages.
 packages:
   - ./capabilities
   - ./s3
   - ./swamp/swamp
+  - ./swamp/testing
   - ./swamp/types
 
-# We have 1 internal dependency source package.
 extra-deps:
-  # Source Packages, internal to this organisation (private and public).
-  - git: https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing.git
-    commit: ae4d7c1427af533cc607adc116d989ad836ee9aa
-
   # Package versions for published packages either not on Stackage or
   # not matching the version on Stackage for the resolver we use.
   # These package-version extra dependencies are equivalent to cabal constraints.
