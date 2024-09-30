@@ -40,7 +40,7 @@ source-repository head
     gitlab@whetstone.private.storage:privatestorage/tahoe-great-black-swamp.git
 
 common connection-opts
-  if impl(ghc <= 8.10)
+  if impl(ghc < 9)
     build-depends:
       , connection >=0.3 && <0.5
       , x509 >=1.7 && <1.8
@@ -53,7 +53,7 @@ common connection-opts
 
 common connection-verify-opts
   import: connection-opts
-  if impl(ghc <= 8.10)
+  if impl(ghc < 9)
     build-depends:
       , x509-validation >=1.6 && <1.7
   else
