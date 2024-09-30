@@ -6,21 +6,10 @@
     nixpkgs.follows = "hs-flake-utils/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
     hs-flake-utils.url = "git+https://gitlab.com/tahoe-lafs/hs-flake-utils.git?ref=main";
-    tahoe-capabilities = {
-      url = "git+https://gitlab.com/tahoe-lafs/tahoe-capabilities.git?ref=merge-libs";
-      inputs.nixpkgs.follows = "hs-flake-utils/nixpkgs";
-      inputs.hs-flake-utils.follows = "hs-flake-utils";
-    };
-    tahoe-great-black-swamp = {
-      url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp.git?ref=main";
-    };
-    tahoe-great-black-swamp-types = {
-      url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-types.git?ref=main";
-    };
-    tahoe-great-black-swamp-testing = {
-      url = "git+https://gitlab.com/tahoe-lafs/tahoe-great-black-swamp-testing.git?ref=main";
-      inputs.tahoe-great-black-swamp-types.follows = "tahoe-great-black-swamp-types";
-    };
+    tahoe-great-black-swamp-testing.url = "path:swamp/testing";
+    tahoe-great-black-swamp-types.url = "path:swamp/types";
+    tahoe-great-black-swamp.url = "path:swamp/swamp";
+    tahoe-capabilities.url = "path:capabilities";
   };
 
   outputs = {
@@ -34,14 +23,14 @@
     hs-flake-utils,
   }: let
     ulib = flake-utils.lib;
-    ghcVersion = "ghc94";
+    ghcVersion = "ghc96";
   in
     ulib.eachSystem ["x86_64-linux" "aarch64-darwin"] (system: let
       # Get a nixpkgs customized for this system and including our overlay.
       pkgs = import nixpkgs {inherit system;};
       hslib = hs-flake-utils.lib {
         inherit pkgs;
-        src = ./.;
+        src = ./s3;
         compilerVersion = ghcVersion;
         packageName = "tahoe-s3";
         hsPkgsOverrides = hfinal: hprev: {
@@ -55,7 +44,7 @@
             tahoe-great-black-swamp-testing.outputs.packages.${system}.default;
           crypton = hfinal.callHackageDirect {
             pkg = "crypton";
-            ver = "0.33";
+            ver = "1.0.0";
             sha256 = "sha256-bq1ypwOhYC8OR5XDWDj0u4+gTygxcwnPL+IffUWvlhg=";
           } {};
           amazonka-core = hfinal.callHackageDirect {
@@ -88,6 +77,11 @@
             ver = "2.0";
             sha256 = "sha256-ut71byLgmg9SgZCfIrDbG76LI7Buq+x6F4oHTTuEdHI=";
           } {};
+          transformers = hfinal.callHackageDirect {
+            pkg = "transformers";
+            ver = "0.5.6.2";
+            sha256 = "sha256-NjxDl4n5/2j0YINN/jfxXYNLA1hQqPy3i2eEc0MrVY8=";
+          } {};
         };
       };
 
@@ -102,6 +96,7 @@
           pkgs.writeShellApplication {
             name = "cabal-build-and-test";
             runtimeInputs = with pkgs; [
+              zlib
               pkg-config
               gcc
               haskell.compiler.${ghcVersion}
@@ -111,8 +106,8 @@
             text = ''
               set -ex
               cabal update hackage.haskell.org
-              cabal build --enable-tests
-              cabal run --enable-tests tests
+              cabal build all --enable-tests
+              cabal run tahoe-s3 --enable-tests tests
             '';
           }
         }/bin/cabal-build-and-test";
@@ -121,9 +116,6 @@
       checks = hslib.checks {};
       devShells = hslib.devShells {
         extraBuildInputs = pkgs: with pkgs; [zlib pkg-config gcc];
-        shellHook = ''
-          nix run .#write-cabal-project
-        '';
       };
       packages = hslib.packages {};
       apps.hlint = hslib.apps.hlint {};
@@ -134,19 +126,6 @@
       apps.cabal-test-902 = mkCabalTest "ghc902";
       apps.cabal-test-924 = mkCabalTest "ghc924";
       apps.cabal-test-943 = mkCabalTest "ghc943";
-
-      apps.write-cabal-project = hslib.apps.write-cabal-project {
-        localPackages = {
-          # tahoe-great-black-swamp = "/home/shae/build/tahoe-great-black-swamp";
-          # tahoe-great-black-swamp.sourceInfo.outPath;
-          tahoe-great-black-swamp-types = "/home/shae/build/tahoe-great-black-swamp-types";
-          # tahoe-great-black-swamp-types.sourceInfo.outPath;
-          tahoe-great-black-swamp-testing = "/home/shae/build/tahoe-great-black-swamp-testing";
-          tahoe-great-black-swamp = "/home/shae/build/tahoe-great-black-swamp";
-          tahoe-capabilities = "/home/shae/build/tahoe-capabilities";
-          # tahoe-great-black-swamp-testing.sourceInfo.outPath;
-        };
-      };
 
       apps.cabal-test = self.outputs.apps.${system}.cabal-test-943;
 
