@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE PackageImports #-}
@@ -105,7 +106,16 @@ uriToNURL URI{uriAuthority = Just URIAuth{uriUserInfo, uriRegName = hostname, ur
         (_, Nothing) -> Nothing
         (Right requiredHash, Just portNum) -> Just NURLv1{nurlv1Fingerprint = requiredHash, nurlv1Address = (hostname, portNum), nurlv1Swissnum = T.pack swissnum}
   where
-    requiredHashE = fmap SPKIHash . Base64URL.decodeBase64 . T.encodeUtf8 . T.pack . dropLast 1 $ uriUserInfo
+    requiredHashE =
+        fmap SPKIHash
+#if MIN_VERSION_base64(1,0,0)
+        . Base64URL.decodeBase64Untyped
+#else
+        . Base64URL.decodeBase64
+#endif
+        . T.encodeUtf8
+        . T.pack
+        $ dropLast 1 uriUserInfo
     portM = readMaybe port
 uriToNURL _ = Nothing
 

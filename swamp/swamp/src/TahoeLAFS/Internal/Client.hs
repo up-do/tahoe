@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PackageImports #-}
 
@@ -86,7 +87,11 @@ gbsTLSSettings requiredHash =
                     }
             , clientSupported = def{supportedCiphers = ciphersuite_default}
             , clientDebug = def
+#if MIN_VERSION_tls(2,0,0)
+            , clientUseEarlyData = False
+#else
             , clientEarlyData = Nothing
+#endif
             }
         )
 
