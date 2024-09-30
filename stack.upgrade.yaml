@@ -1,0 +1,29 @@
+user-message: "WARNING: This stack project is generated."
+
+allow-newer: true
+allow-newer-dep:
+  - stm-lifted
+
+flags:
+  data-interval:
+    lattices: false
+
+resolver: lts-22.36
+
+# We have 5 packages.
+packages:
+  - ./capabilities
+  - ./s3
+  - ./swamp/swamp
+  - ./swamp/testing
+  - ./swamp/types
+
+extra-deps:
+  # Package versions for published packages either not on Stackage or
+  # not matching the version on Stackage for the resolver we use.
+  # These package-version extra dependencies are equivalent to cabal constraints.
+  - crypton-1.0.0
+  - fec-0.2.0
+  - network-simple-tls-0.4.2
+  - servant-js-0.9.4.2@rev:5
+  - stm-lifted-2.5.0.0

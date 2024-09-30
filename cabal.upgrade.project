@@ -1,0 +1,23 @@
+import: ./project-stackage/lts-22.36.config
+
+-- We have 5 packages.
+packages:
+    capabilities
+  , s3
+  , swamp/swamp
+  , swamp/testing
+  , swamp/types
+
+-- Version equality constraints.
+constraints:
+    crypton ==1.0.0
+  , fec ==0.2.0
+  , network-simple-tls ==0.4.2
+  , servant-js ==0.9.4.2
+  , stm-lifted ==2.5.0.0
+program-options
+  ghc-options: -fhide-source-paths
+
+allow-newer:
+  , stm-lifted:transformers
+
