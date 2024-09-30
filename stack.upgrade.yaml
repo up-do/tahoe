@@ -3,12 +3,13 @@ user-message: "WARNING: This stack project is generated."
 allow-newer: true
 allow-newer-dep:
   - stm-lifted
+  - servant-js
 
 flags:
   data-interval:
     lattices: false
 
-resolver: lts-22.36
+resolver: nightly-2024-09-30
 
 # We have 5 packages.
 packages:
@@ -18,12 +19,25 @@ packages:
   - ./swamp/testing
   - ./swamp/types
 
+# We have 1 external dependency source package.
 extra-deps:
+  # Source Packages, external (3rd party).
+  - git: https://github.com/brendanhay/amazonka.git
+    commit: 30b200d487bccd2568de1257a812a464270d0096
+    subdirs:
+      - lib/amazonka
+      - lib/amazonka-core
+      - lib/services/amazonka-s3
+      - lib/services/amazonka-sso
+      - lib/services/amazonka-sts
+
   # Package versions for published packages either not on Stackage or
   # not matching the version on Stackage for the resolver we use.
   # These package-version extra dependencies are equivalent to cabal constraints.
+  - OneTuple-0.4.2
   - crypton-1.0.0
   - fec-0.2.0
   - network-simple-tls-0.4.2
   - servant-js-0.9.4.2@rev:5
   - stm-lifted-2.5.0.0
+  - x509-1.7.7

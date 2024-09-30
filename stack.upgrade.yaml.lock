@@ -5,6 +5,78 @@
 
 packages:
 - completed:
+    commit: 30b200d487bccd2568de1257a812a464270d0096
+    git: https://github.com/brendanhay/amazonka.git
+    name: amazonka
+    pantry-tree:
+      sha256: 449e5e0777359ebb56ead5fca6aeef5ec4f5bdd82a810ad3ba30432055efaa8b
+      size: 1528
+    subdir: lib/amazonka
+    version: '2.0'
+  original:
+    commit: 30b200d487bccd2568de1257a812a464270d0096
+    git: https://github.com/brendanhay/amazonka.git
+    subdir: lib/amazonka
+- completed:
+    commit: 30b200d487bccd2568de1257a812a464270d0096
+    git: https://github.com/brendanhay/amazonka.git
+    name: amazonka-core
+    pantry-tree:
+      sha256: e560d220c73068da280e8532d27f4cee341c2c05efd2f5d5b1b0336cb24ccb1b
+      size: 3222
+    subdir: lib/amazonka-core
+    version: '2.0'
+  original:
+    commit: 30b200d487bccd2568de1257a812a464270d0096
+    git: https://github.com/brendanhay/amazonka.git
+    subdir: lib/amazonka-core
+- completed:
+    commit: 30b200d487bccd2568de1257a812a464270d0096
+    git: https://github.com/brendanhay/amazonka.git
+    name: amazonka-s3
+    pantry-tree:
+      sha256: 50bb47db3771d94ee26711bad9d91b1dc32e6466a9a580e9333af434728052b1
+      size: 38690
+    subdir: lib/services/amazonka-s3
+    version: '2.0'
+  original:
+    commit: 30b200d487bccd2568de1257a812a464270d0096
+    git: https://github.com/brendanhay/amazonka.git
+    subdir: lib/services/amazonka-s3
+- completed:
+    commit: 30b200d487bccd2568de1257a812a464270d0096
+    git: https://github.com/brendanhay/amazonka.git
+    name: amazonka-sso
+    pantry-tree:
+      sha256: f8897d82072d662605f60dc3d18e921c04bbb337b5d7caaeaece36fc8aee7fb9
+      size: 1817
+    subdir: lib/services/amazonka-sso
+    version: '2.0'
+  original:
+    commit: 30b200d487bccd2568de1257a812a464270d0096
+    git: https://github.com/brendanhay/amazonka.git
+    subdir: lib/services/amazonka-sso
+- completed:
+    commit: 30b200d487bccd2568de1257a812a464270d0096
+    git: https://github.com/brendanhay/amazonka.git
+    name: amazonka-sts
+    pantry-tree:
+      sha256: b2a18c0a04c999f9f32e114ad94bf76a89e463dbb16063ebf0899ee28808f898
+      size: 2880
+    subdir: lib/services/amazonka-sts
+    version: '2.0'
+  original:
+    commit: 30b200d487bccd2568de1257a812a464270d0096
+    git: https://github.com/brendanhay/amazonka.git
+    subdir: lib/services/amazonka-sts
+- completed:
+    hackage: OneTuple-0.4.2@sha256:ce39b24139694ee1facfdbf0eed3fbca3444fa3c7bcaa386c65cd4e1b7691a4d,1976
+    pantry-tree:
+      sha256: b0de4b84e7f224bc8d5c28c173e8a652feaf1da71589290d1a9702d474b9cc1e
+      size: 506
+  original:
+    hackage: OneTuple-0.4.2
+- completed:
     hackage: crypton-1.0.0@sha256:637e58581978c84ef1288d14fa9cac1d2905ef60e319924293bc11250aca882d,14527
     pantry-tree:
       sha256: 4b5e5511567c0fe735a224cb8b2b278e1caa79344f2940d030d169e69b1b81e1
@@ -39,9 +111,16 @@ packages:
       size: 831
   original:
     hackage: stm-lifted-2.5.0.0
+- completed:
+    hackage: x509-1.7.7@sha256:90eef2d745a654146fc1c325e035eaddac531e4d2145d4bc1dcf4b8fad439d34,2276
+    pantry-tree:
+      sha256: d81ffd09633c0417bcedbfc29f870cc843ec0750edd2f73c8fd60a5e5df278d2
+      size: 1124
+  original:
+    hackage: x509-1.7.7
 snapshots:
 - completed:
-    sha256: 6a553c5fa4f211a9b639da5e5359124a93627852dd9967bed202fdd71b25f15e
-    size: 720021
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/22/36.yaml
-  original: lts-22.36
+    sha256: 31ec86ffd80006e42b2014d9458dacc1c04a03168be8def03d2ca705db1221b8
+    size: 664618
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2024/9/30.yaml
+  original: nightly-2024-09-30
