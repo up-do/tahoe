@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Vectors where
 
 import qualified Data.ByteString as B
@@ -32,9 +34,16 @@ data SPKICase' = SPKICase'
 instance FromJSON SPKICase' where
     parseJSON = withObject "SPKICase" $ \o ->
         SPKICase'
-            <$> (Base64.decodeBase64 . T.encodeUtf8 <$> o .: "expected-spki")
-            <*> (Base64URL.decodeBase64 . T.encodeUtf8 <$> o .: "expected-hash")
+            <$> (decode . T.encodeUtf8 <$> o .: "expected-spki")
+            <*> (decode . T.encodeUtf8 <$> o .: "expected-hash")
             <*> (fmap (signedObject . getSigned) . readSignedObjectFromMemory . T.encodeUtf8 <$> o .: "certificate")
+        where
+            decode =
+#if MIN_VERSION_base64(1,0,0)
+                     Base64URL.decodeBase64Untyped
+#else
+                     Base64URL.decodeBase64
+#endif
 
 -- | Some possibly-successfully loaded SPKI fingerprint test cases.
 newtype SPKITestVector = SPKITestVector
