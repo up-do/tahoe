@@ -1,4 +1,4 @@
-import: ./project-stackage/lts-22.36.config
+import: https://stackage.org/nightly-2024-09-30/cabal.config
 
 -- We have 5 packages.
 packages:
@@ -8,16 +8,32 @@ packages:
   , swamp/testing
   , swamp/types
 
+-- We have 1 external dependency source package.
+-- Source Packages, external (3rd party).
+source-repository-package
+  type: git
+  location: https://github.com/brendanhay/amazonka.git
+  tag: 30b200d487bccd2568de1257a812a464270d0096
+  subdir:
+    lib/amazonka
+    lib/amazonka-core
+    lib/services/amazonka-s3
+    lib/services/amazonka-sso
+    lib/services/amazonka-sts
+
 -- Version equality constraints.
 constraints:
-    crypton ==1.0.0
+    OneTuple ==0.4.2
+  , crypton ==1.0.0
   , fec ==0.2.0
   , network-simple-tls ==0.4.2
   , servant-js ==0.9.4.2
   , stm-lifted ==2.5.0.0
+  , x509 ==1.7.7
 program-options
   ghc-options: -fhide-source-paths
 
 allow-newer:
   , stm-lifted:transformers
+  , servant-js:lens
 
