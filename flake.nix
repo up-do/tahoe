@@ -23,7 +23,7 @@
     hs-flake-utils,
   }: let
     ulib = flake-utils.lib;
-    ghcVersion = "ghc96";
+    ghcVersion = "ghc810";
   in
     ulib.eachSystem ["x86_64-linux" "aarch64-darwin"] (system: let
       # Get a nixpkgs customized for this system and including our overlay.
@@ -42,46 +42,38 @@
             tahoe-great-black-swamp-types.outputs.packages.${system}.default;
           tahoe-great-black-swamp-testing =
             tahoe-great-black-swamp-testing.outputs.packages.${system}.default;
-          crypton = hfinal.callHackageDirect {
-            pkg = "crypton";
-            ver = "1.0.0";
-            sha256 = "sha256-bq1ypwOhYC8OR5XDWDj0u4+gTygxcwnPL+IffUWvlhg=";
-          } {};
-          amazonka-core = hfinal.callHackageDirect {
-            pkg = "amazonka-core";
-            ver = "2.0";
-            sha256 = "sha256-KVTe6IlVDNaot1XuFjbvlUs/jmeoyEfqnDYsb4V1K2g=";
-          } {};
-          amazonka-sso = hfinal.callHackageDirect {
-            pkg = "amazonka-sso";
-            ver = "2.0";
-            sha256 = "sha256-+632/wu9Vdii8f5NwFeypXUeUV5b3DgMonUluiwO3F0=";
-          } {};
-          amazonka-sts = hfinal.callHackageDirect {
-            pkg = "amazonka-sts";
-            ver = "2.0";
-            sha256 = "sha256-5eRQ5zH5gsoiJZMwq4eepUyDBHzrIZFOPA6vKOCSuHQ=";
-          } {};
-          amazonka-s3 = hfinal.callHackageDirect {
-            pkg = "amazonka-s3";
-            ver = "2.0";
-            sha256 = "sha256-NHARJB4pGQFNUgoPSAdcibrXVD2nS+vqLxcP0/4bA7I=";
-          } {};
-          amazonka-test = hfinal.callHackageDirect {
-            pkg = "amazonka-test";
-            ver = "2.0";
-            sha256 = "sha256-lFXvtzj4p3aqMpRMyCz32jpkET3tE7BaUf6+2iwQ/ok=";
-          } {};
-          amazonka = hfinal.callHackageDirect {
-            pkg = "amazonka";
-            ver = "2.0";
-            sha256 = "sha256-ut71byLgmg9SgZCfIrDbG76LI7Buq+x6F4oHTTuEdHI=";
-          } {};
-          transformers = hfinal.callHackageDirect {
-            pkg = "transformers";
-            ver = "0.5.6.2";
-            sha256 = "sha256-NjxDl4n5/2j0YINN/jfxXYNLA1hQqPy3i2eEc0MrVY8=";
-          } {};
+          transformers = hfinal.callHackage "transformers" "0.5.6.2" {};
+          OneTuple = hfinal.callHackageDirect {
+            pkg = "OneTuple";
+            ver = "0.4.2";
+            sha256 = "sha256-r/Vag2d5pJSb2xQIlNebJYBQ2QIVt8jpdiXDnFptgKQ=";
+           } {};
+          aeson = hfinal.callHackage "aeson" "1.5.6.0" {};
+          amazonka = hfinal.callHackage "amazonka" "2.0" {};
+          amazonka-core = hfinal.callHackage "amazonka-core" "2.0" {};
+          amazonka-s3 = hfinal.callHackage "amazonka-s3" "2.0" {};
+          amazonka-sso = hfinal.callHackage "amazonka-sso" "2.0" {};
+          amazonka-sts = hfinal.callHackage "amazonka-sts" "2.0" {};
+          crypton = hfinal.callHackage "crypton" "1.0.0" {};
+          data-array-byte = hfinal.callHackage "data-array-byte" "0.1.0.1" {};
+          fec = hfinal.callHackage "fec" "0.2.0" {};
+          foldable1-classes-compat = hfinal.callHackage "foldable1-classes-compat" "0.1" {};
+          hashable = hfinal.callHackageDirect {
+            pkg = "hashable";
+            ver = "1.4.7.0";
+            sha256 = "sha256-ykQ0pQ2SIUPnkESkuBNBRT7kwtl7pLYKJ+s0OYei0/0=";
+           } {};
+          http-api-data = hfinal.callHackage "http-api-data" "0.4.3" {};
+          lens = hfinal.callHackage "lens" "5.2.3" {};
+          network = hfinal.callHackage "network" "3.1.4.0" {};
+          quickcheck-instances = hfinal.callHackage "quickcheck-instances" "0.3.30" {};
+          semialign = hfinal.callHackage "semialign" "1.2.0.1" {};
+          servant-docs = hfinal.callHackage "servant-docs" "0.12" {};
+          servant-foreign = hfinal.callHackage "servant-foreign" "0.15.4" {};
+          servant-js = hfinal.callHackage "servant-js" "0.9.4.2" {};
+          tahoe-chk = hfinal.callHackage "tahoe-chk" "0.2.0.0" {};
+          text-short = hfinal.callHackage "text-short" "0.1.6" {};
+          tree-diff = hfinal.callHackage "tree-diff" "0.3.0.1" {};
         };
       };
 
