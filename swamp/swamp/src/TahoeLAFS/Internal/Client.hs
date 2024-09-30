@@ -90,7 +90,7 @@ gbsTLSSettings requiredHash =
 #if MIN_VERSION_tls(2,0,0)
             , clientUseEarlyData = False
 #else
-            , clientUseEarlyData = Nothing
+            , clientEarlyData = Nothing
 #endif
             }
         )
