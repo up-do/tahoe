@@ -3,7 +3,7 @@
   user-message: "WARNING: This stack project is generated."
 
   allow-newer: true
-  allow-newer-dep:
+  allow-newer-deps:
     - stm-lifted
 
   flags:
