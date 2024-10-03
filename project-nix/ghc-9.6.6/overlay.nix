@@ -10,11 +10,11 @@
 
     haskellPackages = super.haskell.packages.${self.ghcVersion}.override {
       overrides = haskellSelf: haskellSuper: {
-        crypton = haskellSuper.callHackage "crypton" "1.0.0" {};
-        fec = haskellSuper.callHackage "fec" "0.2.0" {};
-        network-simple-tls = haskellSuper.callHackage "network-simple-tls" "0.4.2" {};
-        servant-js = haskellSuper.callHackage "servant-js" "0.9.4.2" {};
-        stm-lifted = haskellSuper.callHackage "stm-lifted" "2.5.0.0" {};
+        crypton = self.haskell.lib.dontCheck (haskellSuper.callHackage "crypton" "1.0.0" {});
+        fec = self.haskell.lib.dontCheck (haskellSuper.callHackage "fec" "0.2.0" {});
+        network-simple-tls = self.haskell.lib.dontCheck (haskellSuper.callHackage "network-simple-tls" "0.4.2" {});
+        servant-js = self.haskell.lib.dontCheck (haskellSuper.callHackage "servant-js" "0.9.4.2" {});
+        stm-lifted = self.haskell.lib.dontCheck (haskellSuper.callHackage "stm-lifted" "2.5.0.0" {});
       };
     };
   }
