@@ -17,3 +17,4 @@
         stm-lifted = haskellSuper.callHackage "stm-lifted" "2.5.0.0" {};
       };
     };
+  }
