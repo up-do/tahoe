@@ -31,9 +31,7 @@
 
       packageName = "tahoe-s3";
     in {
-      packages.${packageName} = pkgs.haskell.lib.dontCheck (haskellPackages.callCabal2nix packageName ./s3 rec {
-        # Dependency overrides go here
-      });
+      packages.${packageName} = pkgs.haskellPackages.${packageName};
 
       packages.default = self.packages.${system}.${packageName};
 
